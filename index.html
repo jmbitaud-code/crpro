@@ -34,7 +34,7 @@
 
     // ============ CONFIGURATION - MODIFIER CES VALEURS ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
-    const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
+    const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzc1NDc2NjEsImV4cCI6MjA1MzEyMzY2MX0.pEcvi1sYWtFOYvfAFBAemFRqSQAKmUfnLSUhMvMX7s4';
     // ===============================================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
@@ -288,7 +288,7 @@
       const[importModal,setImportModal]=useState(false);
       const[editing,setEditing]=useState(null);
       const[search,setSearch]=useState('');
-      const[form,setForm]=useState({title:'',vimeo_id:'',duration:'',category:'',description:''});
+      const[form,setForm]=useState({title:'',vimeo_id:'',duration:'',category:'',description:'',sort_order:'',tags:'',specificities:'',theme:'',creation_date:'',thumbnail_url:''});
       const[importData,setImportData]=useState([]);
       const[importLoading,setImportLoading]=useState(false);
       const[importResult,setImportResult]=useState(null);
@@ -304,14 +304,29 @@
       const handleSave=async()=>{
         const vimeoMatch=form.vimeo_id.match(/vimeo\.com\/(\d+)/)||form.vimeo_id.match(/^(\d+)$/);
         const vimeoId=vimeoMatch?vimeoMatch[1]:form.vimeo_id;
-        const payload={title:form.title,vimeo_id:vimeoId,duration:form.duration,category:form.category,description:form.description,center_id:center?.id,created_by:profile?.id};
+        const tagsArray=form.tags?form.tags.split(',').map(t=>t.trim()).filter(t=>t):null;
+        const payload={
+          title:form.title,
+          vimeo_id:vimeoId,
+          duration:form.duration||null,
+          category:form.category||null,
+          description:form.description||null,
+          sort_order:form.sort_order?parseInt(form.sort_order):null,
+          tags:tagsArray,
+          specificities:form.specificities||null,
+          theme:form.theme||null,
+          creation_date:form.creation_date||null,
+          thumbnail_url:form.thumbnail_url||null,
+          center_id:center?.id,
+          created_by:profile?.id
+        };
         if(editing)await supabase.from('videos').update(payload).eq('id',editing.id);
         else await supabase.from('videos').insert(payload);
         loadVideos();setModal(false);resetForm();
       };
 
       const handleDelete=async id=>{if(!confirm('Supprimer ?'))return;await supabase.from('videos').delete().eq('id',id);loadVideos();};
-      const resetForm=()=>{setForm({title:'',vimeo_id:'',duration:'',category:'',description:''});setEditing(null);};
+      const resetForm=()=>{setForm({title:'',vimeo_id:'',duration:'',category:'',description:'',sort_order:'',tags:'',specificities:'',theme:'',creation_date:'',thumbnail_url:''});setEditing(null);};
 
       // Import Excel/CSV
       const handleFileSelect=async(e)=>{
@@ -465,10 +480,10 @@
         </div>
         <Card className="p-4 mb-6"><Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/></Card>
         {filtered.length===0?<Empty icon="Film" title="Aucune vidéo" action={<Button icon="Plus" onClick={()=>setModal(true)}>Ajouter une vidéo</Button>}/>:
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{filtered.map(v=><Card key={v.id} className="overflow-hidden"><div className="aspect-video bg-gray-900 relative">{v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:<iframe src={`https://player.vimeo.com/video/${v.vimeo_id}?background=1`} className="w-full h-full" allow="autoplay"/>}<div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>{v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}</div><div className="p-4"><h3 className="font-semibold truncate">{v.title}</h3><div className="flex flex-wrap gap-1 mt-2">{v.category&&<span className="px-2 py-1 bg-gray-700 rounded text-xs">{v.category}</span>}{v.theme&&<span className="px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded text-xs">{v.theme}</span>}</div>{v.tags&&v.tags.length>0&&<div className="flex flex-wrap gap-1 mt-2">{v.tags.slice(0,3).map((tag,i)=><span key={i} className="px-2 py-0.5 bg-gray-600/50 rounded text-xs text-gray-300">#{tag}</span>)}{v.tags.length>3&&<span className="text-xs text-gray-500">+{v.tags.length-3}</span>}</div>}<div className="flex gap-2 mt-3"><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category:v.category||'',description:v.description||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(v.id)}>Supprimer</Button></div></div></Card>)}</div>}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{filtered.map(v=><Card key={v.id} className="overflow-hidden"><div className="aspect-video bg-gray-900 relative">{v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:<iframe src={`https://player.vimeo.com/video/${v.vimeo_id}?background=1`} className="w-full h-full" allow="autoplay"/>}<div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>{v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}</div><div className="p-4"><h3 className="font-semibold truncate">{v.title}</h3><div className="flex flex-wrap gap-1 mt-2">{v.category&&<span className="px-2 py-1 bg-gray-700 rounded text-xs">{v.category}</span>}{v.theme&&<span className="px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded text-xs">{v.theme}</span>}</div>{v.tags&&v.tags.length>0&&<div className="flex flex-wrap gap-1 mt-2">{v.tags.slice(0,3).map((tag,i)=><span key={i} className="px-2 py-0.5 bg-gray-600/50 rounded text-xs text-gray-300">#{tag}</span>)}{v.tags.length>3&&<span className="text-xs text-gray-500">+{v.tags.length-3}</span>}</div>}<div className="flex gap-2 mt-3"><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category:v.category||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',specificities:v.specificities||'',theme:v.theme||'',creation_date:v.creation_date||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(v.id)}>Supprimer</Button></div></div></Card>)}</div>}
         
         {/* Modal Ajouter/Modifier */}
-        <Modal isOpen={modal} onClose={()=>{setModal(false);resetForm();}} title={editing?'Modifier':'Ajouter une vidéo'}><div className="space-y-4"><Input label="Titre" value={form.title} onChange={e=>setForm({...form,title:e.target.value})} required/><Input label="URL ou ID Vimeo" value={form.vimeo_id} onChange={e=>setForm({...form,vimeo_id:e.target.value})} placeholder="https://vimeo.com/123456789 ou 123456789" required/><div className="grid grid-cols-2 gap-4"><Input label="Durée" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="5:30"/><Input label="Catégorie" value={form.category} onChange={e=>setForm({...form,category:e.target.value})}/></div><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setModal(false);resetForm();}}>Annuler</Button><Button onClick={handleSave}>Enregistrer</Button></div></div></Modal>
+        <Modal isOpen={modal} onClose={()=>{setModal(false);resetForm();}} title={editing?'Modifier':'Ajouter une vidéo'} size="lg"><div className="space-y-4"><div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})} required/><Input label="URL ou ID Vimeo *" value={form.vimeo_id} onChange={e=>setForm({...form,vimeo_id:e.target.value})} placeholder="123456789" required/></div><div className="grid grid-cols-3 gap-4"><Input label="Durée" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="5:30"/><Input label="Ordre" type="number" value={form.sort_order} onChange={e=>setForm({...form,sort_order:e.target.value})} placeholder="1"/><Input label="Date création" type="date" value={form.creation_date} onChange={e=>setForm({...form,creation_date:e.target.value})}/></div><div className="grid grid-cols-2 gap-4"><Input label="Catégorie" value={form.category} onChange={e=>setForm({...form,category:e.target.value})} placeholder="Chapitre 1"/><Input label="Thème" value={form.theme} onChange={e=>setForm({...form,theme:e.target.value})} placeholder="Fondamentaux"/></div><Input label="Tags (séparés par virgules)" value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="introduction, bases, théorie"/><Input label="Spécificités" value={form.specificities} onChange={e=>setForm({...form,specificities:e.target.value})} placeholder="Caractéristiques particulières"/><Input label="Miniature URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})} placeholder="https://..."/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setModal(false);resetForm();}}>Annuler</Button><Button onClick={handleSave}>Enregistrer</Button></div></div></Modal>
 
         {/* Modal Import */}
         <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer des vidéos" size="lg">
