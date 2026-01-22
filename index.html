@@ -6,12 +6,10 @@
   <title>Course Builder Pro</title>
   <meta name="description" content="Plateforme de création et diffusion de cours vidéo multi-centres">
   <meta name="theme-color" content="#1f2937">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>">
-  
-  <!-- Version stable - pas de cache -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>">
   
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
@@ -33,7 +31,7 @@
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const{useState,useEffect,useRef,useCallback,createContext,useContext}=React;
+    const{useState,useEffect,useRef,createContext,useContext}=React;
 
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
@@ -44,7 +42,6 @@
       auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}
     });
 
-    const ROLES={SUPER_ADMIN:'super_admin',CENTER_ADMIN:'center_admin',TRAINER:'trainer',LEARNER:'learner'};
     const ROLE_LABELS={super_admin:'Super Admin',center_admin:'Admin Centre',trainer:'Formateur',learner:'Apprenant'};
     const ROLE_COLORS={super_admin:'bg-red-500',center_admin:'bg-purple-500',trainer:'bg-green-500',learner:'bg-gray-500'};
     const PERMISSIONS={
@@ -55,7 +52,7 @@
     };
     const can=(role,perm)=>PERMISSIONS[role]?.[perm]||false;
 
-    // Auth Context avec meilleure gestion
+    // Auth Context
     const AuthContext=createContext(null);
     function AuthProvider({children}){
       const[user,setUser]=useState(null);
@@ -64,350 +61,157 @@
       const[loading,setLoading]=useState(true);
       const[error,setError]=useState(null);
 
-      const loadProfile=useCallback(async(userId)=>{
+      const loadProfile=async(userId)=>{
         try{
           const{data,error:err}=await supabase.from('profiles').select('*,centers(*)').eq('id',userId).single();
           if(err)throw err;
           setProfile(data);
           setCenter(data?.centers);
-          setError(null);
+          return data;
         }catch(e){
           console.error('Erreur chargement profil:',e);
-          setError(e.message);
-        }finally{
-          setLoading(false);
+          return null;
         }
-      },[]);
+      };
 
       useEffect(()=>{
         let mounted=true;
-        
-        const initAuth=async()=>{
+        const init=async()=>{
           try{
             const{data:{session}}=await supabase.auth.getSession();
             if(mounted&&session?.user){
               setUser(session.user);
               await loadProfile(session.user.id);
-            }else if(mounted){
-              setLoading(false);
             }
-          }catch(e){
-            console.error('Erreur init auth:',e);
-            if(mounted)setLoading(false);
-          }
+          }catch(e){console.error('Erreur init:',e);}
+          finally{if(mounted)setLoading(false);}
         };
-
-        initAuth();
-
+        init();
         const{data:{subscription}}=supabase.auth.onAuthStateChange(async(event,session)=>{
           if(!mounted)return;
-          if(event==='SIGNED_IN'&&session?.user){
-            setUser(session.user);
-            await loadProfile(session.user.id);
-          }else if(event==='SIGNED_OUT'){
-            setUser(null);setProfile(null);setCenter(null);setLoading(false);
-          }
+          if(event==='SIGNED_IN'&&session?.user){setUser(session.user);await loadProfile(session.user.id);}
+          else if(event==='SIGNED_OUT'){setUser(null);setProfile(null);setCenter(null);}
         });
-
         return()=>{mounted=false;subscription.unsubscribe();};
-      },[loadProfile]);
+      },[]);
 
       const signIn=async(email,password)=>{
-        setLoading(true);setError(null);
-        try{
-          const{data,error:err}=await supabase.auth.signInWithPassword({email,password});
-          if(err)throw err;
-          return{success:true};
-        }catch(e){
-          setError(e.message);setLoading(false);
-          return{success:false,error:e.message};
-        }
+        try{setError(null);const{error:err}=await supabase.auth.signInWithPassword({email,password});if(err)throw err;return{success:true};}
+        catch(e){setError(e.message);return{success:false,error:e.message};}
       };
+      const signOut=async()=>{await supabase.auth.signOut();setUser(null);setProfile(null);setCenter(null);};
 
-      const signUp=async(email,password,meta={})=>{
-        try{
-          const{data,error:err}=await supabase.auth.signUp({email,password,options:{data:meta}});
-          if(err)throw err;
-          return{success:true,needsConfirm:!data.session};
-        }catch(e){
-          return{success:false,error:e.message};
-        }
-      };
-
-      const signOut=async()=>{
-        await supabase.auth.signOut();
-        setUser(null);setProfile(null);setCenter(null);
-      };
-
-      const reload=useCallback(()=>{
-        if(user)loadProfile(user.id);
-      },[user,loadProfile]);
-
-      return<AuthContext.Provider value={{
-        user,profile,center,loading,error,
-        signIn,signUp,signOut,reload,
-        isAuth:!!user,
-        isSuperAdmin:profile?.role==='super_admin',
-        role:profile?.role||'learner',
-        can:(p)=>can(profile?.role,p)
-      }}>{children}</AuthContext.Provider>;
+      const value={user,profile,center,loading,error,signIn,signOut,isAuth:!!user,isSuperAdmin:profile?.role==='super_admin',role:profile?.role||'learner',can:(p)=>can(profile?.role,p),reload:async()=>{if(user)await loadProfile(user.id);}};
+      return<AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
     }
     const useAuth=()=>useContext(AuthContext);
 
-    // Icon Component
+    // Icon
     const Icon=({name,size=20,className=''})=>{
       const ref=useRef(null);
-      useEffect(()=>{
-        if(ref.current&&lucide.icons[name]){
-          ref.current.innerHTML='';
-          const i=lucide.createElement(lucide.icons[name]);
-          i.setAttribute('width',size);
-          i.setAttribute('height',size);
-          ref.current.appendChild(i);
-        }
-      },[name,size]);
+      useEffect(()=>{if(ref.current&&lucide.icons[name]){ref.current.innerHTML='';const i=lucide.createElement(lucide.icons[name]);i.setAttribute('width',size);i.setAttribute('height',size);ref.current.appendChild(i);}},[name,size]);
       return<span ref={ref} className={`inline-flex items-center justify-center ${className}`} style={{width:size,height:size}}/>;
     };
 
     // UI Components
     const Button=({children,variant='primary',size='md',icon,loading,disabled,className='',...props})=>{
-      const v={primary:'bg-indigo-600 hover:bg-indigo-700',secondary:'bg-gray-700 hover:bg-gray-600',success:'bg-green-600 hover:bg-green-700',danger:'bg-red-600 hover:bg-red-700',ghost:'hover:bg-gray-700'};
+      const v={primary:'bg-indigo-600 hover:bg-indigo-700',secondary:'bg-gray-700 hover:bg-gray-600',ghost:'hover:bg-gray-700'};
       const s={sm:'px-3 py-1.5 text-sm',md:'px-4 py-2',lg:'px-6 py-3'};
       return<button className={`inline-flex items-center justify-center gap-2 rounded-lg font-medium text-white transition disabled:opacity-50 ${v[variant]} ${s[size]} ${className}`} disabled={disabled||loading} {...props}>{loading?<Icon name="Loader2" size={16} className="animate-spin"/>:icon&&<Icon name={icon} size={16}/>}{children}</button>;
     };
-
-    const Input=({label,error,icon,className='',...props})=>(
-      <div className={className}>
-        {label&&<label className="block text-sm font-medium text-gray-300 mb-1">{label}</label>}
-        <div className="relative">
-          {icon&&<div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><Icon name={icon} size={18}/></div>}
-          <input className={`w-full px-4 py-2.5 bg-gray-700 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 ${icon?'pl-10':''} ${error?'border-red-500':'border-gray-600'}`} {...props}/>
-        </div>
-        {error&&<p className="text-red-400 text-sm mt-1">{error}</p>}
-      </div>
-    );
-
-    const Select=({label,options,className='',...props})=>(
-      <div className={className}>
-        {label&&<label className="block text-sm font-medium text-gray-300 mb-1">{label}</label>}
-        <select className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white" {...props}>
-          {options.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-      </div>
-    );
-
-    const Modal=({isOpen,onClose,title,children,size='md'})=>{
-      if(!isOpen)return null;
-      const s={sm:'max-w-md',md:'max-w-lg',lg:'max-w-2xl',xl:'max-w-4xl'};
-      return(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
-          <div className="absolute inset-0 bg-black/70" onClick={onClose}/>
-          <div className={`relative bg-gray-800 rounded-xl w-full ${s[size]} max-h-[90vh] overflow-auto`}>
-            <div className="sticky top-0 bg-gray-800 p-4 border-b border-gray-700 flex items-center justify-between z-10">
-              <h2 className="text-lg font-semibold">{title}</h2>
-              <button onClick={onClose} className="p-2 hover:bg-gray-700 rounded-lg"><Icon name="X" size={20}/></button>
-            </div>
-            <div className="p-4">{children}</div>
-          </div>
-        </div>
-      );
-    };
-
+    const Input=({label,error,icon,className='',...props})=>(<div className={className}>{label&&<label className="block text-sm font-medium text-gray-300 mb-1">{label}</label>}<div className="relative">{icon&&<div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><Icon name={icon} size={18}/></div>}<input className={`w-full px-4 py-2.5 bg-gray-700 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 ${icon?'pl-10':''} ${error?'border-red-500':'border-gray-600'}`} {...props}/></div>{error&&<p className="text-red-400 text-sm mt-1">{error}</p>}</div>);
+    const Select=({label,options,className='',...props})=>(<div className={className}>{label&&<label className="block text-sm font-medium text-gray-300 mb-1">{label}</label>}<select className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white" {...props}>{options.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select></div>);
+    const Modal=({isOpen,onClose,title,children,size='md'})=>{if(!isOpen)return null;const s={sm:'max-w-md',md:'max-w-lg',lg:'max-w-2xl',xl:'max-w-4xl'};return(<div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"><div className="absolute inset-0 bg-black/70" onClick={onClose}/><div className={`relative bg-gray-800 rounded-xl w-full ${s[size]} max-h-[90vh] overflow-auto`}><div className="sticky top-0 bg-gray-800 p-4 border-b border-gray-700 flex items-center justify-between z-10"><h2 className="text-lg font-semibold">{title}</h2><button onClick={onClose} className="p-2 hover:bg-gray-700 rounded-lg"><Icon name="X" size={20}/></button></div><div className="p-4">{children}</div></div></div>);};
     const Card=({children,className='',...props})=><div className={`bg-gray-800 rounded-xl border border-gray-700 ${className}`} {...props}>{children}</div>;
     const RoleBadge=({role})=><span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${ROLE_COLORS[role]||'bg-gray-500'} text-white`}>{ROLE_LABELS[role]||role}</span>;
     const Loading=({text})=><div className="flex flex-col items-center justify-center p-8"><div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"/>{text&&<p className="text-gray-400 mt-4">{text}</p>}</div>;
     const Empty=({icon,title,desc,action})=><div className="flex flex-col items-center justify-center p-8 text-center"><div className="text-gray-500 mb-4"><Icon name={icon} size={48}/></div><h3 className="text-lg font-medium text-gray-300">{title}</h3>{desc&&<p className="text-gray-500 mt-1">{desc}</p>}{action&&<div className="mt-4">{action}</div>}</div>;
-    const Alert=({type='info',children})=>{
-      const colors={info:'bg-blue-500/20 text-blue-300',success:'bg-green-500/20 text-green-300',warning:'bg-yellow-500/20 text-yellow-300',error:'bg-red-500/20 text-red-300'};
-      return<div className={`p-4 rounded-lg ${colors[type]}`}>{children}</div>;
-    };
+    const Alert=({type='info',children})=>{const colors={info:'bg-blue-500/20 text-blue-300',success:'bg-green-500/20 text-green-300',warning:'bg-yellow-500/20 text-yellow-300',error:'bg-red-500/20 text-red-300'};return<div className={`p-4 rounded-lg ${colors[type]}`}>{children}</div>;};
 
-    // Login Page
+    // Login
     function LoginPage(){
-      const{signIn,signUp,error:authError}=useAuth();
-      const[mode,setMode]=useState('login');
+      const{signIn,error}=useAuth();
       const[email,setEmail]=useState('');
       const[password,setPassword]=useState('');
-      const[firstName,setFirstName]=useState('');
-      const[lastName,setLastName]=useState('');
       const[loading,setLoading]=useState(false);
       const[msg,setMsg]=useState(null);
 
       const handleSubmit=async e=>{
-        e.preventDefault();
-        setLoading(true);setMsg(null);
-        if(mode==='login'){
-          const r=await signIn(email,password);
-          if(!r.success)setMsg({type:'error',text:r.error});
-        }else{
-          const r=await signUp(email,password,{first_name:firstName,last_name:lastName});
-          if(r.success){
-            if(r.needsConfirm)setMsg({type:'success',text:'Vérifiez votre email pour confirmer votre compte.'});
-          }else{
-            setMsg({type:'error',text:r.error});
-          }
-        }
+        e.preventDefault();setLoading(true);setMsg(null);
+        const r=await signIn(email,password);
+        if(!r.success)setMsg({type:'error',text:r.error});
         setLoading(false);
       };
 
-      return(
-        <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
-          <div className="w-full max-w-md">
-            <div className="text-center mb-8">
-              <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl mb-4">
-                <Icon name="GraduationCap" size={32} className="text-white"/>
-              </div>
-              <h1 className="text-2xl font-bold text-white">Course Builder Pro</h1>
-              <p className="text-gray-400 mt-1">Plateforme de formation vidéo</p>
-            </div>
-            <Card className="p-6">
-              <div className="flex mb-6 bg-gray-700 rounded-lg p-1">
-                <button onClick={()=>setMode('login')} className={`flex-1 py-2 rounded-md text-sm font-medium transition ${mode==='login'?'bg-indigo-600 text-white':'text-gray-400'}`}>Connexion</button>
-                <button onClick={()=>setMode('register')} className={`flex-1 py-2 rounded-md text-sm font-medium transition ${mode==='register'?'bg-indigo-600 text-white':'text-gray-400'}`}>Inscription</button>
-              </div>
-              {msg&&<Alert type={msg.type}>{msg.text}</Alert>}
-              {authError&&<Alert type="error">{authError}</Alert>}
-              <form onSubmit={handleSubmit} className="space-y-4 mt-4">
-                {mode==='register'&&(
-                  <div className="grid grid-cols-2 gap-4">
-                    <Input label="Prénom" value={firstName} onChange={e=>setFirstName(e.target.value)} required/>
-                    <Input label="Nom" value={lastName} onChange={e=>setLastName(e.target.value)} required/>
-                  </div>
-                )}
-                <Input label="Email" type="email" icon="Mail" value={email} onChange={e=>setEmail(e.target.value)} required/>
-                <Input label="Mot de passe" type="password" icon="Lock" value={password} onChange={e=>setPassword(e.target.value)} required minLength={6}/>
-                <Button type="submit" className="w-full" loading={loading}>{mode==='login'?'Se connecter':"S'inscrire"}</Button>
-              </form>
-            </Card>
-          </div>
-        </div>
-      );
+      return(<div className="min-h-screen bg-gray-900 flex items-center justify-center p-4"><div className="w-full max-w-md"><div className="text-center mb-8"><div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl mb-4"><Icon name="GraduationCap" size={32} className="text-white"/></div><h1 className="text-2xl font-bold text-white">Course Builder Pro</h1><p className="text-gray-400 mt-1">Plateforme de formation vidéo</p></div><Card className="p-6">{msg&&<Alert type={msg.type}>{msg.text}</Alert>}<form onSubmit={handleSubmit} className="space-y-4 mt-4"><Input label="Email" type="email" icon="Mail" value={email} onChange={e=>setEmail(e.target.value)} required/><Input label="Mot de passe" type="password" icon="Lock" value={password} onChange={e=>setPassword(e.target.value)} required/><Button type="submit" className="w-full" loading={loading}>Se connecter</Button></form></Card></div></div>);
     }
 
-    // App Layout
+    // Layout
     function AppLayout(){
       const{profile,signOut,center,can,isSuperAdmin}=useAuth();
       const[sidebarOpen,setSidebarOpen]=useState(window.innerWidth>=1024);
       const[page,setPage]=useState('dashboard');
       const isMobile=window.innerWidth<1024;
-
       const menu=[
         {id:'dashboard',label:'Tableau de bord',icon:'LayoutDashboard',roles:['super_admin','center_admin','trainer','learner']},
         {id:'centers',label:'Centres',icon:'Building2',roles:['super_admin']},
         {id:'users',label:'Utilisateurs',icon:'Users',roles:['super_admin','center_admin']},
-        {id:'videos',label:'Bibliothèque',icon:'Film',roles:['super_admin','center_admin','trainer']},
+        {id:'videos',label:'Bibliothèque',icon:'Film',roles:['super_admin','center_admin']},
         {id:'playlists',label:'Cours',icon:'BookOpen',roles:['super_admin','center_admin','trainer']},
         {id:'enrollments',label:'Inscriptions',icon:'UserPlus',roles:['super_admin','center_admin','trainer']},
         {id:'my-courses',label:'Mes cours',icon:'GraduationCap',roles:['learner']},
       ].filter(i=>i.roles.includes(profile?.role));
 
-      return(
-        <div className="min-h-screen bg-gray-900 text-white flex">
-          <aside className={`fixed lg:static inset-y-0 left-0 z-40 w-64 bg-gray-800 border-r border-gray-700 transform transition-transform ${sidebarOpen?'translate-x-0':'-translate-x-full lg:translate-x-0'}`}>
-            <div className="h-full flex flex-col">
-              <div className="p-4 border-b border-gray-700">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center"><Icon name="GraduationCap" size={24}/></div>
-                  <div className="flex-1 min-w-0">
-                    <h1 className="font-bold truncate">Course Builder</h1>
-                    {center&&<p className="text-xs text-gray-400 truncate">{center.name}</p>}
-                  </div>
-                </div>
-              </div>
-              <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-                {menu.map(item=>(
-                  <button key={item.id} onClick={()=>{setPage(item.id);if(isMobile)setSidebarOpen(false);}} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition ${page===item.id?'bg-indigo-600':'text-gray-300 hover:bg-gray-700'}`}>
-                    <Icon name={item.icon} size={20}/><span>{item.label}</span>
-                  </button>
-                ))}
-              </nav>
-              <div className="p-4 border-t border-gray-700">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center"><Icon name="User" size={20}/></div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">{profile?.first_name} {profile?.last_name}</p>
-                    <RoleBadge role={profile?.role}/>
-                  </div>
-                </div>
-                <Button variant="ghost" className="w-full" icon="LogOut" onClick={signOut}>Déconnexion</Button>
-              </div>
-            </div>
-          </aside>
-          {sidebarOpen&&isMobile&&<div className="fixed inset-0 bg-black/50 z-30" onClick={()=>setSidebarOpen(false)}/>}
-          <main className="flex-1 min-h-screen">
-            <header className="lg:hidden bg-gray-800 border-b border-gray-700 p-4 flex items-center gap-4">
-              <button onClick={()=>setSidebarOpen(true)} className="p-2 hover:bg-gray-700 rounded-lg"><Icon name="Menu" size={24}/></button>
-              <h1 className="font-semibold">{menu.find(i=>i.id===page)?.label}</h1>
-            </header>
-            <div className="p-4 lg:p-6">
-              {page==='dashboard'&&<DashboardPage/>}
-              {page==='centers'&&<CentersPage/>}
-              {page==='users'&&<UsersPage/>}
-              {page==='videos'&&<VideosPage/>}
-              {page==='playlists'&&<PlaylistsPage/>}
-              {page==='enrollments'&&<EnrollmentsPage/>}
-              {page==='my-courses'&&<MyCoursesPage/>}
-            </div>
-          </main>
-        </div>
-      );
+      return(<div className="min-h-screen bg-gray-900 text-white flex">
+        <aside className={`fixed lg:static inset-y-0 left-0 z-40 w-64 bg-gray-800 border-r border-gray-700 transform transition-transform ${sidebarOpen?'translate-x-0':'-translate-x-full lg:translate-x-0'}`}>
+          <div className="h-full flex flex-col">
+            <div className="p-4 border-b border-gray-700"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center"><Icon name="GraduationCap" size={24}/></div><div className="flex-1 min-w-0"><h1 className="font-bold truncate">Course Builder</h1>{center&&<p className="text-xs text-gray-400 truncate">{center.name}</p>}</div></div></div>
+            <nav className="flex-1 overflow-y-auto p-3 space-y-1">{menu.map(item=>(<button key={item.id} onClick={()=>{setPage(item.id);if(isMobile)setSidebarOpen(false);}} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition ${page===item.id?'bg-indigo-600':'text-gray-300 hover:bg-gray-700'}`}><Icon name={item.icon} size={20}/><span>{item.label}</span></button>))}</nav>
+            <div className="p-4 border-t border-gray-700"><div className="flex items-center gap-3 mb-3"><div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center"><Icon name="User" size={20}/></div><div className="flex-1 min-w-0"><p className="font-medium truncate">{profile?.first_name} {profile?.last_name}</p><RoleBadge role={profile?.role}/></div></div><Button variant="ghost" className="w-full" icon="LogOut" onClick={signOut}>Déconnexion</Button></div>
+          </div>
+        </aside>
+        {sidebarOpen&&isMobile&&<div className="fixed inset-0 bg-black/50 z-30" onClick={()=>setSidebarOpen(false)}/>}
+        <main className="flex-1 min-h-screen">
+          <header className="lg:hidden bg-gray-800 border-b border-gray-700 p-4 flex items-center gap-4"><button onClick={()=>setSidebarOpen(true)} className="p-2 hover:bg-gray-700 rounded-lg"><Icon name="Menu" size={24}/></button><h1 className="font-semibold">{menu.find(i=>i.id===page)?.label}</h1></header>
+          <div className="p-4 lg:p-6">
+            {page==='dashboard'&&<DashboardPage/>}
+            {page==='centers'&&<CentersPage/>}
+            {page==='users'&&<UsersPage/>}
+            {page==='videos'&&<VideosPage/>}
+            {page==='playlists'&&<PlaylistsPage/>}
+            {page==='enrollments'&&<EnrollmentsPage/>}
+            {page==='my-courses'&&<MyCoursesPage/>}
+          </div>
+        </main>
+      </div>);
     }
 
     // Dashboard
     function DashboardPage(){
-      const{isSuperAdmin,center}=useAuth();
+      const{isSuperAdmin}=useAuth();
       const[stats,setStats]=useState({centers:0,users:0,videos:0,playlists:0,enrollments:0});
       const[loading,setLoading]=useState(true);
 
       useEffect(()=>{
         const load=async()=>{
-          try{
-            const[{count:users},{count:videos},{count:playlists},{count:enrollments}]=await Promise.all([
-              supabase.from('profiles').select('*',{count:'exact',head:true}),
-              supabase.from('videos').select('*',{count:'exact',head:true}),
-              supabase.from('playlists').select('*',{count:'exact',head:true}),
-              supabase.from('enrollments').select('*',{count:'exact',head:true})
-            ]);
-            let centers=1;
-            if(isSuperAdmin){
-              const{count}=await supabase.from('centers').select('*',{count:'exact',head:true});
-              centers=count||0;
-            }
-            setStats({centers,users:users||0,videos:videos||0,playlists:playlists||0,enrollments:enrollments||0});
-          }catch(e){console.error(e);}
+          const[{count:users},{count:videos},{count:playlists},{count:enrollments}]=await Promise.all([
+            supabase.from('profiles').select('*',{count:'exact',head:true}),
+            supabase.from('videos').select('*',{count:'exact',head:true}),
+            supabase.from('playlists').select('*',{count:'exact',head:true}),
+            supabase.from('enrollments').select('*',{count:'exact',head:true})
+          ]);
+          let centers=1;
+          if(isSuperAdmin){const{count}=await supabase.from('centers').select('*',{count:'exact',head:true});centers=count||0;}
+          setStats({centers,users:users||0,videos:videos||0,playlists:playlists||0,enrollments:enrollments||0});
           setLoading(false);
         };
         load();
       },[isSuperAdmin]);
 
       if(loading)return<Loading text="Chargement..."/>;
-
-      const cards=[
-        {label:'Utilisateurs',value:stats.users,icon:'Users',color:'text-blue-400'},
-        {label:'Vidéos',value:stats.videos,icon:'Film',color:'text-purple-400'},
-        {label:'Cours',value:stats.playlists,icon:'BookOpen',color:'text-green-400'},
-        {label:'Inscriptions',value:stats.enrollments,icon:'UserPlus',color:'text-yellow-400'}
-      ];
+      const cards=[{label:'Utilisateurs',value:stats.users,icon:'Users',color:'text-blue-400'},{label:'Vidéos',value:stats.videos,icon:'Film',color:'text-purple-400'},{label:'Cours',value:stats.playlists,icon:'BookOpen',color:'text-green-400'},{label:'Inscriptions',value:stats.enrollments,icon:'UserPlus',color:'text-yellow-400'}];
       if(isSuperAdmin)cards.unshift({label:'Centres',value:stats.centers,icon:'Building2',color:'text-red-400'});
-
-      return(
-        <div>
-          <h1 className="text-2xl font-bold mb-6">Tableau de bord</h1>
-          <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-            {cards.map(c=>(
-              <Card key={c.label} className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className={c.color}><Icon name={c.icon} size={24}/></div>
-                  <div>
-                    <p className="text-gray-400 text-sm">{c.label}</p>
-                    <p className="text-2xl font-bold">{c.value}</p>
-                  </div>
-                </div>
-              </Card>
-            ))}
-          </div>
-        </div>
-      );
+      return<div><h1 className="text-2xl font-bold mb-6">Tableau de bord</h1><div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">{cards.map(c=><Card key={c.label} className="p-4"><div className="flex items-center gap-3"><div className={c.color}><Icon name={c.icon} size={24}/></div><div><p className="text-gray-400 text-sm">{c.label}</p><p className="text-2xl font-bold">{c.value}</p></div></div></Card>)}</div></div>;
     }
 
     // Centers
@@ -418,56 +222,32 @@
       const[modal,setModal]=useState(false);
       const[editing,setEditing]=useState(null);
       const[form,setForm]=useState({name:'',slug:'',description:''});
+      const[saving,setSaving]=useState(false);
 
-      useEffect(()=>{load();},[]);
       const load=async()=>{const{data}=await supabase.from('centers').select('*').order('name');setCenters(data||[]);setLoading(false);};
-      const save=async()=>{
+      useEffect(()=>{load();},[]);
+
+      const handleSave=async()=>{
+        setSaving(true);
         const payload={name:form.name,slug:form.slug.toLowerCase().replace(/[^a-z0-9-]/g,'-'),description:form.description};
         if(editing)await supabase.from('centers').update(payload).eq('id',editing.id);
         else await supabase.from('centers').insert(payload);
-        load();close();
+        await load();setModal(false);setForm({name:'',slug:'',description:''});setEditing(null);setSaving(false);
       };
-      const remove=async id=>{if(confirm('Supprimer ?')){await supabase.from('centers').delete().eq('id',id);load();}};
-      const close=()=>{setModal(false);setEditing(null);setForm({name:'',slug:'',description:''});};
+      const handleDelete=async id=>{if(!confirm('Supprimer ?'))return;await supabase.from('centers').delete().eq('id',id);load();};
 
       if(!isSuperAdmin)return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
-
-      return(
-        <div>
-          <div className="flex items-center justify-between mb-6">
-            <h1 className="text-2xl font-bold">Centres</h1>
-            <Button icon="Plus" onClick={()=>setModal(true)}>Nouveau</Button>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {centers.map(c=>(
-              <Card key={c.id} className="p-4">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center"><Icon name="Building2" size={24}/></div>
-                  <div><h3 className="font-semibold">{c.name}</h3><p className="text-sm text-gray-400">/{c.slug}</p></div>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(c);setForm({name:c.name,slug:c.slug,description:c.description||''});setModal(true);}}>Modifier</Button>
-                  <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>remove(c.id)}>Supprimer</Button>
-                </div>
-              </Card>
-            ))}
-          </div>
-          <Modal isOpen={modal} onClose={close} title={editing?'Modifier':'Nouveau centre'}>
-            <div className="space-y-4">
-              <Input label="Nom" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/>
-              <Input label="Slug" value={form.slug} onChange={e=>setForm({...form,slug:e.target.value})}/>
-              <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div>
-              <div className="flex justify-end gap-3"><Button variant="secondary" onClick={close}>Annuler</Button><Button onClick={save}>Enregistrer</Button></div>
-            </div>
-          </Modal>
-        </div>
-      );
+      return<div>
+        <div className="flex items-center justify-between mb-6"><h1 className="text-2xl font-bold">Centres</h1><Button icon="Plus" onClick={()=>{setForm({name:'',slug:'',description:''});setEditing(null);setModal(true);}}>Nouveau</Button></div>
+        {centers.length===0?<Empty icon="Building2" title="Aucun centre"/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{centers.map(c=><Card key={c.id} className="p-4"><div className="flex items-center gap-3 mb-3"><div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center"><Icon name="Building2" size={24}/></div><div><h3 className="font-semibold">{c.name}</h3><p className="text-sm text-gray-400">/{c.slug}</p></div></div><div className="flex gap-2"><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(c);setForm({name:c.name,slug:c.slug,description:c.description||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(c.id)}>Supprimer</Button></div></Card>)}</div>}
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier':'Nouveau centre'}><div className="space-y-4"><Input label="Nom" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/><Input label="Slug" value={form.slug} onChange={e=>setForm({...form,slug:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
+      </div>;
     }
 
-    // Users - Version simplifiée et stable
+    // Users - AVEC EDGE FUNCTION
     function UsersPage(){
-      const{center,isSuperAdmin,can}=useAuth();
+      const{profile,center,isSuperAdmin,can}=useAuth();
       const[users,setUsers]=useState([]);
       const[centers,setCenters]=useState([]);
       const[loading,setLoading]=useState(true);
@@ -476,29 +256,29 @@
       const[editing,setEditing]=useState(null);
       const[search,setSearch]=useState('');
       const[form,setForm]=useState({email:'',first_name:'',last_name:'',role:'learner',center_id:''});
+      const[saving,setSaving]=useState(false);
       const[importData,setImportData]=useState([]);
       const[importLoading,setImportLoading]=useState(false);
       const[importResult,setImportResult]=useState(null);
       const fileInputRef=useRef(null);
 
-      useEffect(()=>{load();},[]);
       const load=async()=>{
         let q=supabase.from('profiles').select('*,centers(name)').order('created_at',{ascending:false});
         if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);
-        const{data}=await q;setUsers(data||[]);
+        const{data:u}=await q;setUsers(u||[]);
         if(isSuperAdmin){const{data:c}=await supabase.from('centers').select('id,name');setCenters(c||[]);}
         setLoading(false);
       };
+      useEffect(()=>{load();},[]);
 
-      const save=async()=>{
-        if(editing){
-          await supabase.from('profiles').update({first_name:form.first_name,last_name:form.last_name,role:form.role,center_id:form.center_id||null}).eq('id',editing.id);
-          load();close();
-        }
+      const handleSave=async()=>{
+        if(!editing)return;
+        setSaving(true);
+        await supabase.from('profiles').update({first_name:form.first_name,last_name:form.last_name,role:form.role,center_id:form.center_id||null}).eq('id',editing.id);
+        await load();setModal(false);setEditing(null);setSaving(false);
       };
-      const close=()=>{setModal(false);setEditing(null);};
 
-      // Import Excel simplifié
+      // Import Excel
       const handleFileSelect=async(e)=>{
         const file=e.target.files[0];if(!file)return;
         try{
@@ -509,32 +289,100 @@
           const mapped=jsonData.map((row,i)=>{
             const role=String(row['Rôle']||row['Role']||row['role']||'learner').toLowerCase();
             const validRoles=['learner','trainer','center_admin'];
-            return{_index:i+1,email:row['Email']||row['email']||'',first_name:row['Prénom']||row['Prenom']||row['first_name']||'',last_name:row['Nom']||row['last_name']||'',role:validRoles.includes(role)?role:'learner',center_name:row['Centre']||row['center']||'',_valid:!!(row['Email']||row['email'])};
+            return{
+              _index:i+1,
+              email:String(row['Email']||row['email']||'').toLowerCase().trim(),
+              first_name:row['Prénom']||row['Prenom']||row['first_name']||'',
+              last_name:row['Nom']||row['last_name']||'',
+              role:validRoles.includes(role)?role:'learner',
+              password:row['Mot de passe']||row['Password']||row['password']||'',
+              center_name:row['Centre']||row['center']||'',
+              _valid:!!(row['Email']||row['email'])&&!!(row['Prénom']||row['Prenom']||row['first_name'])&&!!(row['Nom']||row['last_name'])
+            };
           });
           setImportData(mapped);setImportResult(null);
         }catch(err){alert('Erreur: '+err.message);}
         e.target.value='';
       };
 
-      // Import: mise à jour profils existants uniquement
+      // Import via Edge Function
       const handleImport=async()=>{
-        const validData=importData.filter(d=>d._valid);if(!validData.length)return;
-        setImportLoading(true);let updated=0,notFound=0,errors=0;
-        for(const item of validData){
-          let targetCenterId=center?.id;
-          if(isSuperAdmin&&item.center_name){const found=centers.find(c=>c.name.toLowerCase()===item.center_name.toLowerCase());if(found)targetCenterId=found.id;}
-          const{data:existing}=await supabase.from('profiles').select('id').eq('email',item.email).single();
-          if(existing){
-            const{error}=await supabase.from('profiles').update({first_name:item.first_name||undefined,last_name:item.last_name||undefined,role:item.role,center_id:targetCenterId}).eq('id',existing.id);
-            if(error)errors++;else updated++;
-          }else{notFound++;}
+        const validData=importData.filter(d=>d._valid);
+        if(!validData.length){alert('Aucune donnée valide');return;}
+        
+        setImportLoading(true);
+        try{
+          // Préparer les données
+          const usersToCreate=validData.map(item=>{
+            let targetCenterId=center?.id;
+            if(isSuperAdmin&&item.center_name){
+              const found=centers.find(c=>c.name.toLowerCase()===item.center_name.toLowerCase());
+              if(found)targetCenterId=found.id;
+            }
+            return{
+              email:item.email,
+              password:item.password||'',
+              first_name:item.first_name,
+              last_name:item.last_name,
+              role:item.role,
+              center_id:targetCenterId
+            };
+          });
+
+          // Appeler l'Edge Function
+          const{data:{session}}=await supabase.auth.getSession();
+          const response=await fetch(`${SUPABASE_URL}/functions/v1/create-users`,{
+            method:'POST',
+            headers:{
+              'Content-Type':'application/json',
+              'Authorization':`Bearer ${session?.access_token}`
+            },
+            body:JSON.stringify({users:usersToCreate})
+          });
+
+          const result=await response.json();
+          
+          if(result.success){
+            setImportResult({
+              created:result.created||0,
+              updated:result.updated||0,
+              errors:result.errors||0,
+              results:result.results||[]
+            });
+            await load();
+          }else{
+            setImportResult({created:0,updated:0,errors:validData.length,errorMessage:result.error});
+          }
+        }catch(err){
+          console.error('Import error:',err);
+          setImportResult({created:0,updated:0,errors:validData.length,errorMessage:err.message});
         }
-        setImportLoading(false);setImportResult({updated,notFound,errors});load();
+        setImportLoading(false);
       };
 
       const downloadTemplate=()=>{
-        const template=[{'Email':'user@example.com','Prénom':'Jean','Nom':'Dupont','Rôle':'learner','Centre':''}];
-        const ws=XLSX.utils.json_to_sheet(template);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Utilisateurs');XLSX.writeFile(wb,'template_utilisateurs.xlsx');
+        const template=[
+          {'Email':'paul.moreau@email.com','Prénom':'Paul','Nom':'Moreau','Rôle':'learner','Mot de passe':'','Centre':''},
+          {'Email':'marie.dupont@email.com','Prénom':'Marie','Nom':'Dupont','Rôle':'trainer','Mot de passe':'Trainer123!','Centre':''}
+        ];
+        const ws=XLSX.utils.json_to_sheet(template);
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,ws,'Utilisateurs');
+        XLSX.writeFile(wb,'template_utilisateurs.xlsx');
+      };
+
+      const exportResults=()=>{
+        if(!importResult?.results)return;
+        const data=importResult.results.map(r=>({
+          'Email':r.email,
+          'Statut':r.status==='created'?'Créé':r.status==='updated'?'Mis à jour':'Erreur',
+          'Mot de passe':r.password||'',
+          'Message':r.message||''
+        }));
+        const ws=XLSX.utils.json_to_sheet(data);
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,ws,'Résultats');
+        XLSX.writeFile(wb,'resultat_import.xlsx');
       };
 
       const filtered=users.filter(u=>{if(!search)return true;const s=search.toLowerCase();return u.email?.toLowerCase().includes(s)||u.first_name?.toLowerCase().includes(s)||u.last_name?.toLowerCase().includes(s);});
@@ -542,55 +390,78 @@
       if(!can('manageUsers'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
 
-      return(
-        <div>
-          <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-            <h1 className="text-2xl font-bold">Utilisateurs</h1>
-            <Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button>
-          </div>
-          <Card className="p-4 mb-6"><Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/></Card>
-          <Card>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Utilisateur</th><th className="text-left p-4 font-medium text-gray-400">Rôle</th>{isSuperAdmin&&<th className="text-left p-4 font-medium text-gray-400">Centre</th>}<th className="text-right p-4"></th></tr></thead>
-                <tbody className="divide-y divide-gray-700">
-                  {filtered.map(u=>(
-                    <tr key={u.id} className="hover:bg-gray-750/50">
-                      <td className="p-4"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center"><Icon name="User" size={18}/></div><div><p className="font-medium">{u.first_name} {u.last_name}</p><p className="text-sm text-gray-400">{u.email}</p></div></div></td>
-                      <td className="p-4"><RoleBadge role={u.role}/></td>
-                      {isSuperAdmin&&<td className="p-4 text-gray-400">{u.centers?.name||'-'}</td>}
-                      <td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(u);setForm({email:u.email,first_name:u.first_name||'',last_name:u.last_name||'',role:u.role,center_id:u.center_id||''});setModal(true);}}/></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      return<div>
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-4"><h1 className="text-2xl font-bold">Utilisateurs</h1><Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button></div>
+        <Card className="p-4 mb-6"><Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/></Card>
+        <Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Utilisateur</th><th className="text-left p-4 font-medium text-gray-400">Rôle</th>{isSuperAdmin&&<th className="text-left p-4 font-medium text-gray-400">Centre</th>}<th className="text-right p-4"></th></tr></thead><tbody className="divide-y divide-gray-700">{filtered.map(u=><tr key={u.id} className="hover:bg-gray-750/50"><td className="p-4"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center"><Icon name="User" size={18}/></div><div><p className="font-medium">{u.first_name} {u.last_name}</p><p className="text-sm text-gray-400">{u.email}</p></div></div></td><td className="p-4"><RoleBadge role={u.role}/></td>{isSuperAdmin&&<td className="p-4 text-gray-400">{u.centers?.name||'-'}</td>}<td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(u);setForm({email:u.email,first_name:u.first_name||'',last_name:u.last_name||'',role:u.role,center_id:u.center_id||''});setModal(true);}}/></td></tr>)}</tbody></table></div></Card>
+        
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title="Modifier"><div className="space-y-4"><Input label="Email" value={form.email} disabled/><div className="grid grid-cols-2 gap-4"><Input label="Prénom" value={form.first_name} onChange={e=>setForm({...form,first_name:e.target.value})}/><Input label="Nom" value={form.last_name} onChange={e=>setForm({...form,last_name:e.target.value})}/></div><Select label="Rôle" value={form.role} onChange={e=>setForm({...form,role:e.target.value})} options={Object.entries(ROLE_LABELS).filter(([r])=>isSuperAdmin||r!=='super_admin').map(([v,l])=>({value:v,label:l}))}/>{isSuperAdmin&&<Select label="Centre" value={form.center_id} onChange={e=>setForm({...form,center_id:e.target.value})} options={[{value:'',label:'Aucun'},...centers.map(c=>({value:c.id,label:c.name}))]}/>}<div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
+
+        <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer des utilisateurs" size="lg">
+          <div className="space-y-4">
+            <Alert type="info">
+              <p className="font-medium mb-1">✨ Import automatique</p>
+              <p className="text-sm">Crée automatiquement les comptes et assigne les rôles. Si le mot de passe est vide, un mot de passe aléatoire sera généré.</p>
+            </Alert>
+            
+            <div className="bg-gray-700/50 rounded-lg p-4">
+              <p className="text-sm text-gray-400 mb-2">Colonnes : Email*, Prénom*, Nom*, Rôle, Mot de passe, Centre</p>
+              <p className="text-sm text-gray-400 mb-3">Rôles : learner, trainer, center_admin</p>
+              <Button variant="ghost" size="sm" icon="Download" onClick={downloadTemplate}>Télécharger le template</Button>
             </div>
-          </Card>
-          <Modal isOpen={modal} onClose={close} title="Modifier l'utilisateur">
-            <div className="space-y-4">
-              <Input label="Email" value={form.email} disabled/>
-              <div className="grid grid-cols-2 gap-4"><Input label="Prénom" value={form.first_name} onChange={e=>setForm({...form,first_name:e.target.value})}/><Input label="Nom" value={form.last_name} onChange={e=>setForm({...form,last_name:e.target.value})}/></div>
-              <Select label="Rôle" value={form.role} onChange={e=>setForm({...form,role:e.target.value})} options={Object.entries(ROLE_LABELS).filter(([r])=>isSuperAdmin||r!=='super_admin').map(([v,l])=>({value:v,label:l}))}/>
-              {isSuperAdmin&&<Select label="Centre" value={form.center_id} onChange={e=>setForm({...form,center_id:e.target.value})} options={[{value:'',label:'Aucun'},...centers.map(c=>({value:c.id,label:c.name}))]}/>}
-              <div className="flex justify-end gap-3"><Button variant="secondary" onClick={close}>Annuler</Button><Button onClick={save}>Enregistrer</Button></div>
+
+            <div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center">
+              <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".xlsx,.xls,.csv" className="hidden"/>
+              <Icon name="Users" size={48} className="mx-auto text-gray-500 mb-4"/>
+              <p className="text-gray-400 mb-4">Glissez un fichier Excel ou</p>
+              <Button variant="secondary" onClick={()=>fileInputRef.current?.click()}>Parcourir</Button>
             </div>
-          </Modal>
-          <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer / Mettre à jour" size="lg">
-            <div className="space-y-4">
-              <Alert type="info"><p className="font-medium mb-2">⚠️ Import pour profils existants</p><p className="text-sm">Met à jour les rôles/centres des utilisateurs déjà créés dans Supabase Auth.</p></Alert>
-              <div className="bg-gray-700/50 rounded-lg p-4"><p className="text-sm text-gray-400 mb-3">Colonnes : Email, Prénom, Nom, Rôle, Centre</p><Button variant="ghost" size="sm" icon="Download" onClick={downloadTemplate}>Télécharger template</Button></div>
-              <div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center">
-                <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".xlsx,.xls,.csv" className="hidden"/>
-                <Icon name="Users" size={48} className="mx-auto text-gray-500 mb-4"/>
-                <Button variant="secondary" onClick={()=>fileInputRef.current?.click()}>Parcourir</Button>
+
+            {importData.length>0&&!importResult&&(
+              <div>
+                <h3 className="font-medium mb-2">Aperçu ({importData.filter(d=>d._valid).length} valides / {importData.length} total)</h3>
+                <div className="max-h-48 overflow-y-auto bg-gray-700/50 rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-700 sticky top-0"><tr><th className="p-2 text-left">Email</th><th className="p-2 text-left">Nom</th><th className="p-2 text-left">Rôle</th><th className="p-2 text-left">Statut</th></tr></thead>
+                    <tbody>{importData.map((row,i)=>(<tr key={i} className={row._valid?'':'bg-red-900/20'}><td className="p-2">{row.email}</td><td className="p-2">{row.first_name} {row.last_name}</td><td className="p-2"><RoleBadge role={row.role}/></td><td className="p-2">{row._valid?<span className="text-green-400">✓</span>:<span className="text-red-400">Incomplet</span>}</td></tr>))}</tbody>
+                  </table>
+                </div>
               </div>
-              {importData.length>0&&!importResult&&<div className="max-h-48 overflow-y-auto bg-gray-700/50 rounded-lg p-2">{importData.filter(d=>d._valid).map((row,i)=><div key={i} className="text-sm py-1">{row.email} - {row.first_name} {row.last_name} ({row.role})</div>)}</div>}
-              {importResult&&<Alert type={importResult.errors>0?'warning':'success'}><p className="font-medium">{importResult.updated>0&&<span>✅ {importResult.updated} mis à jour</span>}{importResult.notFound>0&&<span className="text-yellow-400"> | ⚠️ {importResult.notFound} non trouvé(s)</span>}{importResult.errors>0&&<span className="text-red-400"> | ❌ {importResult.errors} erreur(s)</span>}</p></Alert>}
-              <div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>{importData.length>0&&!importResult&&<Button icon="Upload" onClick={handleImport} loading={importLoading}>Mettre à jour {importData.filter(d=>d._valid).length}</Button>}</div>
+            )}
+
+            {importResult&&(
+              <div className="space-y-3">
+                {importResult.errorMessage?(
+                  <Alert type="error"><p className="font-medium">❌ Erreur : {importResult.errorMessage}</p><p className="text-sm mt-1">Vérifiez que l'Edge Function est bien déployée.</p></Alert>
+                ):(
+                  <Alert type={importResult.errors>0?'warning':'success'}>
+                    <p className="font-medium">
+                      {importResult.created>0&&<span className="text-green-400">✅ {importResult.created} créé(s) </span>}
+                      {importResult.updated>0&&<span className="text-blue-400">🔄 {importResult.updated} mis à jour </span>}
+                      {importResult.errors>0&&<span className="text-yellow-400">⚠️ {importResult.errors} erreur(s)</span>}
+                    </p>
+                  </Alert>
+                )}
+                {importResult.results?.some(r=>r.password)&&(
+                  <div className="bg-indigo-500/20 p-4 rounded-lg">
+                    <p className="text-sm text-indigo-300 mb-2">⚠️ Des mots de passe ont été générés. Exportez pour les récupérer.</p>
+                    <Button variant="secondary" size="sm" icon="Download" onClick={exportResults}>Exporter les résultats</Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>
+              {importData.length>0&&!importResult&&(
+                <Button icon="Upload" onClick={handleImport} loading={importLoading} disabled={importData.filter(d=>d._valid).length===0}>
+                  Importer {importData.filter(d=>d._valid).length} utilisateur(s)
+                </Button>
+              )}
             </div>
-          </Modal>
-        </div>
-      );
+          </div>
+        </Modal>
+      </div>;
     }
 
     // Videos
@@ -603,114 +474,44 @@
       const[editing,setEditing]=useState(null);
       const[search,setSearch]=useState('');
       const[form,setForm]=useState({title:'',vimeo_id:'',duration:'',category:'',description:'',sort_order:'',tags:'',theme:'',thumbnail_url:''});
+      const[saving,setSaving]=useState(false);
       const[importData,setImportData]=useState([]);
       const[importLoading,setImportLoading]=useState(false);
       const[importResult,setImportResult]=useState(null);
       const fileInputRef=useRef(null);
 
+      const load=async()=>{let q=supabase.from('videos').select('*').order('sort_order',{ascending:true,nullsFirst:false}).order('created_at',{ascending:false});if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);const{data}=await q;setVideos(data||[]);setLoading(false);};
       useEffect(()=>{load();},[]);
-      const load=async()=>{
-        let q=supabase.from('videos').select('*').order('sort_order',{ascending:true,nullsFirst:false}).order('created_at',{ascending:false});
-        if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);
-        const{data}=await q;setVideos(data||[]);setLoading(false);
-      };
+      const resetForm=()=>setForm({title:'',vimeo_id:'',duration:'',category:'',description:'',sort_order:'',tags:'',theme:'',thumbnail_url:''});
 
-      const save=async()=>{
+      const handleSave=async()=>{
+        setSaving(true);
         const vimeoMatch=form.vimeo_id.match(/vimeo\.com\/(\d+)/)||form.vimeo_id.match(/^(\d+)$/);
         const vimeoId=vimeoMatch?vimeoMatch[1]:form.vimeo_id;
         const tagsArray=form.tags?form.tags.split(',').map(t=>t.trim()).filter(t=>t):null;
         const payload={title:form.title,vimeo_id:vimeoId,duration:form.duration||null,category:form.category||null,description:form.description||null,sort_order:form.sort_order?parseInt(form.sort_order):null,tags:tagsArray,theme:form.theme||null,thumbnail_url:form.thumbnail_url||null,center_id:center?.id,created_by:profile?.id};
         if(editing)await supabase.from('videos').update(payload).eq('id',editing.id);
         else await supabase.from('videos').insert(payload);
-        load();close();
+        await load();setModal(false);resetForm();setEditing(null);setSaving(false);
       };
-      const remove=async id=>{if(confirm('Supprimer ?')){await supabase.from('videos').delete().eq('id',id);load();}};
-      const close=()=>{setModal(false);setEditing(null);setForm({title:'',vimeo_id:'',duration:'',category:'',description:'',sort_order:'',tags:'',theme:'',thumbnail_url:''});};
+      const handleDelete=async id=>{if(!confirm('Supprimer ?'))return;await supabase.from('videos').delete().eq('id',id);load();};
 
-      // Import Excel
-      const handleFileSelect=async(e)=>{
-        const file=e.target.files[0];if(!file)return;
-        try{
-          const data=await file.arrayBuffer();const workbook=XLSX.read(data);const sheet=workbook.Sheets[workbook.SheetNames[0]];const jsonData=XLSX.utils.sheet_to_json(sheet);
-          const mapped=jsonData.map((row,i)=>({_index:i+1,title:row['Titre']||row['title']||'',vimeo_id:String(row['ID Vimeo']||row['vimeo_id']||''),duration:row['Durée']||row['duration']||'',category:row['Catégorie']||row['category']||'',description:row['Description']||row['description']||'',sort_order:row['Ordre']||row['sort_order']||null,tags:row['Tags']||row['tags']||'',theme:row['Thème']||row['theme']||'',thumbnail_url:row['Miniature URL']||row['thumbnail_url']||'',_valid:!!(row['Titre']||row['title'])&&!!(row['ID Vimeo']||row['vimeo_id'])}));
-          setImportData(mapped);setImportResult(null);
-        }catch(err){alert('Erreur: '+err.message);}
-        e.target.value='';
-      };
+      const handleFileSelect=async(e)=>{const file=e.target.files[0];if(!file)return;try{const data=await file.arrayBuffer();const workbook=XLSX.read(data);const sheet=workbook.Sheets[workbook.SheetNames[0]];const jsonData=XLSX.utils.sheet_to_json(sheet);const mapped=jsonData.map((row,i)=>({_index:i+1,title:row['Titre']||row['title']||'',vimeo_id:String(row['ID Vimeo']||row['vimeo_id']||''),duration:row['Durée']||row['duration']||'',category:row['Catégorie']||row['category']||'',description:row['Description']||'',sort_order:row['Ordre']||null,tags:row['Tags']||'',theme:row['Thème']||'',thumbnail_url:row['Miniature URL']||'',_valid:!!(row['Titre']||row['title'])&&!!(row['ID Vimeo']||row['vimeo_id'])}));setImportData(mapped);setImportResult(null);}catch(err){alert('Erreur: '+err.message);}e.target.value='';};
 
-      const handleImport=async()=>{
-        const validData=importData.filter(d=>d._valid);if(!validData.length)return;
-        setImportLoading(true);let created=0,updated=0,errors=0;
-        for(const item of validData){
-          const vimeoMatch=item.vimeo_id.match(/vimeo\.com\/(\d+)/)||item.vimeo_id.match(/^(\d+)$/);
-          const vimeoId=vimeoMatch?vimeoMatch[1]:item.vimeo_id;
-          const tagsArray=item.tags?item.tags.split(',').map(t=>t.trim()).filter(t=>t):null;
-          const payload={title:item.title,duration:item.duration||null,category:item.category||null,description:item.description||null,sort_order:item.sort_order?parseInt(item.sort_order):null,tags:tagsArray,theme:item.theme||null,thumbnail_url:item.thumbnail_url||null};
-          const{data:existing}=await supabase.from('videos').select('id').eq('vimeo_id',vimeoId).eq('center_id',center?.id).single();
-          if(existing){const{error}=await supabase.from('videos').update(payload).eq('id',existing.id);if(error)errors++;else updated++;}
-          else{const{error}=await supabase.from('videos').insert({...payload,vimeo_id:vimeoId,center_id:center?.id,created_by:profile?.id});if(error)errors++;else created++;}
-        }
-        setImportLoading(false);setImportResult({created,updated,errors});load();
-      };
+      const handleImport=async()=>{const validData=importData.filter(d=>d._valid);if(!validData.length)return;setImportLoading(true);let created=0,updated=0,errors=0;for(const item of validData){const vimeoMatch=item.vimeo_id.match(/vimeo\.com\/(\d+)/)||item.vimeo_id.match(/^(\d+)$/);const vimeoId=vimeoMatch?vimeoMatch[1]:item.vimeo_id;const tagsArray=item.tags?item.tags.split(',').map(t=>t.trim()).filter(t=>t):null;const payload={title:item.title,vimeo_id:vimeoId,duration:item.duration||null,category:item.category||null,description:item.description||null,sort_order:item.sort_order?parseInt(item.sort_order):null,tags:tagsArray,theme:item.theme||null,thumbnail_url:item.thumbnail_url||null,center_id:center?.id,created_by:profile?.id};const{data:existing}=await supabase.from('videos').select('id').eq('vimeo_id',vimeoId).eq('center_id',center?.id).single();if(existing){const{error}=await supabase.from('videos').update(payload).eq('id',existing.id);if(error)errors++;else updated++;}else{const{error}=await supabase.from('videos').insert(payload);if(error)errors++;else created++;}}setImportLoading(false);setImportResult({created,updated,errors});await load();};
 
-      const downloadTemplate=()=>{
-        const template=[{'Titre':'Ma vidéo','ID Vimeo':'123456789','Durée':'5:30','Catégorie':'','Thème':'','Tags':'','Description':''}];
-        const ws=XLSX.utils.json_to_sheet(template);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Videos');XLSX.writeFile(wb,'template_videos.xlsx');
-      };
+      const downloadTemplate=()=>{const template=[{'Titre':'Ma vidéo','ID Vimeo':'123456789','Durée':'5:30','Ordre':'1','Tags':'tag1, tag2','Catégorie':'Intro','Thème':'Bases','Description':''}];const ws=XLSX.utils.json_to_sheet(template);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Videos');XLSX.writeFile(wb,'template_videos.xlsx');};
 
-      const filtered=videos.filter(v=>!search||v.title?.toLowerCase().includes(search.toLowerCase())||v.category?.toLowerCase().includes(search.toLowerCase()));
-
+      const filtered=videos.filter(v=>!search||v.title?.toLowerCase().includes(search.toLowerCase()));
       if(loading)return<Loading/>;
 
-      return(
-        <div>
-          <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-            <h1 className="text-2xl font-bold">Bibliothèque vidéo</h1>
-            <div className="flex gap-2"><Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button><Button icon="Plus" onClick={()=>setModal(true)}>Ajouter</Button></div>
-          </div>
-          <Card className="p-4 mb-6"><Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/></Card>
-          {filtered.length===0?<Empty icon="Film" title="Aucune vidéo" action={<Button icon="Plus" onClick={()=>setModal(true)}>Ajouter</Button>}/>:(
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filtered.map(v=>(
-                <Card key={v.id} className="overflow-hidden">
-                  <div className="aspect-video bg-gray-900 relative">
-                    {v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:<iframe src={`https://player.vimeo.com/video/${v.vimeo_id}?background=1`} className="w-full h-full" allow="autoplay"/>}
-                    <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>
-                    {v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}
-                  </div>
-                  <div className="p-4">
-                    <h3 className="font-semibold truncate">{v.title}</h3>
-                    <div className="flex flex-wrap gap-1 mt-2">{v.category&&<span className="px-2 py-1 bg-gray-700 rounded text-xs">{v.category}</span>}{v.theme&&<span className="px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded text-xs">{v.theme}</span>}</div>
-                    <div className="flex gap-2 mt-3">
-                      <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category:v.category||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme:v.theme||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button>
-                      <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>remove(v.id)}>Supprimer</Button>
-                    </div>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          )}
-          <Modal isOpen={modal} onClose={close} title={editing?'Modifier':'Ajouter une vidéo'} size="lg">
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})} required/><Input label="ID Vimeo *" value={form.vimeo_id} onChange={e=>setForm({...form,vimeo_id:e.target.value})} placeholder="123456789" required/></div>
-              <div className="grid grid-cols-3 gap-4"><Input label="Durée" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="5:30"/><Input label="Ordre" type="number" value={form.sort_order} onChange={e=>setForm({...form,sort_order:e.target.value})} placeholder="1"/><Input label="Catégorie" value={form.category} onChange={e=>setForm({...form,category:e.target.value})}/></div>
-              <div className="grid grid-cols-2 gap-4"><Input label="Thème" value={form.theme} onChange={e=>setForm({...form,theme:e.target.value})}/><Input label="Tags (virgules)" value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})}/></div>
-              <Input label="Miniature URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})}/>
-              <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div>
-              <div className="flex justify-end gap-3"><Button variant="secondary" onClick={close}>Annuler</Button><Button onClick={save}>Enregistrer</Button></div>
-            </div>
-          </Modal>
-          <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer des vidéos" size="lg">
-            <div className="space-y-4">
-              <div className="bg-gray-700/50 rounded-lg p-4"><p className="text-sm text-gray-400 mb-3">Colonnes : Titre, ID Vimeo, Durée, Catégorie, Thème, Tags</p><Button variant="ghost" size="sm" icon="Download" onClick={downloadTemplate}>Télécharger template</Button></div>
-              <div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center"><input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".xlsx,.xls,.csv" className="hidden"/><Icon name="Film" size={48} className="mx-auto text-gray-500 mb-4"/><Button variant="secondary" onClick={()=>fileInputRef.current?.click()}>Parcourir</Button></div>
-              {importData.length>0&&!importResult&&<div className="max-h-48 overflow-y-auto bg-gray-700/50 rounded-lg p-2">{importData.filter(d=>d._valid).map((row,i)=><div key={i} className="text-sm py-1">{row.title} - {row.vimeo_id}</div>)}</div>}
-              {importResult&&<Alert type={importResult.errors>0?'warning':'success'}>{importResult.created>0&&<span className="text-green-400">✅ {importResult.created} créée(s)</span>}{importResult.updated>0&&<span className="text-blue-400"> | 🔄 {importResult.updated} mise(s) à jour</span>}{importResult.errors>0&&<span className="text-red-400"> | ❌ {importResult.errors} erreur(s)</span>}</Alert>}
-              <div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>{importData.length>0&&!importResult&&<Button icon="Upload" onClick={handleImport} loading={importLoading}>Importer {importData.filter(d=>d._valid).length}</Button>}</div>
-            </div>
-          </Modal>
-        </div>
-      );
+      return<div>
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-4"><h1 className="text-2xl font-bold">Bibliothèque vidéo</h1><div className="flex gap-2"><Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button><Button icon="Plus" onClick={()=>{resetForm();setEditing(null);setModal(true);}}>Ajouter</Button></div></div>
+        <Card className="p-4 mb-6"><Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/></Card>
+        {filtered.length===0?<Empty icon="Film" title="Aucune vidéo"/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{filtered.map(v=><Card key={v.id} className="overflow-hidden"><div className="aspect-video bg-gray-900 relative">{v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:<iframe src={`https://player.vimeo.com/video/${v.vimeo_id}?background=1`} className="w-full h-full" allow="autoplay"/>}<div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>{v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}</div><div className="p-4"><h3 className="font-semibold truncate">{v.title}</h3><div className="flex flex-wrap gap-1 mt-2">{v.category&&<span className="px-2 py-1 bg-gray-700 rounded text-xs">{v.category}</span>}{v.theme&&<span className="px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded text-xs">{v.theme}</span>}</div><div className="flex gap-2 mt-3"><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category:v.category||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme:v.theme||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(v.id)}>Supprimer</Button></div></div></Card>)}</div>}
+        <Modal isOpen={modal} onClose={()=>{setModal(false);resetForm();setEditing(null);}} title={editing?'Modifier':'Ajouter'} size="lg"><div className="space-y-4"><div className="grid grid-cols-2 gap-4"><Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><Input label="ID Vimeo *" value={form.vimeo_id} onChange={e=>setForm({...form,vimeo_id:e.target.value})} placeholder="123456789"/></div><div className="grid grid-cols-3 gap-4"><Input label="Durée" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="5:30"/><Input label="Ordre" type="number" value={form.sort_order} onChange={e=>setForm({...form,sort_order:e.target.value})}/><Input label="Catégorie" value={form.category} onChange={e=>setForm({...form,category:e.target.value})}/></div><div className="grid grid-cols-2 gap-4"><Input label="Thème" value={form.theme} onChange={e=>setForm({...form,theme:e.target.value})}/><Input label="Tags" value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="tag1, tag2"/></div><Input label="Miniature URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setModal(false);resetForm();setEditing(null);}}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
+        <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer" size="lg"><div className="space-y-4"><div className="bg-gray-700/50 rounded-lg p-4"><p className="text-sm text-gray-400 mb-2">Colonnes : Titre*, ID Vimeo*, Durée, Ordre, Tags, Catégorie, Thème</p><Button variant="ghost" size="sm" icon="Download" onClick={downloadTemplate}>Template</Button></div><div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center"><input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".xlsx,.xls,.csv" className="hidden"/><Icon name="Film" size={48} className="mx-auto text-gray-500 mb-4"/><Button variant="secondary" onClick={()=>fileInputRef.current?.click()}>Parcourir</Button></div>{importData.length>0&&!importResult&&<div className="max-h-48 overflow-y-auto bg-gray-700/50 rounded-lg p-2">{importData.filter(d=>d._valid).map((row,i)=><div key={i} className="text-sm py-1">{row.title}</div>)}</div>}{importResult&&<Alert type={importResult.errors>0?'warning':'success'}>{importResult.created>0&&<span className="text-green-400">✅ {importResult.created} créée(s) </span>}{importResult.updated>0&&<span className="text-blue-400">🔄 {importResult.updated} mise(s) à jour </span>}{importResult.errors>0&&<span className="text-red-400">❌ {importResult.errors} erreur(s)</span>}</Alert>}<div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>{importData.length>0&&!importResult&&<Button icon="Upload" onClick={handleImport} loading={importLoading}>Importer {importData.filter(d=>d._valid).length}</Button>}</div></div></Modal>
+      </div>;
     }
 
     // Playlists
@@ -722,61 +523,27 @@
       const[modal,setModal]=useState(false);
       const[editing,setEditing]=useState(null);
       const[form,setForm]=useState({title:'',description:''});
+      const[saving,setSaving]=useState(false);
       const[editVideosModal,setEditVideosModal]=useState(null);
       const[playlistVideos,setPlaylistVideos]=useState([]);
 
+      const load=async()=>{let q=supabase.from('playlists').select('*,playlist_videos(count)').order('created_at',{ascending:false});if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);const{data:p}=await q;setPlaylists(p||[]);let qv=supabase.from('videos').select('*');if(!isSuperAdmin&&center?.id)qv=qv.eq('center_id',center.id);const{data:v}=await qv;setVideos(v||[]);setLoading(false);};
       useEffect(()=>{load();},[]);
-      const load=async()=>{
-        let q=supabase.from('playlists').select('*,playlist_videos(count)').order('created_at',{ascending:false});
-        if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);
-        const{data:p}=await q;setPlaylists(p||[]);
-        let qv=supabase.from('videos').select('*');
-        if(!isSuperAdmin&&center?.id)qv=qv.eq('center_id',center.id);
-        const{data:v}=await qv;setVideos(v||[]);setLoading(false);
-      };
 
-      const save=async()=>{
-        const payload={title:form.title,description:form.description,center_id:center?.id,created_by:profile?.id};
-        if(editing)await supabase.from('playlists').update(payload).eq('id',editing.id);
-        else await supabase.from('playlists').insert(payload);
-        load();close();
-      };
-      const remove=async id=>{if(confirm('Supprimer ?')){await supabase.from('playlists').delete().eq('id',id);load();}};
-      const close=()=>{setModal(false);setEditing(null);setForm({title:'',description:''});};
+      const handleSave=async()=>{setSaving(true);const payload={title:form.title,description:form.description,center_id:center?.id,created_by:profile?.id};if(editing)await supabase.from('playlists').update(payload).eq('id',editing.id);else await supabase.from('playlists').insert(payload);await load();setModal(false);setForm({title:'',description:''});setEditing(null);setSaving(false);};
+      const handleDelete=async id=>{if(!confirm('Supprimer ?'))return;await supabase.from('playlists').delete().eq('id',id);load();};
       const openEditVideos=async(playlist)=>{const{data}=await supabase.from('playlist_videos').select('*,videos(*)').eq('playlist_id',playlist.id).order('position');setPlaylistVideos(data||[]);setEditVideosModal(playlist);};
-      const addVideo=async(videoId)=>{const pos=playlistVideos.length;const{data}=await supabase.from('playlist_videos').insert({playlist_id:editVideosModal.id,video_id:videoId,position:pos}).select('*,videos(*)').single();if(data)setPlaylistVideos([...playlistVideos,data]);};
-      const removeVideo=async(pvId)=>{await supabase.from('playlist_videos').delete().eq('id',pvId);setPlaylistVideos(playlistVideos.filter(pv=>pv.id!==pvId));};
-      const togglePublish=async(playlist)=>{await supabase.from('playlists').update({is_published:!playlist.is_published,published_at:!playlist.is_published?new Date().toISOString():null}).eq('id',playlist.id);load();};
+      const addVideoToPlaylist=async(videoId)=>{const pos=playlistVideos.length;const{data}=await supabase.from('playlist_videos').insert({playlist_id:editVideosModal.id,video_id:videoId,position:pos}).select('*,videos(*)').single();if(data)setPlaylistVideos([...playlistVideos,data]);};
+      const removeVideoFromPlaylist=async(pvId)=>{await supabase.from('playlist_videos').delete().eq('id',pvId);setPlaylistVideos(playlistVideos.filter(pv=>pv.id!==pvId));};
+      const togglePublish=async(playlist)=>{await supabase.from('playlists').update({is_published:!playlist.is_published}).eq('id',playlist.id);load();};
 
       if(loading)return<Loading/>;
-
-      return(
-        <div>
-          <div className="flex items-center justify-between mb-6"><h1 className="text-2xl font-bold">Cours</h1>{can('managePlaylists')&&<Button icon="Plus" onClick={()=>setModal(true)}>Créer</Button>}</div>
-          {playlists.length===0?<Empty icon="BookOpen" title="Aucun cours"/>:(
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {playlists.map(p=>(
-                <Card key={p.id} className="p-4">
-                  <div className="flex items-start justify-between mb-3"><div><h3 className="font-semibold">{p.title}</h3><p className="text-sm text-gray-400 mt-1">{p.playlist_videos?.[0]?.count||0} vidéos</p></div><span className={`px-2 py-1 rounded text-xs ${p.is_published?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>{p.is_published?'Publié':'Brouillon'}</span></div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button variant="ghost" size="sm" icon="Film" onClick={()=>openEditVideos(p)}>Vidéos</Button>
-                    <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(p);setForm({title:p.title,description:p.description||''});setModal(true);}}>Modifier</Button>
-                    {can('publish')&&<Button variant="ghost" size="sm" icon={p.is_published?'EyeOff':'Eye'} onClick={()=>togglePublish(p)}>{p.is_published?'Dépublier':'Publier'}</Button>}
-                    <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>remove(p.id)}/>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          )}
-          <Modal isOpen={modal} onClose={close} title={editing?'Modifier':'Créer un cours'}><div className="space-y-4"><Input label="Titre" value={form.title} onChange={e=>setForm({...form,title:e.target.value})} required/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={close}>Annuler</Button><Button onClick={save}>Enregistrer</Button></div></div></Modal>
-          <Modal isOpen={!!editVideosModal} onClose={()=>setEditVideosModal(null)} title={`Vidéos: ${editVideosModal?.title}`} size="lg">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div><h4 className="font-medium mb-3">Vidéos du cours ({playlistVideos.length})</h4><div className="space-y-2 max-h-96 overflow-y-auto">{playlistVideos.map((pv,i)=><div key={pv.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg"><span className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{i+1}</span><div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{pv.videos?.title}</p></div><button onClick={()=>removeVideo(pv.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button></div>)}{playlistVideos.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucune vidéo</p>}</div></div>
-              <div><h4 className="font-medium mb-3">Ajouter</h4><div className="space-y-2 max-h-96 overflow-y-auto">{videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)).map(v=><div key={v.id} className="flex items-center gap-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 cursor-pointer" onClick={()=>addVideo(v.id)}><Icon name="Plus" size={16} className="text-indigo-400"/><div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{v.title}</p></div></div>)}</div></div>
-            </div>
-          </Modal>
-        </div>
-      );
+      return<div>
+        <div className="flex items-center justify-between mb-6"><h1 className="text-2xl font-bold">Cours</h1>{can('managePlaylists')&&<Button icon="Plus" onClick={()=>{setForm({title:'',description:''});setEditing(null);setModal(true);}}>Créer</Button>}</div>
+        {playlists.length===0?<Empty icon="BookOpen" title="Aucun cours"/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{playlists.map(p=><Card key={p.id} className="p-4"><div className="flex items-start justify-between mb-3"><div><h3 className="font-semibold">{p.title}</h3><p className="text-sm text-gray-400 mt-1">{p.playlist_videos?.[0]?.count||0} vidéos</p></div><span className={`px-2 py-1 rounded text-xs ${p.is_published?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>{p.is_published?'Publié':'Brouillon'}</span></div><div className="flex flex-wrap gap-2">{can('managePlaylists')&&<><Button variant="ghost" size="sm" icon="Film" onClick={()=>openEditVideos(p)}>Vidéos</Button><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(p);setForm({title:p.title,description:p.description||''});setModal(true);}}>Modifier</Button></>}{can('publish')&&<Button variant="ghost" size="sm" icon={p.is_published?'EyeOff':'Eye'} onClick={()=>togglePublish(p)}>{p.is_published?'Dépublier':'Publier'}</Button>}{can('managePlaylists')&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(p.id)}/>}</div></Card>)}</div>}
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier':'Créer'}><div className="space-y-4"><Input label="Titre" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
+        <Modal isOpen={!!editVideosModal} onClose={()=>setEditVideosModal(null)} title={`Vidéos: ${editVideosModal?.title}`} size="lg"><div className="grid grid-cols-1 lg:grid-cols-2 gap-4"><div><h4 className="font-medium mb-3">Dans le cours ({playlistVideos.length})</h4><div className="space-y-2 max-h-96 overflow-y-auto">{playlistVideos.map((pv,i)=><div key={pv.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg"><span className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{i+1}</span><div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{pv.videos?.title}</p></div><button onClick={()=>removeVideoFromPlaylist(pv.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button></div>)}{playlistVideos.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucune vidéo</p>}</div></div><div><h4 className="font-medium mb-3">Disponibles</h4><div className="space-y-2 max-h-96 overflow-y-auto">{videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)).map(v=><div key={v.id} className="flex items-center gap-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 cursor-pointer" onClick={()=>addVideoToPlaylist(v.id)}><Icon name="Plus" size={16} className="text-indigo-400"/><div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{v.title}</p></div></div>)}{videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)).length===0&&<p className="text-gray-500 text-sm text-center py-4">Toutes ajoutées</p>}</div></div></div></Modal>
+      </div>;
     }
 
     // Enrollments
@@ -788,31 +555,20 @@
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
       const[form,setForm]=useState({playlist_id:'',learner_id:''});
+      const[saving,setSaving]=useState(false);
 
+      const load=async()=>{const{data:e}=await supabase.from('enrollments').select('*,playlists(title),profiles!enrollments_learner_id_fkey(first_name,last_name,email)').order('created_at',{ascending:false});setEnrollments(e||[]);let qp=supabase.from('playlists').select('id,title').eq('is_published',true);let ql=supabase.from('profiles').select('id,first_name,last_name,email').eq('role','learner');if(!isSuperAdmin&&center?.id){qp=qp.eq('center_id',center.id);ql=ql.eq('center_id',center.id);}const[{data:p},{data:l}]=await Promise.all([qp,ql]);setPlaylists(p||[]);setLearners(l||[]);setLoading(false);};
       useEffect(()=>{load();},[]);
-      const load=async()=>{
-        const{data:e}=await supabase.from('enrollments').select('*,playlists(title),profiles!enrollments_learner_id_fkey(first_name,last_name,email)').order('created_at',{ascending:false});
-        setEnrollments(e||[]);
-        let qp=supabase.from('playlists').select('id,title').eq('is_published',true);
-        let ql=supabase.from('profiles').select('id,first_name,last_name,email').eq('role','learner');
-        if(!isSuperAdmin&&center?.id){qp=qp.eq('center_id',center.id);ql=ql.eq('center_id',center.id);}
-        const[{data:p},{data:l}]=await Promise.all([qp,ql]);
-        setPlaylists(p||[]);setLearners(l||[]);setLoading(false);
-      };
-      const enroll=async()=>{await supabase.from('enrollments').insert({playlist_id:form.playlist_id,learner_id:form.learner_id,enrolled_by:profile?.id});load();setModal(false);setForm({playlist_id:'',learner_id:''});};
-      const unenroll=async id=>{if(confirm('Désinscrire ?')){await supabase.from('enrollments').delete().eq('id',id);load();}};
+
+      const handleEnroll=async()=>{setSaving(true);await supabase.from('enrollments').insert({playlist_id:form.playlist_id,learner_id:form.learner_id,enrolled_by:profile?.id});await load();setModal(false);setForm({playlist_id:'',learner_id:''});setSaving(false);};
+      const handleUnenroll=async id=>{if(!confirm('Désinscrire ?'))return;await supabase.from('enrollments').delete().eq('id',id);load();};
 
       if(loading)return<Loading/>;
-
-      return(
-        <div>
-          <div className="flex items-center justify-between mb-6"><h1 className="text-2xl font-bold">Inscriptions</h1><Button icon="UserPlus" onClick={()=>setModal(true)}>Inscrire</Button></div>
-          {enrollments.length===0?<Empty icon="UserPlus" title="Aucune inscription"/>:(
-            <Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Apprenant</th><th className="text-left p-4 font-medium text-gray-400">Cours</th><th className="text-left p-4 font-medium text-gray-400">Date</th><th className="text-left p-4 font-medium text-gray-400">Statut</th><th className="text-right p-4"></th></tr></thead><tbody className="divide-y divide-gray-700">{enrollments.map(e=><tr key={e.id}><td className="p-4"><p className="font-medium">{e.profiles?.first_name} {e.profiles?.last_name}</p><p className="text-sm text-gray-400">{e.profiles?.email}</p></td><td className="p-4">{e.playlists?.title}</td><td className="p-4 text-gray-400">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td><td className="p-4"><span className={`px-2 py-1 rounded text-xs ${e.completed_at?'bg-green-500/20 text-green-400':'bg-blue-500/20 text-blue-400'}`}>{e.completed_at?'Terminé':'En cours'}</span></td><td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>unenroll(e.id)}/></td></tr>)}</tbody></table></div></Card>
-          )}
-          <Modal isOpen={modal} onClose={()=>setModal(false)} title="Inscrire"><div className="space-y-4"><Select label="Cours" value={form.playlist_id} onChange={e=>setForm({...form,playlist_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...playlists.map(p=>({value:p.id,label:p.title}))]}/><Select label="Apprenant" value={form.learner_id} onChange={e=>setForm({...form,learner_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...learners.map(l=>({value:l.id,label:`${l.first_name} ${l.last_name}`}))]}/><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={enroll} disabled={!form.playlist_id||!form.learner_id}>Inscrire</Button></div></div></Modal>
-        </div>
-      );
+      return<div>
+        <div className="flex items-center justify-between mb-6"><h1 className="text-2xl font-bold">Inscriptions</h1><Button icon="UserPlus" onClick={()=>setModal(true)}>Inscrire</Button></div>
+        {enrollments.length===0?<Empty icon="UserPlus" title="Aucune inscription"/>:<Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Apprenant</th><th className="text-left p-4 font-medium text-gray-400">Cours</th><th className="text-left p-4 font-medium text-gray-400">Date</th><th className="text-right p-4"></th></tr></thead><tbody className="divide-y divide-gray-700">{enrollments.map(e=><tr key={e.id}><td className="p-4"><p className="font-medium">{e.profiles?.first_name} {e.profiles?.last_name}</p><p className="text-sm text-gray-400">{e.profiles?.email}</p></td><td className="p-4">{e.playlists?.title}</td><td className="p-4 text-gray-400">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td><td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleUnenroll(e.id)}/></td></tr>)}</tbody></table></div></Card>}
+        <Modal isOpen={modal} onClose={()=>setModal(false)} title="Inscrire"><div className="space-y-4"><Select label="Cours" value={form.playlist_id} onChange={e=>setForm({...form,playlist_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...playlists.map(p=>({value:p.id,label:p.title}))]}/><Select label="Apprenant" value={form.learner_id} onChange={e=>setForm({...form,learner_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...learners.map(l=>({value:l.id,label:`${l.first_name} ${l.last_name}`}))]}/><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleEnroll} loading={saving} disabled={!form.playlist_id||!form.learner_id}>Inscrire</Button></div></div></Modal>
+      </div>;
     }
 
     // My Courses
@@ -821,28 +577,10 @@
       const[enrollments,setEnrollments]=useState([]);
       const[loading,setLoading]=useState(true);
 
-      useEffect(()=>{
-        const load=async()=>{const{data}=await supabase.from('enrollments').select('*,playlists(*)').eq('learner_id',user.id);setEnrollments(data||[]);setLoading(false);};
-        load();
-      },[user]);
+      useEffect(()=>{const load=async()=>{const{data}=await supabase.from('enrollments').select('*,playlists(*)').eq('learner_id',user.id);setEnrollments(data||[]);setLoading(false);};load();},[user.id]);
 
       if(loading)return<Loading/>;
-
-      return(
-        <div>
-          <h1 className="text-2xl font-bold mb-6">Mes cours</h1>
-          {enrollments.length===0?<Empty icon="GraduationCap" title="Aucun cours" desc="Vous n'êtes inscrit à aucun cours"/>:(
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {enrollments.map(e=>(
-                <Card key={e.id} className="p-4">
-                  <div className="flex items-center gap-3 mb-3"><div className="w-12 h-12 bg-indigo-600/20 rounded-xl flex items-center justify-center"><Icon name="BookOpen" size={24} className="text-indigo-400"/></div><div className="flex-1"><h3 className="font-semibold">{e.playlists?.title}</h3><p className="text-sm text-gray-400">{e.completed_at?'Terminé':'En cours'}</p></div></div>
-                  <Button className="w-full">Continuer</Button>
-                </Card>
-              ))}
-            </div>
-          )}
-        </div>
-      );
+      return<div><h1 className="text-2xl font-bold mb-6">Mes cours</h1>{enrollments.length===0?<Empty icon="GraduationCap" title="Aucun cours" desc="Vous n'êtes inscrit à aucun cours"/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{enrollments.map(e=><Card key={e.id} className="p-4"><div className="flex items-center gap-3"><div className="w-12 h-12 bg-indigo-600/20 rounded-xl flex items-center justify-center"><Icon name="BookOpen" size={24} className="text-indigo-400"/></div><div className="flex-1"><h3 className="font-semibold">{e.playlists?.title}</h3></div></div></Card>)}</div>}</div>;
     }
 
     // App
