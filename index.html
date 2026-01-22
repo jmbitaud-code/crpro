@@ -31,11 +31,12 @@
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const{useState,useEffect,useRef,createContext,useContext}=React;
+    const{useState,useEffect,useRef,createContext,useContext,useCallback}=React;
 
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
+    const APP_VERSION = '2.0.1';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -61,7 +62,7 @@
       const[loading,setLoading]=useState(true);
       const[error,setError]=useState(null);
 
-      const loadProfile=async(userId)=>{
+      const loadProfile=useCallback(async(userId)=>{
         try{
           const{data,error:err}=await supabase.from('profiles').select('*,centers(*)').eq('id',userId).single();
           if(err)throw err;
@@ -72,7 +73,7 @@
           console.error('Erreur chargement profil:',e);
           return null;
         }
-      };
+      },[]);
 
       useEffect(()=>{
         let mounted=true;
@@ -93,7 +94,7 @@
           else if(event==='SIGNED_OUT'){setUser(null);setProfile(null);setCenter(null);}
         });
         return()=>{mounted=false;subscription.unsubscribe();};
-      },[]);
+      },[loadProfile]);
 
       const signIn=async(email,password)=>{
         try{setError(null);const{error:err}=await supabase.auth.signInWithPassword({email,password});if(err)throw err;return{success:true};}
@@ -130,7 +131,7 @@
 
     // Login
     function LoginPage(){
-      const{signIn,error}=useAuth();
+      const{signIn}=useAuth();
       const[email,setEmail]=useState('');
       const[password,setPassword]=useState('');
       const[loading,setLoading]=useState(false);
@@ -143,7 +144,7 @@
         setLoading(false);
       };
 
-      return(<div className="min-h-screen bg-gray-900 flex items-center justify-center p-4"><div className="w-full max-w-md"><div className="text-center mb-8"><div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl mb-4"><Icon name="GraduationCap" size={32} className="text-white"/></div><h1 className="text-2xl font-bold text-white">Course Builder Pro</h1><p className="text-gray-400 mt-1">Plateforme de formation vidéo</p></div><Card className="p-6">{msg&&<Alert type={msg.type}>{msg.text}</Alert>}<form onSubmit={handleSubmit} className="space-y-4 mt-4"><Input label="Email" type="email" icon="Mail" value={email} onChange={e=>setEmail(e.target.value)} required/><Input label="Mot de passe" type="password" icon="Lock" value={password} onChange={e=>setPassword(e.target.value)} required/><Button type="submit" className="w-full" loading={loading}>Se connecter</Button></form></Card></div></div>);
+      return(<div className="min-h-screen bg-gray-900 flex items-center justify-center p-4"><div className="w-full max-w-md"><div className="text-center mb-8"><div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl mb-4"><Icon name="GraduationCap" size={32} className="text-white"/></div><h1 className="text-2xl font-bold text-white">Course Builder Pro</h1><p className="text-gray-400 mt-1">Plateforme de formation vidéo</p></div><Card className="p-6">{msg&&<Alert type={msg.type}>{msg.text}</Alert>}<form onSubmit={handleSubmit} className="space-y-4 mt-4"><Input label="Email" type="email" icon="Mail" value={email} onChange={e=>setEmail(e.target.value)} required/><Input label="Mot de passe" type="password" icon="Lock" value={password} onChange={e=>setPassword(e.target.value)} required/><Button type="submit" className="w-full" loading={loading}>Se connecter</Button></form></Card><p className="text-center text-gray-500 text-xs mt-4">v{APP_VERSION}</p></div></div>);
     }
 
     // Layout
@@ -224,8 +225,8 @@
       const[form,setForm]=useState({name:'',slug:'',description:''});
       const[saving,setSaving]=useState(false);
 
-      const load=async()=>{const{data}=await supabase.from('centers').select('*').order('name');setCenters(data||[]);setLoading(false);};
-      useEffect(()=>{load();},[]);
+      const load=useCallback(async()=>{const{data}=await supabase.from('centers').select('*').order('name');setCenters(data||[]);setLoading(false);},[]);
+      useEffect(()=>{load();},[load]);
 
       const handleSave=async()=>{
         setSaving(true);
@@ -262,14 +263,15 @@
       const[importResult,setImportResult]=useState(null);
       const fileInputRef=useRef(null);
 
-      const load=async()=>{
+      const load=useCallback(async()=>{
         let q=supabase.from('profiles').select('*,centers(name)').order('created_at',{ascending:false});
         if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);
         const{data:u}=await q;setUsers(u||[]);
         if(isSuperAdmin){const{data:c}=await supabase.from('centers').select('id,name');setCenters(c||[]);}
         setLoading(false);
-      };
-      useEffect(()=>{load();},[]);
+      },[isSuperAdmin,center?.id]);
+      
+      useEffect(()=>{load();},[load]);
 
       const handleSave=async()=>{
         if(!editing)return;
@@ -312,43 +314,26 @@
         
         setImportLoading(true);
         try{
-          // Préparer les données
           const usersToCreate=validData.map(item=>{
             let targetCenterId=center?.id;
             if(isSuperAdmin&&item.center_name){
               const found=centers.find(c=>c.name.toLowerCase()===item.center_name.toLowerCase());
               if(found)targetCenterId=found.id;
             }
-            return{
-              email:item.email,
-              password:item.password||'',
-              first_name:item.first_name,
-              last_name:item.last_name,
-              role:item.role,
-              center_id:targetCenterId
-            };
+            return{email:item.email,password:item.password||'',first_name:item.first_name,last_name:item.last_name,role:item.role,center_id:targetCenterId};
           });
 
-          // Appeler l'Edge Function
           const{data:{session}}=await supabase.auth.getSession();
           const response=await fetch(`${SUPABASE_URL}/functions/v1/create-users`,{
             method:'POST',
-            headers:{
-              'Content-Type':'application/json',
-              'Authorization':`Bearer ${session?.access_token}`
-            },
+            headers:{'Content-Type':'application/json','Authorization':`Bearer ${session?.access_token}`},
             body:JSON.stringify({users:usersToCreate})
           });
 
           const result=await response.json();
           
           if(result.success){
-            setImportResult({
-              created:result.created||0,
-              updated:result.updated||0,
-              errors:result.errors||0,
-              results:result.results||[]
-            });
+            setImportResult({created:result.created||0,updated:result.updated||0,errors:result.errors||0,results:result.results||[]});
             await load();
           }else{
             setImportResult({created:0,updated:0,errors:validData.length,errorMessage:result.error});
@@ -373,12 +358,7 @@
 
       const exportResults=()=>{
         if(!importResult?.results)return;
-        const data=importResult.results.map(r=>({
-          'Email':r.email,
-          'Statut':r.status==='created'?'Créé':r.status==='updated'?'Mis à jour':'Erreur',
-          'Mot de passe':r.password||'',
-          'Message':r.message||''
-        }));
+        const data=importResult.results.map(r=>({'Email':r.email,'Statut':r.status==='created'?'Créé':r.status==='updated'?'Mis à jour':'Erreur','Mot de passe':r.password||'','Message':r.message||''}));
         const ws=XLSX.utils.json_to_sheet(data);
         const wb=XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb,ws,'Résultats');
@@ -401,7 +381,7 @@
           <div className="space-y-4">
             <Alert type="info">
               <p className="font-medium mb-1">✨ Import automatique</p>
-              <p className="text-sm">Crée automatiquement les comptes et assigne les rôles. Si le mot de passe est vide, un mot de passe aléatoire sera généré.</p>
+              <p className="text-sm">Crée les comptes et assigne les rôles. Si le mot de passe est vide, il sera généré automatiquement.</p>
             </Alert>
             
             <div className="bg-gray-700/50 rounded-lg p-4">
@@ -421,9 +401,8 @@
               <div>
                 <h3 className="font-medium mb-2">Aperçu ({importData.filter(d=>d._valid).length} valides / {importData.length} total)</h3>
                 <div className="max-h-48 overflow-y-auto bg-gray-700/50 rounded-lg">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-700 sticky top-0"><tr><th className="p-2 text-left">Email</th><th className="p-2 text-left">Nom</th><th className="p-2 text-left">Rôle</th><th className="p-2 text-left">Statut</th></tr></thead>
-                    <tbody>{importData.map((row,i)=>(<tr key={i} className={row._valid?'':'bg-red-900/20'}><td className="p-2">{row.email}</td><td className="p-2">{row.first_name} {row.last_name}</td><td className="p-2"><RoleBadge role={row.role}/></td><td className="p-2">{row._valid?<span className="text-green-400">✓</span>:<span className="text-red-400">Incomplet</span>}</td></tr>))}</tbody>
+                  <table className="w-full text-sm"><thead className="bg-gray-700 sticky top-0"><tr><th className="p-2 text-left">Email</th><th className="p-2 text-left">Nom</th><th className="p-2 text-left">Rôle</th><th className="p-2 text-left">Statut</th></tr></thead>
+                  <tbody>{importData.map((row,i)=>(<tr key={i} className={row._valid?'':'bg-red-900/20'}><td className="p-2">{row.email}</td><td className="p-2">{row.first_name} {row.last_name}</td><td className="p-2"><RoleBadge role={row.role}/></td><td className="p-2">{row._valid?<span className="text-green-400">✓</span>:<span className="text-red-400">Incomplet</span>}</td></tr>))}</tbody>
                   </table>
                 </div>
               </div>
@@ -432,7 +411,7 @@
             {importResult&&(
               <div className="space-y-3">
                 {importResult.errorMessage?(
-                  <Alert type="error"><p className="font-medium">❌ Erreur : {importResult.errorMessage}</p><p className="text-sm mt-1">Vérifiez que l'Edge Function est bien déployée.</p></Alert>
+                  <Alert type="error"><p className="font-medium">❌ Erreur : {importResult.errorMessage}</p></Alert>
                 ):(
                   <Alert type={importResult.errors>0?'warning':'success'}>
                     <p className="font-medium">
@@ -480,8 +459,8 @@
       const[importResult,setImportResult]=useState(null);
       const fileInputRef=useRef(null);
 
-      const load=async()=>{let q=supabase.from('videos').select('*').order('sort_order',{ascending:true,nullsFirst:false}).order('created_at',{ascending:false});if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);const{data}=await q;setVideos(data||[]);setLoading(false);};
-      useEffect(()=>{load();},[]);
+      const load=useCallback(async()=>{let q=supabase.from('videos').select('*').order('sort_order',{ascending:true,nullsFirst:false}).order('created_at',{ascending:false});if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);const{data}=await q;setVideos(data||[]);setLoading(false);},[isSuperAdmin,center?.id]);
+      useEffect(()=>{load();},[load]);
       const resetForm=()=>setForm({title:'',vimeo_id:'',duration:'',category:'',description:'',sort_order:'',tags:'',theme:'',thumbnail_url:''});
 
       const handleSave=async()=>{
@@ -527,8 +506,8 @@
       const[editVideosModal,setEditVideosModal]=useState(null);
       const[playlistVideos,setPlaylistVideos]=useState([]);
 
-      const load=async()=>{let q=supabase.from('playlists').select('*,playlist_videos(count)').order('created_at',{ascending:false});if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);const{data:p}=await q;setPlaylists(p||[]);let qv=supabase.from('videos').select('*');if(!isSuperAdmin&&center?.id)qv=qv.eq('center_id',center.id);const{data:v}=await qv;setVideos(v||[]);setLoading(false);};
-      useEffect(()=>{load();},[]);
+      const load=useCallback(async()=>{let q=supabase.from('playlists').select('*,playlist_videos(count)').order('created_at',{ascending:false});if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);const{data:p}=await q;setPlaylists(p||[]);let qv=supabase.from('videos').select('*');if(!isSuperAdmin&&center?.id)qv=qv.eq('center_id',center.id);const{data:v}=await qv;setVideos(v||[]);setLoading(false);},[isSuperAdmin,center?.id]);
+      useEffect(()=>{load();},[load]);
 
       const handleSave=async()=>{setSaving(true);const payload={title:form.title,description:form.description,center_id:center?.id,created_by:profile?.id};if(editing)await supabase.from('playlists').update(payload).eq('id',editing.id);else await supabase.from('playlists').insert(payload);await load();setModal(false);setForm({title:'',description:''});setEditing(null);setSaving(false);};
       const handleDelete=async id=>{if(!confirm('Supprimer ?'))return;await supabase.from('playlists').delete().eq('id',id);load();};
@@ -557,8 +536,8 @@
       const[form,setForm]=useState({playlist_id:'',learner_id:''});
       const[saving,setSaving]=useState(false);
 
-      const load=async()=>{const{data:e}=await supabase.from('enrollments').select('*,playlists(title),profiles!enrollments_learner_id_fkey(first_name,last_name,email)').order('created_at',{ascending:false});setEnrollments(e||[]);let qp=supabase.from('playlists').select('id,title').eq('is_published',true);let ql=supabase.from('profiles').select('id,first_name,last_name,email').eq('role','learner');if(!isSuperAdmin&&center?.id){qp=qp.eq('center_id',center.id);ql=ql.eq('center_id',center.id);}const[{data:p},{data:l}]=await Promise.all([qp,ql]);setPlaylists(p||[]);setLearners(l||[]);setLoading(false);};
-      useEffect(()=>{load();},[]);
+      const load=useCallback(async()=>{const{data:e}=await supabase.from('enrollments').select('*,playlists(title),profiles!enrollments_learner_id_fkey(first_name,last_name,email)').order('created_at',{ascending:false});setEnrollments(e||[]);let qp=supabase.from('playlists').select('id,title').eq('is_published',true);let ql=supabase.from('profiles').select('id,first_name,last_name,email').eq('role','learner');if(!isSuperAdmin&&center?.id){qp=qp.eq('center_id',center.id);ql=ql.eq('center_id',center.id);}const[{data:p},{data:l}]=await Promise.all([qp,ql]);setPlaylists(p||[]);setLearners(l||[]);setLoading(false);},[isSuperAdmin,center?.id]);
+      useEffect(()=>{load();},[load]);
 
       const handleEnroll=async()=>{setSaving(true);await supabase.from('enrollments').insert({playlist_id:form.playlist_id,learner_id:form.learner_id,enrolled_by:profile?.id});await load();setModal(false);setForm({playlist_id:'',learner_id:''});setSaving(false);};
       const handleUnenroll=async id=>{if(!confirm('Désinscrire ?'))return;await supabase.from('enrollments').delete().eq('id',id);load();};
