@@ -242,9 +242,14 @@
       const[centers,setCenters]=useState([]);
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
+      const[importModal,setImportModal]=useState(false);
       const[editing,setEditing]=useState(null);
       const[search,setSearch]=useState('');
       const[form,setForm]=useState({email:'',first_name:'',last_name:'',role:'learner',center_id:''});
+      const[importData,setImportData]=useState([]);
+      const[importLoading,setImportLoading]=useState(false);
+      const[importResult,setImportResult]=useState(null);
+      const fileInputRef=useRef(null);
 
       useEffect(()=>{loadData();},[]);
       const loadData=async()=>{
@@ -262,6 +267,132 @@
         }
       };
 
+      // Générer mot de passe aléatoire
+      const generatePassword=()=>{
+        const chars='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+        let pwd='';for(let i=0;i<10;i++)pwd+=chars.charAt(Math.floor(Math.random()*chars.length));
+        return pwd;
+      };
+
+      // Import Excel
+      const handleFileSelect=async(e)=>{
+        const file=e.target.files[0];
+        if(!file)return;
+        try{
+          const data=await file.arrayBuffer();
+          const workbook=XLSX.read(data);
+          const sheetName=workbook.SheetNames[0];
+          const sheet=workbook.Sheets[sheetName];
+          const jsonData=XLSX.utils.sheet_to_json(sheet);
+          
+          const mappedData=jsonData.map((row,index)=>{
+            const role=String(row['Rôle']||row['Role']||row['role']||'').toLowerCase();
+            const validRoles=['learner','trainer','designer','center_admin'];
+            return{
+              _index:index+1,
+              email:row['Email']||row['email']||'',
+              first_name:row['Prénom']||row['Prenom']||row['first_name']||'',
+              last_name:row['Nom']||row['last_name']||'',
+              role:validRoles.includes(role)?role:'learner',
+              password:row['Mot de passe temporaire']||row['Password']||row['password']||'',
+              center_name:row['Centre (super_admin uniquement)']||row['Centre']||row['center']||'',
+              _valid:!!(row['Email']||row['email'])&&!!(row['Prénom']||row['Prenom']||row['first_name'])&&!!(row['Nom']||row['last_name'])
+            };
+          });
+          setImportData(mappedData);
+          setImportResult(null);
+        }catch(err){
+          alert('Erreur de lecture: '+err.message);
+        }
+        e.target.value='';
+      };
+
+      const handleImport=async()=>{
+        const validData=importData.filter(d=>d._valid);
+        if(validData.length===0){alert('Aucune donnée valide');return;}
+        
+        setImportLoading(true);
+        let created=0,updated=0,errors=0;
+        const results=[];
+
+        for(const item of validData){
+          const password=item.password||generatePassword();
+          let targetCenterId=center?.id;
+          
+          // Super admin peut choisir le centre
+          if(isSuperAdmin&&item.center_name){
+            const foundCenter=centers.find(c=>c.name.toLowerCase()===item.center_name.toLowerCase());
+            if(foundCenter)targetCenterId=foundCenter.id;
+          }
+
+          // Vérifier si l'email existe déjà
+          const{data:existingProfile}=await supabase.from('profiles').select('id').eq('email',item.email).single();
+          
+          if(existingProfile){
+            // Mise à jour du profil existant
+            const{error}=await supabase.from('profiles').update({
+              first_name:item.first_name,
+              last_name:item.last_name,
+              role:item.role,
+              center_id:targetCenterId
+            }).eq('id',existingProfile.id);
+            if(error){errors++;results.push({email:item.email,status:'error',message:error.message});}
+            else{updated++;results.push({email:item.email,status:'updated'});}
+          }else{
+            // Créer nouveau compte
+            const{data:authData,error:authError}=await supabase.auth.signUp({
+              email:item.email,
+              password:password,
+              options:{data:{first_name:item.first_name,last_name:item.last_name}}
+            });
+            
+            if(authError){
+              errors++;
+              results.push({email:item.email,status:'error',message:authError.message});
+            }else if(authData.user){
+              // Mettre à jour le profil avec le bon rôle et centre
+              await supabase.from('profiles').update({
+                first_name:item.first_name,
+                last_name:item.last_name,
+                role:item.role,
+                center_id:targetCenterId
+              }).eq('id',authData.user.id);
+              created++;
+              results.push({email:item.email,status:'created',password:password});
+            }
+          }
+        }
+        
+        setImportLoading(false);
+        setImportResult({created,updated,errors,results});
+        loadData();
+      };
+
+      const downloadTemplate=()=>{
+        const template=[
+          {'Email':'jean.dupont@email.com','Prénom':'Jean','Nom':'Dupont','Rôle':'learner','Mot de passe temporaire':'','Centre (super_admin uniquement)':''},
+          {'Email':'marie.martin@email.com','Prénom':'Marie','Nom':'Martin','Rôle':'trainer','Mot de passe temporaire':'','Centre (super_admin uniquement)':''}
+        ];
+        const ws=XLSX.utils.json_to_sheet(template);
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,ws,'Utilisateurs');
+        XLSX.writeFile(wb,'template_import_utilisateurs.xlsx');
+      };
+
+      const exportResults=()=>{
+        if(!importResult?.results)return;
+        const data=importResult.results.map(r=>({
+          'Email':r.email,
+          'Statut':r.status==='created'?'Créé':r.status==='updated'?'Mis à jour':'Erreur',
+          'Mot de passe':r.password||'',
+          'Message':r.message||''
+        }));
+        const ws=XLSX.utils.json_to_sheet(data);
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,ws,'Résultats');
+        XLSX.writeFile(wb,'resultat_import_utilisateurs.xlsx');
+      };
+
       const filtered=users.filter(u=>{
         if(!search)return true;
         const s=search.toLowerCase();
@@ -272,10 +403,90 @@
       if(loading)return<Loading/>;
 
       return<div>
-        <div className="flex items-center justify-between mb-6"><h1 className="text-2xl font-bold">Utilisateurs</h1></div>
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
+          <h1 className="text-2xl font-bold">Utilisateurs</h1>
+          <Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button>
+        </div>
         <Card className="p-4 mb-6"><Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/></Card>
         <Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Utilisateur</th><th className="text-left p-4 font-medium text-gray-400">Rôle</th>{isSuperAdmin&&<th className="text-left p-4 font-medium text-gray-400">Centre</th>}<th className="text-right p-4"></th></tr></thead><tbody className="divide-y divide-gray-700">{filtered.map(u=><tr key={u.id} className="hover:bg-gray-750/50"><td className="p-4"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center"><Icon name="User" size={18}/></div><div><p className="font-medium">{u.first_name} {u.last_name}</p><p className="text-sm text-gray-400">{u.email}</p></div></div></td><td className="p-4"><RoleBadge role={u.role}/></td>{isSuperAdmin&&<td className="p-4 text-gray-400">{u.centers?.name||'-'}</td>}<td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(u);setForm({email:u.email,first_name:u.first_name||'',last_name:u.last_name||'',role:u.role,center_id:u.center_id||''});setModal(true);}}/></td></tr>)}</tbody></table></div></Card>
+        
+        {/* Modal Modifier */}
         <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title="Modifier"><div className="space-y-4"><Input label="Email" value={form.email} disabled/><div className="grid grid-cols-2 gap-4"><Input label="Prénom" value={form.first_name} onChange={e=>setForm({...form,first_name:e.target.value})}/><Input label="Nom" value={form.last_name} onChange={e=>setForm({...form,last_name:e.target.value})}/></div><Select label="Rôle" value={form.role} onChange={e=>setForm({...form,role:e.target.value})} options={Object.entries(ROLE_LABELS).filter(([r])=>isSuperAdmin||r!=='super_admin').map(([v,l])=>({value:v,label:l}))}/>{isSuperAdmin&&<Select label="Centre" value={form.center_id} onChange={e=>setForm({...form,center_id:e.target.value})} options={[{value:'',label:'Aucun'},...centers.map(c=>({value:c.id,label:c.name}))]}/>}<div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave}>Enregistrer</Button></div></div></Modal>
+
+        {/* Modal Import */}
+        <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer des utilisateurs" size="lg">
+          <div className="space-y-4">
+            <div className="bg-gray-700/50 rounded-lg p-4">
+              <h3 className="font-medium mb-2 flex items-center gap-2"><Icon name="Info" size={18}/>Format du fichier</h3>
+              <p className="text-sm text-gray-400 mb-3">Colonnes : Email, Prénom, Nom, Rôle, Mot de passe (optionnel){isSuperAdmin&&', Centre (optionnel)'}</p>
+              <p className="text-sm text-gray-400 mb-3">Rôles valides : learner, trainer, designer, center_admin</p>
+              <Button variant="ghost" size="sm" icon="Download" onClick={downloadTemplate}>Télécharger le template</Button>
+            </div>
+
+            <div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center">
+              <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".xlsx,.xls,.csv" className="hidden"/>
+              <Icon name="Users" size={48} className="mx-auto text-gray-500 mb-4"/>
+              <p className="text-gray-400 mb-4">Glissez un fichier Excel ou</p>
+              <Button variant="secondary" onClick={()=>fileInputRef.current?.click()}>Parcourir</Button>
+            </div>
+
+            {importData.length>0&&!importResult&&(
+              <div>
+                <h3 className="font-medium mb-2">Aperçu ({importData.filter(d=>d._valid).length} utilisateurs valides)</h3>
+                <div className="max-h-60 overflow-y-auto bg-gray-700/50 rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-700 sticky top-0">
+                      <tr>
+                        <th className="p-2 text-left">Email</th>
+                        <th className="p-2 text-left">Nom</th>
+                        <th className="p-2 text-left">Rôle</th>
+                        <th className="p-2 text-left">Statut</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importData.map((row,i)=>(
+                        <tr key={i} className={row._valid?'':'bg-red-900/20'}>
+                          <td className="p-2">{row.email||'-'}</td>
+                          <td className="p-2">{row.first_name} {row.last_name}</td>
+                          <td className="p-2"><RoleBadge role={row.role}/></td>
+                          <td className="p-2">{row._valid?<span className="text-green-400">✓</span>:<span className="text-red-400">✗ Incomplet</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {importResult&&(
+              <div className="space-y-3">
+                <div className={`p-4 rounded-lg ${importResult.errors>0?'bg-yellow-500/20':'bg-green-500/20'}`}>
+                  <p className="font-medium">
+                    {importResult.created>0&&<span className="text-green-400">✅ {importResult.created} créé(s)</span>}
+                    {importResult.created>0&&importResult.updated>0&&<span> | </span>}
+                    {importResult.updated>0&&<span className="text-blue-400">🔄 {importResult.updated} mis à jour</span>}
+                    {importResult.errors>0&&<span className="text-yellow-400"> | ⚠️ {importResult.errors} erreur(s)</span>}
+                  </p>
+                </div>
+                {importResult.results?.some(r=>r.password)&&(
+                  <div className="bg-indigo-500/20 p-4 rounded-lg">
+                    <p className="text-sm text-indigo-300 mb-2">⚠️ Des mots de passe temporaires ont été générés. Exportez les résultats pour les récupérer.</p>
+                    <Button variant="secondary" size="sm" icon="Download" onClick={exportResults}>Exporter les résultats</Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>
+              {importData.length>0&&!importResult&&(
+                <Button icon="Upload" onClick={handleImport} loading={importLoading} disabled={importData.filter(d=>d._valid).length===0}>
+                  Importer {importData.filter(d=>d._valid).length} utilisateur(s)
+                </Button>
+              )}
+            </div>
+          </div>
+        </Modal>
       </div>;
     }
 
