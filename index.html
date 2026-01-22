@@ -1,0 +1,1370 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Course Builder Pro</title>
+  <meta name="description" content="Plateforme de création et diffusion de cours vidéo multi-centres">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>">
+  
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#111827;color:#fff}
+    .no-scrollbar::-webkit-scrollbar{display:none}
+    .no-scrollbar{-ms-overflow-style:none;scrollbar-width:none}
+    @keyframes spin{to{transform:rotate(360deg)}}.animate-spin{animation:spin 1s linear infinite}
+    @keyframes fade-in{from{opacity:0}to{opacity:1}}.animate-fade-in{animation:fade-in .2s ease-out}
+    @keyframes slide-in{from{transform:translateX(100%)}to{transform:translateX(0)}}.animate-slide-in{animation:slide-in .2s ease-out}
+    input,textarea,select,button{font-family:inherit}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const{useState,useEffect,useRef,useCallback,createContext,useContext}=React;
+
+    // ╔══════════════════════════════════════════════════════════════════════════╗
+    // ║  CONFIGURATION - REMPLACEZ PAR VOS VALEURS SUPABASE                      ║
+    // ╚══════════════════════════════════════════════════════════════════════════╝
+    const SUPABASE_URL = 'https://ludepnnsvwvpfbdxweam.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // Configuration des rôles
+    const ROLES = {
+      super_admin: { label: 'Super Admin', color: 'bg-red-500', icon: 'Shield' },
+      center_admin: { label: 'Admin Centre', color: 'bg-purple-500', icon: 'Building2' },
+      course_designer: { label: 'Concepteur', color: 'bg-blue-500', icon: 'Palette' },
+      trainer: { label: 'Formateur', color: 'bg-green-500', icon: 'Users' },
+      learner: { label: 'Apprenant', color: 'bg-gray-500', icon: 'GraduationCap' }
+    };
+
+    const PERMISSIONS = {
+      super_admin: { centers: true, users: true, videos: true, courses: true, publish: true, enroll: true, progress: true, allCenters: true },
+      center_admin: { centers: false, users: true, videos: true, courses: true, publish: true, enroll: true, progress: true, allCenters: false },
+      course_designer: { centers: false, users: false, videos: true, courses: true, publish: false, enroll: false, progress: false, allCenters: false },
+      trainer: { centers: false, users: false, videos: false, courses: false, publish: true, enroll: true, progress: true, allCenters: false },
+      learner: { centers: false, users: false, videos: false, courses: false, publish: false, enroll: false, progress: false, allCenters: false }
+    };
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // CONTEXTE D'AUTHENTIFICATION
+    // ════════════════════════════════════════════════════════════════════════════
+    const AuthContext = createContext(null);
+
+    function AuthProvider({ children }) {
+      const [user, setUser] = useState(null);
+      const [profile, setProfile] = useState(null);
+      const [center, setCenter] = useState(null);
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          if (session?.user) { setUser(session.user); loadProfile(session.user.id); }
+          else setLoading(false);
+        });
+
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+          if (event === 'SIGNED_IN' && session?.user) { setUser(session.user); await loadProfile(session.user.id); }
+          else if (event === 'SIGNED_OUT') { setUser(null); setProfile(null); setCenter(null); setLoading(false); }
+        });
+        return () => subscription.unsubscribe();
+      }, []);
+
+      const loadProfile = async (userId) => {
+        try {
+          const { data } = await supabase.from('profiles').select('*, centers(*)').eq('id', userId).single();
+          if (data) { setProfile(data); setCenter(data.centers); }
+        } catch (e) { console.error('Erreur profil:', e); }
+        setLoading(false);
+      };
+
+      const signIn = async (email, password) => {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        return { success: !error, error: error?.message };
+      };
+
+      const signUp = async (email, password, meta = {}) => {
+        const { data, error } = await supabase.auth.signUp({ email, password, options: { data: meta } });
+        return { success: !error, error: error?.message, needsConfirm: !data?.session };
+      };
+
+      const signOut = async () => {
+        await supabase.auth.signOut();
+        setUser(null); setProfile(null); setCenter(null);
+      };
+
+      const value = {
+        user, profile, center, loading, signIn, signUp, signOut,
+        isAuth: !!user,
+        isSuperAdmin: profile?.role === 'super_admin',
+        role: profile?.role || 'learner',
+        can: (perm) => PERMISSIONS[profile?.role]?.[perm] || false,
+        reload: () => user && loadProfile(user.id)
+      };
+
+      return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+    }
+    const useAuth = () => useContext(AuthContext);
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // COMPOSANTS UI
+    // ════════════════════════════════════════════════════════════════════════════
+    const Icon = ({ name, size = 20, className = '' }) => {
+      const ref = useRef(null);
+      useEffect(() => {
+        if (ref.current && lucide.icons[name]) {
+          ref.current.innerHTML = '';
+          const icon = lucide.createElement(lucide.icons[name]);
+          icon.setAttribute('width', size);
+          icon.setAttribute('height', size);
+          ref.current.appendChild(icon);
+        }
+      }, [name, size]);
+      return <span ref={ref} className={`inline-flex items-center justify-center ${className}`} style={{ width: size, height: size }} />;
+    };
+
+    const Button = ({ children, variant = 'primary', size = 'md', icon, loading, disabled, className = '', ...props }) => {
+      const variants = {
+        primary: 'bg-indigo-600 hover:bg-indigo-700 text-white',
+        secondary: 'bg-gray-700 hover:bg-gray-600 text-white',
+        success: 'bg-green-600 hover:bg-green-700 text-white',
+        danger: 'bg-red-600 hover:bg-red-700 text-white',
+        ghost: 'hover:bg-gray-700 text-gray-300'
+      };
+      const sizes = { sm: 'px-3 py-1.5 text-sm', md: 'px-4 py-2', lg: 'px-6 py-3' };
+      return (
+        <button
+          className={`inline-flex items-center justify-center gap-2 rounded-lg font-medium transition disabled:opacity-50 disabled:cursor-not-allowed ${variants[variant]} ${sizes[size]} ${className}`}
+          disabled={disabled || loading}
+          {...props}
+        >
+          {loading ? <Icon name="Loader2" size={16} className="animate-spin" /> : icon && <Icon name={icon} size={16} />}
+          {children}
+        </button>
+      );
+    };
+
+    const Input = ({ label, error, icon, className = '', ...props }) => (
+      <div className={className}>
+        {label && <label className="block text-sm font-medium text-gray-300 mb-1">{label}</label>}
+        <div className="relative">
+          {icon && <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><Icon name={icon} size={18} /></div>}
+          <input className={`w-full px-4 py-2.5 bg-gray-700 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 ${icon ? 'pl-10' : ''} ${error ? 'border-red-500' : 'border-gray-600'}`} {...props} />
+        </div>
+        {error && <p className="text-red-400 text-sm mt-1">{error}</p>}
+      </div>
+    );
+
+    const Select = ({ label, options, className = '', ...props }) => (
+      <div className={className}>
+        {label && <label className="block text-sm font-medium text-gray-300 mb-1">{label}</label>}
+        <select className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" {...props}>
+          {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </div>
+    );
+
+    const Modal = ({ isOpen, onClose, title, children, size = 'md' }) => {
+      if (!isOpen) return null;
+      const sizes = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl' };
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
+          <div className="absolute inset-0 bg-black/70" onClick={onClose} />
+          <div className={`relative bg-gray-800 rounded-xl w-full ${sizes[size]} max-h-[90vh] overflow-auto`}>
+            <div className="sticky top-0 bg-gray-800 p-4 border-b border-gray-700 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">{title}</h2>
+              <button onClick={onClose} className="p-2 hover:bg-gray-700 rounded-lg"><Icon name="X" size={20} /></button>
+            </div>
+            <div className="p-4">{children}</div>
+          </div>
+        </div>
+      );
+    };
+
+    const Card = ({ children, className = '', ...props }) => (
+      <div className={`bg-gray-800 rounded-xl border border-gray-700 ${className}`} {...props}>{children}</div>
+    );
+
+    const RoleBadge = ({ role }) => (
+      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${ROLES[role]?.color || 'bg-gray-500'} text-white`}>
+        <Icon name={ROLES[role]?.icon || 'User'} size={12} />
+        {ROLES[role]?.label || role}
+      </span>
+    );
+
+    const Loading = ({ text }) => (
+      <div className="flex flex-col items-center justify-center p-8">
+        <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+        {text && <p className="text-gray-400 mt-4">{text}</p>}
+      </div>
+    );
+
+    const Empty = ({ icon, title, desc, action }) => (
+      <div className="flex flex-col items-center justify-center p-12 text-center">
+        <div className="text-gray-500 mb-4"><Icon name={icon} size={48} /></div>
+        <h3 className="text-lg font-medium text-gray-300">{title}</h3>
+        {desc && <p className="text-gray-500 mt-1 max-w-md">{desc}</p>}
+        {action && <div className="mt-4">{action}</div>}
+      </div>
+    );
+
+    const StatCard = ({ label, value, icon, color = 'text-indigo-400' }) => (
+      <Card className="p-4">
+        <div className="flex items-center gap-3">
+          <div className={color}><Icon name={icon} size={24} /></div>
+          <div>
+            <p className="text-gray-400 text-sm">{label}</p>
+            <p className="text-2xl font-bold">{value}</p>
+          </div>
+        </div>
+      </Card>
+    );
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // PAGE CONNEXION
+    // ════════════════════════════════════════════════════════════════════════════
+    function LoginPage() {
+      const { signIn, signUp } = useAuth();
+      const [mode, setMode] = useState('login');
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [firstName, setFirstName] = useState('');
+      const [lastName, setLastName] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [msg, setMsg] = useState(null);
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        setMsg(null);
+
+        if (mode === 'login') {
+          const result = await signIn(email, password);
+          if (!result.success) setMsg({ type: 'error', text: result.error });
+        } else {
+          const result = await signUp(email, password, { first_name: firstName, last_name: lastName });
+          if (result.success) {
+            if (result.needsConfirm) setMsg({ type: 'success', text: 'Vérifiez votre email pour confirmer votre compte.' });
+          } else {
+            setMsg({ type: 'error', text: result.error });
+          }
+        }
+        setLoading(false);
+      };
+
+      return (
+        <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
+          <div className="w-full max-w-md">
+            <div className="text-center mb-8">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl mb-4">
+                <Icon name="GraduationCap" size={32} />
+              </div>
+              <h1 className="text-2xl font-bold">Course Builder Pro</h1>
+              <p className="text-gray-400 mt-1">Plateforme de formation vidéo</p>
+            </div>
+
+            <Card className="p-6">
+              <div className="flex mb-6 bg-gray-700 rounded-lg p-1">
+                <button onClick={() => setMode('login')} className={`flex-1 py-2 rounded-md text-sm font-medium transition ${mode === 'login' ? 'bg-indigo-600' : 'text-gray-400'}`}>
+                  Connexion
+                </button>
+                <button onClick={() => setMode('register')} className={`flex-1 py-2 rounded-md text-sm font-medium transition ${mode === 'register' ? 'bg-indigo-600' : 'text-gray-400'}`}>
+                  Inscription
+                </button>
+              </div>
+
+              {msg && (
+                <div className={`p-3 rounded-lg mb-4 text-sm ${msg.type === 'error' ? 'bg-red-500/20 text-red-300' : 'bg-green-500/20 text-green-300'}`}>
+                  {msg.text}
+                </div>
+              )}
+
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {mode === 'register' && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <Input label="Prénom" value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+                    <Input label="Nom" value={lastName} onChange={(e) => setLastName(e.target.value)} required />
+                  </div>
+                )}
+                <Input label="Email" type="email" icon="Mail" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                <Input label="Mot de passe" type="password" icon="Lock" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
+                <Button type="submit" className="w-full" loading={loading}>
+                  {mode === 'login' ? 'Se connecter' : "S'inscrire"}
+                </Button>
+              </form>
+            </Card>
+          </div>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // LAYOUT PRINCIPAL
+    // ════════════════════════════════════════════════════════════════════════════
+    function AppLayout() {
+      const { profile, signOut, center, can, isSuperAdmin, role } = useAuth();
+      const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 1024);
+      const [page, setPage] = useState('dashboard');
+      const isMobile = window.innerWidth < 1024;
+
+      const menuItems = [
+        { id: 'dashboard', label: 'Tableau de bord', icon: 'LayoutDashboard', show: true },
+        { id: 'centers', label: 'Centres', icon: 'Building2', show: can('centers') },
+        { id: 'users', label: 'Utilisateurs', icon: 'Users', show: can('users') },
+        { id: 'videos', label: 'Bibliothèque', icon: 'Film', show: can('videos') },
+        { id: 'courses', label: 'Cours', icon: 'BookOpen', show: can('courses') || can('publish') },
+        { id: 'enrollments', label: 'Inscriptions', icon: 'UserPlus', show: can('enroll') },
+        { id: 'my-courses', label: 'Mes cours', icon: 'GraduationCap', show: role === 'learner' },
+        { id: 'progress', label: 'Progression', icon: 'BarChart3', show: can('progress') }
+      ].filter(item => item.show);
+
+      return (
+        <div className="min-h-screen bg-gray-900 flex">
+          {/* Sidebar */}
+          <aside className={`fixed lg:static inset-y-0 left-0 z-40 w-64 bg-gray-800 border-r border-gray-700 transform transition-transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+            <div className="h-full flex flex-col">
+              <div className="p-4 border-b border-gray-700">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center">
+                    <Icon name="GraduationCap" size={24} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h1 className="font-bold truncate">Course Builder</h1>
+                    {center && <p className="text-xs text-gray-400 truncate">{center.name}</p>}
+                  </div>
+                </div>
+              </div>
+
+              <nav className="flex-1 overflow-y-auto p-3 space-y-1 no-scrollbar">
+                {menuItems.map(item => (
+                  <button
+                    key={item.id}
+                    onClick={() => { setPage(item.id); if (isMobile) setSidebarOpen(false); }}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition ${page === item.id ? 'bg-indigo-600' : 'text-gray-300 hover:bg-gray-700'}`}
+                  >
+                    <Icon name={item.icon} size={20} />
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </nav>
+
+              <div className="p-4 border-t border-gray-700">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center">
+                    <Icon name="User" size={20} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium truncate">{profile?.first_name} {profile?.last_name}</p>
+                    <RoleBadge role={role} />
+                  </div>
+                </div>
+                <Button variant="ghost" className="w-full" icon="LogOut" onClick={signOut}>Déconnexion</Button>
+              </div>
+            </div>
+          </aside>
+
+          {sidebarOpen && isMobile && <div className="fixed inset-0 bg-black/50 z-30" onClick={() => setSidebarOpen(false)} />}
+
+          <main className="flex-1 min-h-screen">
+            <header className="lg:hidden bg-gray-800 border-b border-gray-700 p-4 flex items-center gap-4">
+              <button onClick={() => setSidebarOpen(true)} className="p-2 hover:bg-gray-700 rounded-lg">
+                <Icon name="Menu" size={24} />
+              </button>
+              <h1 className="font-semibold">{menuItems.find(i => i.id === page)?.label}</h1>
+            </header>
+
+            <div className="p-4 lg:p-6">
+              {page === 'dashboard' && <DashboardPage />}
+              {page === 'centers' && <CentersPage />}
+              {page === 'users' && <UsersPage />}
+              {page === 'videos' && <VideosPage />}
+              {page === 'courses' && <CoursesPage />}
+              {page === 'enrollments' && <EnrollmentsPage />}
+              {page === 'my-courses' && <MyCoursesPage />}
+              {page === 'progress' && <ProgressPage />}
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // PAGE TABLEAU DE BORD
+    // ════════════════════════════════════════════════════════════════════════════
+    function DashboardPage() {
+      const { profile, center, isSuperAdmin, role } = useAuth();
+      const [stats, setStats] = useState({ users: 0, videos: 0, courses: 0, enrollments: 0, centers: 0 });
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        loadStats();
+      }, []);
+
+      const loadStats = async () => {
+        try {
+          const queries = [];
+          
+          if (isSuperAdmin) {
+            queries.push(supabase.from('centers').select('id', { count: 'exact', head: true }));
+            queries.push(supabase.from('profiles').select('id', { count: 'exact', head: true }));
+            queries.push(supabase.from('videos').select('id', { count: 'exact', head: true }));
+            queries.push(supabase.from('courses').select('id', { count: 'exact', head: true }));
+            queries.push(supabase.from('enrollments').select('id', { count: 'exact', head: true }));
+          } else if (center?.id) {
+            queries.push(Promise.resolve({ count: 1 }));
+            queries.push(supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('center_id', center.id));
+            queries.push(supabase.from('videos').select('id', { count: 'exact', head: true }).eq('center_id', center.id));
+            queries.push(supabase.from('courses').select('id', { count: 'exact', head: true }).eq('center_id', center.id));
+            queries.push(supabase.from('enrollments').select('id', { count: 'exact', head: true }));
+          } else if (role === 'learner') {
+            queries.push(Promise.resolve({ count: 0 }));
+            queries.push(Promise.resolve({ count: 0 }));
+            queries.push(Promise.resolve({ count: 0 }));
+            queries.push(Promise.resolve({ count: 0 }));
+            queries.push(supabase.from('enrollments').select('id', { count: 'exact', head: true }).eq('learner_id', profile.id));
+          }
+
+          const results = await Promise.all(queries);
+          setStats({
+            centers: results[0]?.count || 0,
+            users: results[1]?.count || 0,
+            videos: results[2]?.count || 0,
+            courses: results[3]?.count || 0,
+            enrollments: results[4]?.count || 0
+          });
+        } catch (e) {
+          console.error('Erreur stats:', e);
+        }
+        setLoading(false);
+      };
+
+      if (loading) return <Loading text="Chargement..." />;
+
+      if (role === 'learner') {
+        return (
+          <div>
+            <h1 className="text-2xl font-bold mb-6">Bienvenue, {profile?.first_name} !</h1>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <StatCard label="Mes cours" value={stats.enrollments} icon="BookOpen" color="text-indigo-400" />
+              <StatCard label="Cours terminés" value="0" icon="CheckCircle" color="text-green-400" />
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div>
+          <h1 className="text-2xl font-bold mb-6">Tableau de bord</h1>
+          <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            {isSuperAdmin && <StatCard label="Centres" value={stats.centers} icon="Building2" color="text-red-400" />}
+            <StatCard label="Utilisateurs" value={stats.users} icon="Users" color="text-blue-400" />
+            <StatCard label="Vidéos" value={stats.videos} icon="Film" color="text-purple-400" />
+            <StatCard label="Cours" value={stats.courses} icon="BookOpen" color="text-green-400" />
+            <StatCard label="Inscriptions" value={stats.enrollments} icon="UserPlus" color="text-yellow-400" />
+          </div>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // PAGE CENTRES (Super Admin)
+    // ════════════════════════════════════════════════════════════════════════════
+    function CentersPage() {
+      const { isSuperAdmin } = useAuth();
+      const [centers, setCenters] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [modal, setModal] = useState(false);
+      const [editing, setEditing] = useState(null);
+      const [form, setForm] = useState({ name: '', slug: '', description: '' });
+
+      useEffect(() => { loadCenters(); }, []);
+
+      const loadCenters = async () => {
+        const { data } = await supabase.from('centers').select('*').order('name');
+        setCenters(data || []);
+        setLoading(false);
+      };
+
+      const handleSave = async () => {
+        const payload = { name: form.name, slug: form.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-'), description: form.description };
+        if (editing) await supabase.from('centers').update(payload).eq('id', editing.id);
+        else await supabase.from('centers').insert(payload);
+        loadCenters();
+        closeModal();
+      };
+
+      const handleDelete = async (id) => {
+        if (!confirm('Supprimer ce centre et toutes ses données ?')) return;
+        await supabase.from('centers').delete().eq('id', id);
+        loadCenters();
+      };
+
+      const openEdit = (center) => {
+        setEditing(center);
+        setForm({ name: center.name, slug: center.slug, description: center.description || '' });
+        setModal(true);
+      };
+
+      const closeModal = () => {
+        setModal(false);
+        setEditing(null);
+        setForm({ name: '', slug: '', description: '' });
+      };
+
+      if (!isSuperAdmin) return <Empty icon="Lock" title="Accès refusé" desc="Seul le super admin peut gérer les centres." />;
+      if (loading) return <Loading />;
+
+      return (
+        <div>
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-2xl font-bold">Centres de formation</h1>
+            <Button icon="Plus" onClick={() => setModal(true)}>Nouveau centre</Button>
+          </div>
+
+          {centers.length === 0 ? (
+            <Empty icon="Building2" title="Aucun centre" desc="Créez votre premier centre de formation" action={<Button icon="Plus" onClick={() => setModal(true)}>Créer un centre</Button>} />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {centers.map(c => (
+                <Card key={c.id} className="p-4">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ backgroundColor: c.primary_color || '#6366f1' }}>
+                      <Icon name="Building2" size={24} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold truncate">{c.name}</h3>
+                      <p className="text-sm text-gray-400">/{c.slug}</p>
+                    </div>
+                    <span className={`px-2 py-1 rounded text-xs ${c.is_active ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'}`}>
+                      {c.is_active ? 'Actif' : 'Inactif'}
+                    </span>
+                  </div>
+                  {c.description && <p className="text-sm text-gray-400 mb-3 line-clamp-2">{c.description}</p>}
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" icon="Edit2" onClick={() => openEdit(c)}>Modifier</Button>
+                    <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={() => handleDelete(c.id)}>Supprimer</Button>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          <Modal isOpen={modal} onClose={closeModal} title={editing ? 'Modifier le centre' : 'Nouveau centre'}>
+            <div className="space-y-4">
+              <Input label="Nom du centre" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+              <Input label="Slug (URL)" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} placeholder="mon-centre" required />
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
+                <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" />
+              </div>
+              <div className="flex justify-end gap-3 pt-4">
+                <Button variant="secondary" onClick={closeModal}>Annuler</Button>
+                <Button onClick={handleSave}>{editing ? 'Enregistrer' : 'Créer'}</Button>
+              </div>
+            </div>
+          </Modal>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // PAGE UTILISATEURS
+    // ════════════════════════════════════════════════════════════════════════════
+    function UsersPage() {
+      const { center, isSuperAdmin, can } = useAuth();
+      const [users, setUsers] = useState([]);
+      const [centers, setCenters] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [modal, setModal] = useState(false);
+      const [editing, setEditing] = useState(null);
+      const [search, setSearch] = useState('');
+      const [form, setForm] = useState({ first_name: '', last_name: '', role: 'learner', center_id: '' });
+
+      useEffect(() => { loadData(); }, []);
+
+      const loadData = async () => {
+        let query = supabase.from('profiles').select('*, centers(name)').order('created_at', { ascending: false });
+        if (!isSuperAdmin && center?.id) query = query.eq('center_id', center.id);
+        const { data: usersData } = await query;
+        setUsers(usersData || []);
+
+        if (isSuperAdmin) {
+          const { data: centersData } = await supabase.from('centers').select('id, name');
+          setCenters(centersData || []);
+        }
+        setLoading(false);
+      };
+
+      const handleSave = async () => {
+        if (editing) {
+          await supabase.from('profiles').update({
+            first_name: form.first_name,
+            last_name: form.last_name,
+            role: form.role,
+            center_id: form.center_id || null
+          }).eq('id', editing.id);
+          loadData();
+          closeModal();
+        }
+      };
+
+      const closeModal = () => {
+        setModal(false);
+        setEditing(null);
+        setForm({ first_name: '', last_name: '', role: 'learner', center_id: '' });
+      };
+
+      const openEdit = (user) => {
+        setEditing(user);
+        setForm({
+          first_name: user.first_name || '',
+          last_name: user.last_name || '',
+          role: user.role,
+          center_id: user.center_id || ''
+        });
+        setModal(true);
+      };
+
+      const filtered = users.filter(u => {
+        if (!search) return true;
+        const s = search.toLowerCase();
+        return u.email?.toLowerCase().includes(s) || u.first_name?.toLowerCase().includes(s) || u.last_name?.toLowerCase().includes(s);
+      });
+
+      if (!can('users')) return <Empty icon="Lock" title="Accès refusé" />;
+      if (loading) return <Loading />;
+
+      return (
+        <div>
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-2xl font-bold">Utilisateurs</h1>
+          </div>
+
+          <Card className="p-4 mb-6">
+            <Input icon="Search" placeholder="Rechercher par nom ou email..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          </Card>
+
+          <Card>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-700/50">
+                  <tr>
+                    <th className="text-left p-4 font-medium text-gray-400">Utilisateur</th>
+                    <th className="text-left p-4 font-medium text-gray-400">Rôle</th>
+                    {isSuperAdmin && <th className="text-left p-4 font-medium text-gray-400">Centre</th>}
+                    <th className="text-left p-4 font-medium text-gray-400">Statut</th>
+                    <th className="text-right p-4"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-700">
+                  {filtered.map(user => (
+                    <tr key={user.id} className="hover:bg-gray-700/30">
+                      <td className="p-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center">
+                            <Icon name="User" size={18} />
+                          </div>
+                          <div>
+                            <p className="font-medium">{user.first_name} {user.last_name}</p>
+                            <p className="text-sm text-gray-400">{user.email}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="p-4"><RoleBadge role={user.role} /></td>
+                      {isSuperAdmin && <td className="p-4 text-gray-400">{user.centers?.name || '—'}</td>}
+                      <td className="p-4">
+                        <span className={`px-2 py-1 rounded text-xs ${user.is_active ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'}`}>
+                          {user.is_active ? 'Actif' : 'Inactif'}
+                        </span>
+                      </td>
+                      <td className="p-4 text-right">
+                        <Button variant="ghost" size="sm" icon="Edit2" onClick={() => openEdit(user)} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          <Modal isOpen={modal} onClose={closeModal} title="Modifier l'utilisateur">
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <Input label="Prénom" value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} />
+                <Input label="Nom" value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} />
+              </div>
+              <Select
+                label="Rôle"
+                value={form.role}
+                onChange={(e) => setForm({ ...form, role: e.target.value })}
+                options={Object.entries(ROLES).filter(([r]) => isSuperAdmin || r !== 'super_admin').map(([value, { label }]) => ({ value, label }))}
+              />
+              {isSuperAdmin && (
+                <Select
+                  label="Centre"
+                  value={form.center_id}
+                  onChange={(e) => setForm({ ...form, center_id: e.target.value })}
+                  options={[{ value: '', label: 'Aucun centre' }, ...centers.map(c => ({ value: c.id, label: c.name }))]}
+                />
+              )}
+              <div className="flex justify-end gap-3 pt-4">
+                <Button variant="secondary" onClick={closeModal}>Annuler</Button>
+                <Button onClick={handleSave}>Enregistrer</Button>
+              </div>
+            </div>
+          </Modal>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // PAGE BIBLIOTHÈQUE VIDÉO
+    // ════════════════════════════════════════════════════════════════════════════
+    function VideosPage() {
+      const { profile, center, isSuperAdmin } = useAuth();
+      const [videos, setVideos] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [modal, setModal] = useState(false);
+      const [editing, setEditing] = useState(null);
+      const [search, setSearch] = useState('');
+      const [form, setForm] = useState({ title: '', vimeo_id: '', duration: '', category: '', description: '' });
+
+      useEffect(() => { loadVideos(); }, []);
+
+      const loadVideos = async () => {
+        let query = supabase.from('videos').select('*').order('created_at', { ascending: false });
+        if (!isSuperAdmin && center?.id) query = query.eq('center_id', center.id);
+        const { data } = await query;
+        setVideos(data || []);
+        setLoading(false);
+      };
+
+      const handleSave = async () => {
+        const vimeoMatch = form.vimeo_id.match(/vimeo\.com\/(\d+)/);
+        const vimeoId = vimeoMatch ? vimeoMatch[1] : form.vimeo_id.replace(/\D/g, '');
+        
+        const payload = {
+          title: form.title,
+          vimeo_id: vimeoId,
+          duration: form.duration,
+          category: form.category,
+          description: form.description,
+          center_id: center?.id,
+          created_by: profile?.id
+        };
+
+        if (editing) await supabase.from('videos').update(payload).eq('id', editing.id);
+        else await supabase.from('videos').insert(payload);
+        
+        loadVideos();
+        closeModal();
+      };
+
+      const handleDelete = async (id) => {
+        if (!confirm('Supprimer cette vidéo ?')) return;
+        await supabase.from('videos').delete().eq('id', id);
+        loadVideos();
+      };
+
+      const closeModal = () => {
+        setModal(false);
+        setEditing(null);
+        setForm({ title: '', vimeo_id: '', duration: '', category: '', description: '' });
+      };
+
+      const openEdit = (video) => {
+        setEditing(video);
+        setForm({
+          title: video.title,
+          vimeo_id: video.vimeo_id,
+          duration: video.duration || '',
+          category: video.category || '',
+          description: video.description || ''
+        });
+        setModal(true);
+      };
+
+      const filtered = videos.filter(v => !search || v.title?.toLowerCase().includes(search.toLowerCase()));
+
+      if (loading) return <Loading />;
+
+      return (
+        <div>
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-2xl font-bold">Bibliothèque vidéo</h1>
+            <Button icon="Plus" onClick={() => setModal(true)}>Ajouter une vidéo</Button>
+          </div>
+
+          <Card className="p-4 mb-6">
+            <Input icon="Search" placeholder="Rechercher..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          </Card>
+
+          {filtered.length === 0 ? (
+            <Empty icon="Film" title="Aucune vidéo" desc="Ajoutez vos premières vidéos Vimeo" action={<Button icon="Plus" onClick={() => setModal(true)}>Ajouter</Button>} />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filtered.map(video => (
+                <Card key={video.id} className="overflow-hidden">
+                  <div className="aspect-video bg-gray-900 relative">
+                    <iframe src={`https://player.vimeo.com/video/${video.vimeo_id}?background=1`} className="w-full h-full" />
+                    {video.duration && <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{video.duration}</div>}
+                  </div>
+                  <div className="p-4">
+                    <h3 className="font-semibold truncate">{video.title}</h3>
+                    {video.category && <span className="inline-block mt-2 px-2 py-1 bg-gray-700 rounded text-xs">{video.category}</span>}
+                    <div className="flex gap-2 mt-3">
+                      <Button variant="ghost" size="sm" icon="Edit2" onClick={() => openEdit(video)}>Modifier</Button>
+                      <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={() => handleDelete(video.id)}>Supprimer</Button>
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          <Modal isOpen={modal} onClose={closeModal} title={editing ? 'Modifier la vidéo' : 'Ajouter une vidéo'}>
+            <div className="space-y-4">
+              <Input label="Titre" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
+              <Input label="URL ou ID Vimeo" value={form.vimeo_id} onChange={(e) => setForm({ ...form, vimeo_id: e.target.value })} placeholder="https://vimeo.com/123456789 ou 123456789" required />
+              <div className="grid grid-cols-2 gap-4">
+                <Input label="Durée" value={form.duration} onChange={(e) => setForm({ ...form, duration: e.target.value })} placeholder="5:30" />
+                <Input label="Catégorie" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
+                <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" />
+              </div>
+              <div className="flex justify-end gap-3 pt-4">
+                <Button variant="secondary" onClick={closeModal}>Annuler</Button>
+                <Button onClick={handleSave}>{editing ? 'Enregistrer' : 'Ajouter'}</Button>
+              </div>
+            </div>
+          </Modal>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // PAGE COURS
+    // ════════════════════════════════════════════════════════════════════════════
+    function CoursesPage() {
+      const { profile, center, isSuperAdmin, can } = useAuth();
+      const [courses, setCourses] = useState([]);
+      const [videos, setVideos] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [modal, setModal] = useState(false);
+      const [editing, setEditing] = useState(null);
+      const [form, setForm] = useState({ title: '', description: '' });
+      const [videosModal, setVideosModal] = useState(null);
+      const [courseVideos, setCourseVideos] = useState([]);
+
+      useEffect(() => { loadData(); }, []);
+
+      const loadData = async () => {
+        let coursesQuery = supabase.from('courses').select('*').order('created_at', { ascending: false });
+        let videosQuery = supabase.from('videos').select('*').eq('is_active', true);
+        
+        if (!isSuperAdmin && center?.id) {
+          coursesQuery = coursesQuery.eq('center_id', center.id);
+          videosQuery = videosQuery.eq('center_id', center.id);
+        }
+
+        const [{ data: coursesData }, { data: videosData }] = await Promise.all([coursesQuery, videosQuery]);
+        setCourses(coursesData || []);
+        setVideos(videosData || []);
+        setLoading(false);
+      };
+
+      const handleSave = async () => {
+        const payload = { title: form.title, description: form.description, center_id: center?.id, created_by: profile?.id };
+        if (editing) await supabase.from('courses').update(payload).eq('id', editing.id);
+        else await supabase.from('courses').insert(payload);
+        loadData();
+        closeModal();
+      };
+
+      const handleDelete = async (id) => {
+        if (!confirm('Supprimer ce cours ?')) return;
+        await supabase.from('courses').delete().eq('id', id);
+        loadData();
+      };
+
+      const togglePublish = async (course) => {
+        await supabase.from('courses').update({
+          status: course.status === 'published' ? 'draft' : 'published',
+          published_at: course.status === 'published' ? null : new Date().toISOString()
+        }).eq('id', course.id);
+        loadData();
+      };
+
+      const closeModal = () => {
+        setModal(false);
+        setEditing(null);
+        setForm({ title: '', description: '' });
+      };
+
+      const openEdit = (course) => {
+        setEditing(course);
+        setForm({ title: course.title, description: course.description || '' });
+        setModal(true);
+      };
+
+      const openVideosModal = async (course) => {
+        const { data } = await supabase.from('course_videos').select('*, videos(*)').eq('course_id', course.id).order('position');
+        setCourseVideos(data || []);
+        setVideosModal(course);
+      };
+
+      const addVideoToCourse = async (videoId) => {
+        const position = courseVideos.length;
+        const { data } = await supabase.from('course_videos').insert({
+          course_id: videosModal.id,
+          video_id: videoId,
+          position
+        }).select('*, videos(*)').single();
+        if (data) setCourseVideos([...courseVideos, data]);
+      };
+
+      const removeVideoFromCourse = async (cvId) => {
+        await supabase.from('course_videos').delete().eq('id', cvId);
+        setCourseVideos(courseVideos.filter(cv => cv.id !== cvId));
+      };
+
+      const copyShareLink = async (course) => {
+        const url = `${location.origin}${location.pathname}#/learn/${course.share_id}`;
+        try {
+          await navigator.clipboard.writeText(url);
+          alert('Lien copié !');
+        } catch {
+          prompt('Copiez ce lien :', url);
+        }
+      };
+
+      if (loading) return <Loading />;
+
+      return (
+        <div>
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-2xl font-bold">Cours</h1>
+            {can('courses') && <Button icon="Plus" onClick={() => setModal(true)}>Créer un cours</Button>}
+          </div>
+
+          {courses.length === 0 ? (
+            <Empty icon="BookOpen" title="Aucun cours" desc="Créez votre premier parcours de formation" action={can('courses') && <Button icon="Plus" onClick={() => setModal(true)}>Créer</Button>} />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {courses.map(course => (
+                <Card key={course.id} className="p-4">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold truncate">{course.title}</h3>
+                      <p className="text-sm text-gray-400 mt-1">{course.video_count} vidéos</p>
+                    </div>
+                    <span className={`px-2 py-1 rounded text-xs ${course.status === 'published' ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'}`}>
+                      {course.status === 'published' ? 'Publié' : 'Brouillon'}
+                    </span>
+                  </div>
+                  
+                  <div className="flex flex-wrap gap-2">
+                    {can('courses') && (
+                      <>
+                        <Button variant="ghost" size="sm" icon="Film" onClick={() => openVideosModal(course)}>Vidéos</Button>
+                        <Button variant="ghost" size="sm" icon="Edit2" onClick={() => openEdit(course)}>Modifier</Button>
+                      </>
+                    )}
+                    {can('publish') && (
+                      <Button variant="ghost" size="sm" icon={course.status === 'published' ? 'EyeOff' : 'Eye'} onClick={() => togglePublish(course)}>
+                        {course.status === 'published' ? 'Dépublier' : 'Publier'}
+                      </Button>
+                    )}
+                    {course.status === 'published' && (
+                      <Button variant="ghost" size="sm" icon="Share2" onClick={() => copyShareLink(course)}>Partager</Button>
+                    )}
+                    {can('courses') && (
+                      <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={() => handleDelete(course.id)} />
+                    )}
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          {/* Modal création/édition */}
+          <Modal isOpen={modal} onClose={closeModal} title={editing ? 'Modifier le cours' : 'Créer un cours'}>
+            <div className="space-y-4">
+              <Input label="Titre" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
+                <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" />
+              </div>
+              <div className="flex justify-end gap-3 pt-4">
+                <Button variant="secondary" onClick={closeModal}>Annuler</Button>
+                <Button onClick={handleSave}>{editing ? 'Enregistrer' : 'Créer'}</Button>
+              </div>
+            </div>
+          </Modal>
+
+          {/* Modal gestion vidéos */}
+          <Modal isOpen={!!videosModal} onClose={() => setVideosModal(null)} title={`Vidéos : ${videosModal?.title}`} size="lg">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div>
+                <h4 className="font-medium mb-3">Vidéos du cours ({courseVideos.length})</h4>
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {courseVideos.map((cv, i) => (
+                    <div key={cv.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg">
+                      <span className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{i + 1}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium truncate text-sm">{cv.videos?.title}</p>
+                        <p className="text-xs text-gray-400">{cv.videos?.duration}</p>
+                      </div>
+                      <button onClick={() => removeVideoFromCourse(cv.id)} className="p-1 hover:bg-red-600 rounded">
+                        <Icon name="X" size={16} />
+                      </button>
+                    </div>
+                  ))}
+                  {courseVideos.length === 0 && <p className="text-gray-500 text-sm text-center py-4">Aucune vidéo</p>}
+                </div>
+              </div>
+              <div>
+                <h4 className="font-medium mb-3">Ajouter des vidéos</h4>
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {videos.filter(v => !courseVideos.find(cv => cv.video_id === v.id)).map(video => (
+                    <div key={video.id} className="flex items-center gap-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 cursor-pointer" onClick={() => addVideoToCourse(video.id)}>
+                      <Icon name="Plus" size={16} className="text-indigo-400" />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium truncate text-sm">{video.title}</p>
+                        <p className="text-xs text-gray-400">{video.duration}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </Modal>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // PAGE INSCRIPTIONS
+    // ════════════════════════════════════════════════════════════════════════════
+    function EnrollmentsPage() {
+      const { center, isSuperAdmin } = useAuth();
+      const [enrollments, setEnrollments] = useState([]);
+      const [courses, setCourses] = useState([]);
+      const [learners, setLearners] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [modal, setModal] = useState(false);
+      const [form, setForm] = useState({ course_id: '', learner_id: '' });
+
+      useEffect(() => { loadData(); }, []);
+
+      const loadData = async () => {
+        const queries = [
+          supabase.from('enrollments').select('*, courses(title), profiles!enrollments_learner_id_fkey(first_name, last_name, email)').order('created_at', { ascending: false }),
+          supabase.from('courses').select('id, title').eq('status', 'published'),
+          supabase.from('profiles').select('id, first_name, last_name, email').eq('role', 'learner')
+        ];
+
+        if (!isSuperAdmin && center?.id) {
+          queries[1] = queries[1].eq('center_id', center.id);
+          queries[2] = queries[2].eq('center_id', center.id);
+        }
+
+        const [{ data: e }, { data: c }, { data: l }] = await Promise.all(queries);
+        setEnrollments(e || []);
+        setCourses(c || []);
+        setLearners(l || []);
+        setLoading(false);
+      };
+
+      const handleEnroll = async () => {
+        await supabase.from('enrollments').insert({ course_id: form.course_id, learner_id: form.learner_id });
+        loadData();
+        setModal(false);
+        setForm({ course_id: '', learner_id: '' });
+      };
+
+      const handleUnenroll = async (id) => {
+        if (!confirm('Désinscrire cet apprenant ?')) return;
+        await supabase.from('enrollments').delete().eq('id', id);
+        loadData();
+      };
+
+      if (loading) return <Loading />;
+
+      return (
+        <div>
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-2xl font-bold">Inscriptions</h1>
+            <Button icon="UserPlus" onClick={() => setModal(true)}>Inscrire</Button>
+          </div>
+
+          {enrollments.length === 0 ? (
+            <Empty icon="UserPlus" title="Aucune inscription" desc="Inscrivez des apprenants à vos cours" action={<Button icon="UserPlus" onClick={() => setModal(true)}>Inscrire</Button>} />
+          ) : (
+            <Card>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-700/50">
+                    <tr>
+                      <th className="text-left p-4 font-medium text-gray-400">Apprenant</th>
+                      <th className="text-left p-4 font-medium text-gray-400">Cours</th>
+                      <th className="text-left p-4 font-medium text-gray-400">Progression</th>
+                      <th className="text-left p-4 font-medium text-gray-400">Date</th>
+                      <th className="text-right p-4"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-700">
+                    {enrollments.map(e => (
+                      <tr key={e.id}>
+                        <td className="p-4">
+                          <p className="font-medium">{e.profiles?.first_name} {e.profiles?.last_name}</p>
+                          <p className="text-sm text-gray-400">{e.profiles?.email}</p>
+                        </td>
+                        <td className="p-4">{e.courses?.title}</td>
+                        <td className="p-4">
+                          <div className="flex items-center gap-2">
+                            <div className="w-24 bg-gray-700 rounded-full h-2">
+                              <div className="bg-green-500 h-full rounded-full" style={{ width: `${e.progress_percent}%` }} />
+                            </div>
+                            <span className="text-sm">{e.progress_percent}%</span>
+                          </div>
+                        </td>
+                        <td className="p-4 text-gray-400">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td>
+                        <td className="p-4 text-right">
+                          <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={() => handleUnenroll(e.id)} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          <Modal isOpen={modal} onClose={() => setModal(false)} title="Inscrire un apprenant">
+            <div className="space-y-4">
+              <Select
+                label="Cours"
+                value={form.course_id}
+                onChange={(e) => setForm({ ...form, course_id: e.target.value })}
+                options={[{ value: '', label: 'Sélectionner un cours...' }, ...courses.map(c => ({ value: c.id, label: c.title }))]}
+              />
+              <Select
+                label="Apprenant"
+                value={form.learner_id}
+                onChange={(e) => setForm({ ...form, learner_id: e.target.value })}
+                options={[{ value: '', label: 'Sélectionner un apprenant...' }, ...learners.map(l => ({ value: l.id, label: `${l.first_name} ${l.last_name} (${l.email})` }))]}
+              />
+              <div className="flex justify-end gap-3 pt-4">
+                <Button variant="secondary" onClick={() => setModal(false)}>Annuler</Button>
+                <Button onClick={handleEnroll} disabled={!form.course_id || !form.learner_id}>Inscrire</Button>
+              </div>
+            </div>
+          </Modal>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // PAGE MES COURS (Apprenant)
+    // ════════════════════════════════════════════════════════════════════════════
+    function MyCoursesPage() {
+      const { user } = useAuth();
+      const [enrollments, setEnrollments] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [selectedCourse, setSelectedCourse] = useState(null);
+      const [courseVideos, setCourseVideos] = useState([]);
+      const [progress, setProgress] = useState({});
+      const [currentIndex, setCurrentIndex] = useState(0);
+
+      useEffect(() => { loadEnrollments(); }, []);
+
+      const loadEnrollments = async () => {
+        const { data } = await supabase.from('enrollments').select('*, courses(*)').eq('learner_id', user.id);
+        setEnrollments(data || []);
+        setLoading(false);
+      };
+
+      const openCourse = async (enrollment) => {
+        const { data: videos } = await supabase.from('course_videos').select('*, videos(*)').eq('course_id', enrollment.course_id).order('position');
+        const { data: prog } = await supabase.from('video_progress').select('*').eq('enrollment_id', enrollment.id);
+        
+        setCourseVideos(videos || []);
+        setProgress(prog?.reduce((acc, p) => ({ ...acc, [p.course_video_id]: p }), {}) || {});
+        setSelectedCourse(enrollment);
+        setCurrentIndex(0);
+      };
+
+      const markWatched = async (cvId) => {
+        await supabase.from('video_progress').upsert({
+          enrollment_id: selectedCourse.id,
+          course_video_id: cvId,
+          is_completed: true,
+          completed_at: new Date().toISOString()
+        }, { onConflict: 'enrollment_id,course_video_id' });
+        
+        setProgress({ ...progress, [cvId]: { is_completed: true } });
+      };
+
+      if (loading) return <Loading />;
+
+      if (selectedCourse && courseVideos.length > 0) {
+        const cv = courseVideos[currentIndex];
+        const video = cv?.videos;
+        const isWatched = progress[cv?.id]?.is_completed;
+        const completedCount = Object.values(progress).filter(p => p.is_completed).length;
+        const progressPercent = Math.round((completedCount / courseVideos.length) * 100);
+
+        return (
+          <div>
+            <button onClick={() => { setSelectedCourse(null); loadEnrollments(); }} className="flex items-center gap-2 text-gray-400 hover:text-white mb-4">
+              <Icon name="ArrowLeft" size={20} /> Retour
+            </button>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2">
+                <div className="aspect-video bg-black rounded-xl overflow-hidden mb-4">
+                  <iframe src={`https://player.vimeo.com/video/${video?.vimeo_id}`} className="w-full h-full" allowFullScreen />
+                </div>
+                
+                <div className="flex items-start justify-between gap-4 mb-4">
+                  <div>
+                    <span className="px-2 py-1 bg-indigo-600 rounded text-xs font-medium">{currentIndex + 1}/{courseVideos.length}</span>
+                    <h2 className="text-xl font-bold mt-2">{video?.title}</h2>
+                    <p className="text-gray-400">{video?.duration}</p>
+                  </div>
+                  <Button variant={isWatched ? 'success' : 'secondary'} icon={isWatched ? 'CheckCircle' : 'Circle'} onClick={() => markWatched(cv.id)}>
+                    {isWatched ? 'Terminé' : 'Marquer comme vu'}
+                  </Button>
+                </div>
+
+                {cv?.trainer_note && (
+                  <Card className="p-4 mb-4 border-yellow-600/30 bg-yellow-900/10">
+                    <div className="flex items-start gap-3">
+                      <Icon name="FileText" size={20} className="text-yellow-400" />
+                      <div>
+                        <h4 className="font-medium text-yellow-400 mb-1">Note du formateur</h4>
+                        <p className="text-yellow-200 text-sm">{cv.trainer_note}</p>
+                      </div>
+                    </div>
+                  </Card>
+                )}
+
+                <div className="flex gap-3">
+                  <Button variant="secondary" icon="ChevronLeft" onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} disabled={currentIndex === 0}>
+                    Précédent
+                  </Button>
+                  <Button icon="ChevronRight" onClick={() => setCurrentIndex(Math.min(courseVideos.length - 1, currentIndex + 1))} disabled={currentIndex === courseVideos.length - 1}>
+                    Suivant
+                  </Button>
+                </div>
+              </div>
+
+              <div>
+                <Card className="p-4">
+                  <h3 className="font-semibold mb-4">Contenu du cours</h3>
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between text-sm mb-1">
+                      <span className="text-gray-400">Progression</span>
+                      <span>{progressPercent}%</span>
+                    </div>
+                    <div className="w-full bg-gray-700 rounded-full h-2">
+                      <div className="bg-green-500 h-full rounded-full transition-all" style={{ width: `${progressPercent}%` }} />
+                    </div>
+                  </div>
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {courseVideos.map((item, i) => (
+                      <div key={item.id} onClick={() => setCurrentIndex(i)} className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition ${i === currentIndex ? 'bg-indigo-600' : 'hover:bg-gray-700'}`}>
+                        <div className="flex-shrink-0">
+                          {progress[item.id]?.is_completed ? <Icon name="CheckCircle" size={18} className="text-green-400" /> :
+                            i === currentIndex ? <Icon name="Play" size={18} className="text-indigo-400" /> : <Icon name="Circle" size={18} className="text-gray-500" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{item.videos?.title}</p>
+                          <p className="text-xs text-gray-400">{item.videos?.duration}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div>
+          <h1 className="text-2xl font-bold mb-6">Mes cours</h1>
+          {enrollments.length === 0 ? (
+            <Empty icon="GraduationCap" title="Aucun cours" desc="Vous n'êtes inscrit à aucun cours pour le moment" />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {enrollments.map(e => (
+                <Card key={e.id} className="p-4 cursor-pointer hover:border-indigo-500 transition" onClick={() => openCourse(e)}>
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-12 h-12 bg-indigo-600/20 rounded-xl flex items-center justify-center">
+                      <Icon name="BookOpen" size={24} className="text-indigo-400" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-semibold">{e.courses?.title}</h3>
+                      <p className="text-sm text-gray-400">{e.progress_percent}% terminé</p>
+                    </div>
+                  </div>
+                  <div className="w-full bg-gray-700 rounded-full h-2 mb-4">
+                    <div className="bg-green-500 h-full rounded-full" style={{ width: `${e.progress_percent}%` }} />
+                  </div>
+                  <Button className="w-full">Continuer</Button>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // PAGE PROGRESSION
+    // ════════════════════════════════════════════════════════════════════════════
+    function ProgressPage() {
+      return <Empty icon="BarChart3" title="Statistiques de progression" desc="Consultez la progression des apprenants inscrits à vos cours" />;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // APPLICATION PRINCIPALE
+    // ════════════════════════════════════════════════════════════════════════════
+    function App() {
+      const { isAuth, loading } = useAuth();
+
+      if (loading) {
+        return (
+          <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+            <Loading text="Chargement..." />
+          </div>
+        );
+      }
+
+      return isAuth ? <AppLayout /> : <LoginPage />;
+    }
+
+    // Rendu
+    ReactDOM.createRoot(document.getElementById('root')).render(
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    );
+  </script>
+</body>
+</html>
