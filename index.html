@@ -41,7 +41,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '3.2.0';
+    const APP_VERSION = '3.2.1';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -674,9 +674,11 @@
       const[importResult,setImportResult]=useState(null);
       const[attachments,setAttachments]=useState([]);
       const[chapters,setChapters]=useState([]);
-      const[newAttachment,setNewAttachment]=useState({title:'',file_url:''});
+      const[newAttachment,setNewAttachment]=useState({title:'',file:null});
       const[newChapter,setNewChapter]=useState({title:'',timestamp:'',description:''});
+      const[uploading,setUploading]=useState(false);
       const fileInputRef=useRef(null);
+      const attachmentFileRef=useRef(null);
 
       const load=useCallback(async()=>{let q=supabase.from('videos').select('*').order('sort_order',{ascending:true,nullsFirst:false}).order('created_at',{ascending:false});if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);const{data}=await q;setVideos(data||[]);setLoading(false);},[isSuperAdmin,center?.id]);
       useEffect(()=>{load();},[load]);
@@ -709,27 +711,68 @@
         ]);
         setAttachments(att||[]);
         setChapters(chap||[]);
-        setNewAttachment({title:'',file_url:''});
+        setNewAttachment({title:'',file:null});
         setNewChapter({title:'',timestamp:'',description:''});
       };
 
-      // Gestion des documents
-      const addAttachment=async()=>{
-        if(!newAttachment.title||!newAttachment.file_url)return;
-        const fileType=newAttachment.file_url.split('.').pop()?.toLowerCase()||'file';
-        const{data}=await supabase.from('video_attachments').insert({
-          video_id:detailModal.id,
-          title:newAttachment.title,
-          file_url:newAttachment.file_url,
-          file_type:fileType,
-          sort_order:attachments.length
-        }).select().single();
-        if(data)setAttachments([...attachments,data]);
-        setNewAttachment({title:'',file_url:''});
+      // Gestion des documents avec upload
+      const handleFileChange=(e)=>{
+        const file=e.target.files[0];
+        if(file){
+          setNewAttachment(prev=>({...prev,file,title:prev.title||file.name.split('.')[0]}));
+        }
       };
-      const deleteAttachment=async(id)=>{
-        await supabase.from('video_attachments').delete().eq('id',id);
-        setAttachments(attachments.filter(a=>a.id!==id));
+      
+      const addAttachment=async()=>{
+        if(!newAttachment.title||!newAttachment.file)return;
+        setUploading(true);
+        
+        try{
+          const file=newAttachment.file;
+          const fileExt=file.name.split('.').pop();
+          const fileName=`${detailModal.id}/${Date.now()}.${fileExt}`;
+          
+          // Upload vers Supabase Storage
+          const{data:uploadData,error:uploadError}=await supabase.storage
+            .from('attachments')
+            .upload(fileName,file);
+          
+          if(uploadError)throw uploadError;
+          
+          // Obtenir l'URL publique
+          const{data:urlData}=supabase.storage
+            .from('attachments')
+            .getPublicUrl(fileName);
+          
+          // Enregistrer dans la base
+          const{data}=await supabase.from('video_attachments').insert({
+            video_id:detailModal.id,
+            title:newAttachment.title,
+            file_url:urlData.publicUrl,
+            file_type:fileExt,
+            file_size:file.size,
+            sort_order:attachments.length
+          }).select().single();
+          
+          if(data)setAttachments([...attachments,data]);
+          setNewAttachment({title:'',file:null});
+          if(attachmentFileRef.current)attachmentFileRef.current.value='';
+        }catch(err){
+          console.error('Upload error:',err);
+          alert('Erreur upload: '+err.message);
+        }
+        setUploading(false);
+      };
+      
+      const deleteAttachment=async(att)=>{
+        // Supprimer du storage
+        const filePath=att.file_url.split('/attachments/')[1];
+        if(filePath){
+          await supabase.storage.from('attachments').remove([filePath]);
+        }
+        // Supprimer de la base
+        await supabase.from('video_attachments').delete().eq('id',att.id);
+        setAttachments(attachments.filter(a=>a.id!==att.id));
       };
 
       // Gestion des chapitres
@@ -789,18 +832,26 @@
                     <Icon name="FileText" size={20} className="text-indigo-400"/>
                     <div className="flex-1 min-w-0">
                       <p className="font-medium truncate text-sm">{a.title}</p>
-                      <p className="text-xs text-gray-400 truncate">{a.file_type?.toUpperCase()}</p>
+                      <p className="text-xs text-gray-400">{a.file_type?.toUpperCase()} {a.file_size?`• ${Math.round(a.file_size/1024)} Ko`:''}</p>
                     </div>
-                    <a href={a.file_url} target="_blank" rel="noopener" className="p-1 hover:bg-gray-600 rounded"><Icon name="ExternalLink" size={16}/></a>
-                    <button onClick={()=>deleteAttachment(a.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="Trash2" size={16}/></button>
+                    <a href={a.file_url} download className="p-2 hover:bg-indigo-600 rounded" title="Télécharger"><Icon name="Download" size={16}/></a>
+                    <button onClick={()=>deleteAttachment(a)} className="p-2 hover:bg-red-600 rounded" title="Supprimer"><Icon name="Trash2" size={16}/></button>
                   </div>
                 ))}
                 {attachments.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucun document</p>}
               </div>
-              <div className="space-y-2 p-3 bg-gray-700/50 rounded-lg">
+              <div className="space-y-3 p-3 bg-gray-700/50 rounded-lg">
                 <Input placeholder="Titre du document" value={newAttachment.title} onChange={e=>setNewAttachment({...newAttachment,title:e.target.value})}/>
-                <Input placeholder="URL du fichier" value={newAttachment.file_url} onChange={e=>setNewAttachment({...newAttachment,file_url:e.target.value})}/>
-                <Button size="sm" icon="Plus" onClick={addAttachment} disabled={!newAttachment.title||!newAttachment.file_url}>Ajouter</Button>
+                <div className="flex items-center gap-2">
+                  <input type="file" ref={attachmentFileRef} onChange={handleFileChange} className="hidden" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip"/>
+                  <Button variant="secondary" size="sm" icon="Upload" onClick={()=>attachmentFileRef.current?.click()}>
+                    {newAttachment.file?newAttachment.file.name:'Choisir un fichier'}
+                  </Button>
+                  {newAttachment.file&&<span className="text-xs text-gray-400">{Math.round(newAttachment.file.size/1024)} Ko</span>}
+                </div>
+                <Button size="sm" icon="Plus" onClick={addAttachment} loading={uploading} disabled={!newAttachment.title||!newAttachment.file||uploading}>
+                  {uploading?'Upload en cours...':'Ajouter le document'}
+                </Button>
               </div>
             </div>
             
