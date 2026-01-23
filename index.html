@@ -43,7 +43,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '4.0.1';
+    const APP_VERSION = '4.0.2';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -1047,17 +1047,19 @@
       const[newQuestion,setNewQuestion]=useState({question_text:'',question_type:'single',answers:[{text:'',is_correct:false},{text:'',is_correct:false}]});
 
       const load=useCallback(async()=>{
+        // Charger les quiz
         let q=supabase.from('quizzes').select('*,playlists(title),quiz_questions(count)').order('created_at',{ascending:false});
-        if(!isSuperAdmin&&center?.id)q=q.eq('playlists.center_id',center.id);
-        const{data:qz}=await q;
+        const{data:qz,error:qzErr}=await q;
+        if(qzErr)console.error('Erreur quiz:',qzErr);
         setQuizzes(qz||[]);
         
-        let qp=supabase.from('playlists').select('id,title');
-        if(!isSuperAdmin&&center?.id)qp=qp.eq('center_id',center.id);
-        const{data:pl}=await qp;
+        // Charger TOUS les cours (sans filtre pour le moment)
+        const{data:pl,error:plErr}=await supabase.from('playlists').select('id,title').order('title');
+        if(plErr)console.error('Erreur playlists:',plErr);
+        console.log('Playlists chargées:',pl);
         setPlaylists(pl||[]);
         setLoading(false);
-      },[isSuperAdmin,center?.id]);
+      },[]);
       
       useEffect(()=>{load();},[load]);
 
@@ -1196,13 +1198,17 @@
         <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier le quiz':'Créer un quiz'}>
           <div className="space-y-4">
             <Input label="Titre du quiz *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
-            <Select label="Cours associé" value={form.playlist_id} onChange={e=>setForm({...form,playlist_id:e.target.value})} options={[{value:'',label:'Aucun (quiz indépendant)'},...playlists.map(p=>({value:p.id,label:p.title}))]}/>
+            {playlists.length===0?(
+              <Alert type="warning">Aucun cours disponible. Créez d'abord un cours dans le menu "Cours".</Alert>
+            ):(
+              <Select label={`Cours associé * (${playlists.length} disponible${playlists.length>1?'s':''})`} value={form.playlist_id} onChange={e=>setForm({...form,playlist_id:e.target.value})} options={[{value:'',label:'-- Sélectionner un cours --'},...playlists.map(p=>({value:p.id,label:p.title}))]}/>
+            )}
             <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div>
             <Input label="Score minimum pour réussir (%)" type="number" value={form.passing_score} onChange={e=>setForm({...form,passing_score:e.target.value})} min="0" max="100"/>
             <Checkbox label="Quiz obligatoire pour compléter le cours" checked={form.is_required} onChange={v=>setForm({...form,is_required:v})}/>
             <div className="flex justify-end gap-3">
               <Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button>
-              <Button onClick={handleSave} loading={saving} disabled={!form.title}>Enregistrer</Button>
+              <Button onClick={handleSave} loading={saving} disabled={!form.title||!form.playlist_id}>Enregistrer</Button>
             </div>
           </div>
         </Modal>
