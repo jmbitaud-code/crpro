@@ -41,7 +41,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '3.1.0';
+    const APP_VERSION = '3.2.0';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -664,6 +664,7 @@
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
       const[importModal,setImportModal]=useState(false);
+      const[detailModal,setDetailModal]=useState(null);
       const[editing,setEditing]=useState(null);
       const[search,setSearch]=useState('');
       const[form,setForm]=useState({title:'',vimeo_id:'',duration:'',category:'',description:'',sort_order:'',tags:'',theme:'',thumbnail_url:''});
@@ -671,6 +672,10 @@
       const[importData,setImportData]=useState([]);
       const[importLoading,setImportLoading]=useState(false);
       const[importResult,setImportResult]=useState(null);
+      const[attachments,setAttachments]=useState([]);
+      const[chapters,setChapters]=useState([]);
+      const[newAttachment,setNewAttachment]=useState({title:'',file_url:''});
+      const[newChapter,setNewChapter]=useState({title:'',timestamp:'',description:''});
       const fileInputRef=useRef(null);
 
       const load=useCallback(async()=>{let q=supabase.from('videos').select('*').order('sort_order',{ascending:true,nullsFirst:false}).order('created_at',{ascending:false});if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);const{data}=await q;setVideos(data||[]);setLoading(false);},[isSuperAdmin,center?.id]);
@@ -695,6 +700,68 @@
 
       const downloadTemplate=()=>{const template=[{'Titre':'Ma vidéo','ID Vimeo':'123456789','Durée':'5:30','Ordre':'1','Tags':'tag1, tag2','Catégorie':'Intro','Thème':'Bases','Description':''}];const ws=XLSX.utils.json_to_sheet(template);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Videos');XLSX.writeFile(wb,'template_videos.xlsx');};
 
+      // Ouvrir le modal de détail (documents + chapitres)
+      const openDetailModal=async(video)=>{
+        setDetailModal(video);
+        const[{data:att},{data:chap}]=await Promise.all([
+          supabase.from('video_attachments').select('*').eq('video_id',video.id).order('sort_order'),
+          supabase.from('video_chapters').select('*').eq('video_id',video.id).order('timestamp_seconds')
+        ]);
+        setAttachments(att||[]);
+        setChapters(chap||[]);
+        setNewAttachment({title:'',file_url:''});
+        setNewChapter({title:'',timestamp:'',description:''});
+      };
+
+      // Gestion des documents
+      const addAttachment=async()=>{
+        if(!newAttachment.title||!newAttachment.file_url)return;
+        const fileType=newAttachment.file_url.split('.').pop()?.toLowerCase()||'file';
+        const{data}=await supabase.from('video_attachments').insert({
+          video_id:detailModal.id,
+          title:newAttachment.title,
+          file_url:newAttachment.file_url,
+          file_type:fileType,
+          sort_order:attachments.length
+        }).select().single();
+        if(data)setAttachments([...attachments,data]);
+        setNewAttachment({title:'',file_url:''});
+      };
+      const deleteAttachment=async(id)=>{
+        await supabase.from('video_attachments').delete().eq('id',id);
+        setAttachments(attachments.filter(a=>a.id!==id));
+      };
+
+      // Gestion des chapitres
+      const parseTimestamp=(str)=>{
+        const parts=str.split(':').map(Number);
+        if(parts.length===2)return parts[0]*60+parts[1];
+        if(parts.length===3)return parts[0]*3600+parts[1]*60+parts[2];
+        return parseInt(str)||0;
+      };
+      const formatTimestamp=(seconds)=>{
+        const m=Math.floor(seconds/60);
+        const s=seconds%60;
+        return `${m}:${s.toString().padStart(2,'0')}`;
+      };
+      const addChapter=async()=>{
+        if(!newChapter.title||!newChapter.timestamp)return;
+        const timestampSeconds=parseTimestamp(newChapter.timestamp);
+        const{data}=await supabase.from('video_chapters').insert({
+          video_id:detailModal.id,
+          title:newChapter.title,
+          timestamp_seconds:timestampSeconds,
+          description:newChapter.description||null,
+          sort_order:chapters.length
+        }).select().single();
+        if(data)setChapters([...chapters,data].sort((a,b)=>a.timestamp_seconds-b.timestamp_seconds));
+        setNewChapter({title:'',timestamp:'',description:''});
+      };
+      const deleteChapter=async(id)=>{
+        await supabase.from('video_chapters').delete().eq('id',id);
+        setChapters(chapters.filter(c=>c.id!==id));
+      };
+
       const filtered=videos.filter(v=>!search||v.title?.toLowerCase().includes(search.toLowerCase()));
       if(!can('manage_videos'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
@@ -702,9 +769,68 @@
       return<div>
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4"><h1 className="text-2xl font-bold">Bibliothèque vidéo</h1><div className="flex gap-2"><Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button><Button icon="Plus" onClick={()=>{resetForm();setEditing(null);setModal(true);}}>Ajouter</Button></div></div>
         <Card className="p-4 mb-6"><Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/></Card>
-        {filtered.length===0?<Empty icon="Film" title="Aucune vidéo"/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{filtered.map(v=><Card key={v.id} className="overflow-hidden"><div className="aspect-video bg-gray-900 relative">{v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:<iframe src={`https://player.vimeo.com/video/${v.vimeo_id}?background=1`} className="w-full h-full" allow="autoplay"/>}<div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>{v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}</div><div className="p-4"><h3 className="font-semibold truncate">{v.title}</h3><div className="flex flex-wrap gap-1 mt-2">{v.category&&<span className="px-2 py-1 bg-gray-700 rounded text-xs">{v.category}</span>}{v.theme&&<span className="px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded text-xs">{v.theme}</span>}</div><div className="flex gap-2 mt-3"><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category:v.category||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme:v.theme||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(v.id)}>Supprimer</Button></div></div></Card>)}</div>}
+        {filtered.length===0?<Empty icon="Film" title="Aucune vidéo"/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{filtered.map(v=><Card key={v.id} className="overflow-hidden"><div className="aspect-video bg-gray-900 relative">{v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:<iframe src={`https://player.vimeo.com/video/${v.vimeo_id}?background=1`} className="w-full h-full" allow="autoplay"/>}<div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>{v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}</div><div className="p-4"><h3 className="font-semibold truncate">{v.title}</h3><div className="flex flex-wrap gap-1 mt-2">{v.category&&<span className="px-2 py-1 bg-gray-700 rounded text-xs">{v.category}</span>}{v.theme&&<span className="px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded text-xs">{v.theme}</span>}</div><div className="flex flex-wrap gap-2 mt-3"><Button variant="ghost" size="sm" icon="Settings" onClick={()=>openDetailModal(v)}>Ressources</Button><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category:v.category||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme:v.theme||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(v.id)}/></div></div></Card>)}</div>}
+        
+        {/* Modal édition vidéo */}
         <Modal isOpen={modal} onClose={()=>{setModal(false);resetForm();setEditing(null);}} title={editing?'Modifier':'Ajouter'} size="lg"><div className="space-y-4"><div className="grid grid-cols-2 gap-4"><Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><Input label="ID Vimeo *" value={form.vimeo_id} onChange={e=>setForm({...form,vimeo_id:e.target.value})} placeholder="123456789"/></div><div className="grid grid-cols-3 gap-4"><Input label="Durée" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="5:30"/><Input label="Ordre" type="number" value={form.sort_order} onChange={e=>setForm({...form,sort_order:e.target.value})}/><Input label="Catégorie" value={form.category} onChange={e=>setForm({...form,category:e.target.value})}/></div><div className="grid grid-cols-2 gap-4"><Input label="Thème" value={form.theme} onChange={e=>setForm({...form,theme:e.target.value})}/><Input label="Tags" value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="tag1, tag2"/></div><Input label="Miniature URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setModal(false);resetForm();setEditing(null);}}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
+        
+        {/* Modal import */}
         <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer" size="lg"><div className="space-y-4"><div className="bg-gray-700/50 rounded-lg p-4"><p className="text-sm text-gray-400 mb-2">Colonnes : Titre*, ID Vimeo*, Durée, Ordre, Tags, Catégorie, Thème</p><Button variant="ghost" size="sm" icon="Download" onClick={downloadTemplate}>Template</Button></div><div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center"><input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".xlsx,.xls,.csv" className="hidden"/><Icon name="Film" size={48} className="mx-auto text-gray-500 mb-4"/><Button variant="secondary" onClick={()=>fileInputRef.current?.click()}>Parcourir</Button></div>{importData.length>0&&!importResult&&<div className="max-h-48 overflow-y-auto bg-gray-700/50 rounded-lg p-2">{importData.filter(d=>d._valid).map((row,i)=><div key={i} className="text-sm py-1">{row.title}</div>)}</div>}{importResult&&<Alert type={importResult.errors>0?'warning':'success'}>{importResult.created>0&&<span className="text-green-400">✅ {importResult.created} créée(s) </span>}{importResult.updated>0&&<span className="text-blue-400">🔄 {importResult.updated} mise(s) à jour </span>}{importResult.errors>0&&<span className="text-red-400">❌ {importResult.errors} erreur(s)</span>}</Alert>}<div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>{importData.length>0&&!importResult&&<Button icon="Upload" onClick={handleImport} loading={importLoading}>Importer {importData.filter(d=>d._valid).length}</Button>}</div></div></Modal>
+        
+        {/* Modal ressources (documents + chapitres) */}
+        <Modal isOpen={!!detailModal} onClose={()=>setDetailModal(null)} title={`Ressources: ${detailModal?.title}`} size="xl">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Documents */}
+            <div>
+              <h3 className="font-semibold mb-4 flex items-center gap-2"><Icon name="Paperclip" size={18}/>Documents joints ({attachments.length})</h3>
+              <div className="space-y-2 mb-4 max-h-64 overflow-y-auto">
+                {attachments.map(a=>(
+                  <div key={a.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg">
+                    <Icon name="FileText" size={20} className="text-indigo-400"/>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate text-sm">{a.title}</p>
+                      <p className="text-xs text-gray-400 truncate">{a.file_type?.toUpperCase()}</p>
+                    </div>
+                    <a href={a.file_url} target="_blank" rel="noopener" className="p-1 hover:bg-gray-600 rounded"><Icon name="ExternalLink" size={16}/></a>
+                    <button onClick={()=>deleteAttachment(a.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="Trash2" size={16}/></button>
+                  </div>
+                ))}
+                {attachments.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucun document</p>}
+              </div>
+              <div className="space-y-2 p-3 bg-gray-700/50 rounded-lg">
+                <Input placeholder="Titre du document" value={newAttachment.title} onChange={e=>setNewAttachment({...newAttachment,title:e.target.value})}/>
+                <Input placeholder="URL du fichier" value={newAttachment.file_url} onChange={e=>setNewAttachment({...newAttachment,file_url:e.target.value})}/>
+                <Button size="sm" icon="Plus" onClick={addAttachment} disabled={!newAttachment.title||!newAttachment.file_url}>Ajouter</Button>
+              </div>
+            </div>
+            
+            {/* Chapitres */}
+            <div>
+              <h3 className="font-semibold mb-4 flex items-center gap-2"><Icon name="List" size={18}/>Chapitres ({chapters.length})</h3>
+              <div className="space-y-2 mb-4 max-h-64 overflow-y-auto">
+                {chapters.map(c=>(
+                  <div key={c.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg">
+                    <span className="px-2 py-1 bg-indigo-600 rounded text-xs font-mono">{formatTimestamp(c.timestamp_seconds)}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate text-sm">{c.title}</p>
+                      {c.description&&<p className="text-xs text-gray-400 truncate">{c.description}</p>}
+                    </div>
+                    <button onClick={()=>deleteChapter(c.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="Trash2" size={16}/></button>
+                  </div>
+                ))}
+                {chapters.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucun chapitre</p>}
+              </div>
+              <div className="space-y-2 p-3 bg-gray-700/50 rounded-lg">
+                <div className="grid grid-cols-2 gap-2">
+                  <Input placeholder="Timestamp (ex: 2:30)" value={newChapter.timestamp} onChange={e=>setNewChapter({...newChapter,timestamp:e.target.value})}/>
+                  <Input placeholder="Titre du chapitre" value={newChapter.title} onChange={e=>setNewChapter({...newChapter,title:e.target.value})}/>
+                </div>
+                <Input placeholder="Description (optionnel)" value={newChapter.description} onChange={e=>setNewChapter({...newChapter,description:e.target.value})}/>
+                <Button size="sm" icon="Plus" onClick={addChapter} disabled={!newChapter.title||!newChapter.timestamp}>Ajouter</Button>
+              </div>
+            </div>
+          </div>
+        </Modal>
       </div>;
     }
 
@@ -945,6 +1071,11 @@
       const[courseVideos,setCourseVideos]=useState([]);
       const[currentVideo,setCurrentVideo]=useState(null);
       const[videoProgress,setVideoProgress]=useState({});
+      const[chapters,setChapters]=useState([]);
+      const[attachments,setAttachments]=useState([]);
+      const[notes,setNotes]=useState([]);
+      const[newNote,setNewNote]=useState('');
+      const[activeTab,setActiveTab]=useState('content');
       const playerRef=useRef(null);
       const playerInstanceRef=useRef(null);
 
@@ -958,17 +1089,14 @@
 
       const openCourse=async(enrollment)=>{
         setSelectedCourse(enrollment);
-        // Charger les vidéos du cours
         const{data:pvs}=await supabase.from('playlist_videos').select('*,videos(*)').eq('playlist_id',enrollment.playlist_id).order('position');
         setCourseVideos(pvs||[]);
         
-        // Charger la progression
         const{data:progress}=await supabase.from('video_progress').select('*').eq('enrollment_id',enrollment.id);
         const progressMap={};
         (progress||[]).forEach(p=>{progressMap[p.playlist_video_id]=p;});
         setVideoProgress(progressMap);
         
-        // Sélectionner la première vidéo non complétée ou la première
         const firstIncomplete=pvs?.find(pv=>!progressMap[pv.id]?.is_completed);
         setCurrentVideo(firstIncomplete||pvs?.[0]||null);
       };
@@ -978,28 +1106,48 @@
         setCourseVideos([]);
         setCurrentVideo(null);
         setVideoProgress({});
+        setChapters([]);
+        setAttachments([]);
+        setNotes([]);
+        setNewNote('');
         if(playerInstanceRef.current){
           playerInstanceRef.current.destroy();
           playerInstanceRef.current=null;
         }
       };
 
-      const selectVideo=(pv)=>{
+      const selectVideo=async(pv)=>{
         setCurrentVideo(pv);
       };
+
+      // Charger les ressources de la vidéo courante
+      useEffect(()=>{
+        if(!currentVideo||!selectedCourse)return;
+        const loadResources=async()=>{
+          const videoId=currentVideo.videos?.id;
+          if(!videoId)return;
+          
+          const[{data:chap},{data:att},{data:n}]=await Promise.all([
+            supabase.from('video_chapters').select('*').eq('video_id',videoId).order('timestamp_seconds'),
+            supabase.from('video_attachments').select('*').eq('video_id',videoId).order('sort_order'),
+            supabase.from('learner_notes').select('*').eq('playlist_video_id',currentVideo.id).eq('enrollment_id',selectedCourse.id).order('created_at',{ascending:false})
+          ]);
+          setChapters(chap||[]);
+          setAttachments(att||[]);
+          setNotes(n||[]);
+        };
+        loadResources();
+      },[currentVideo?.id,selectedCourse?.id]);
 
       // Initialiser le lecteur Vimeo
       useEffect(()=>{
         if(!currentVideo||!playerRef.current)return;
         
-        // Détruire l'ancien player
         if(playerInstanceRef.current){
           playerInstanceRef.current.destroy();
         }
         
         const startTime=videoProgress[currentVideo.id]?.last_position_seconds||0;
-        
-        // Vider le container
         playerRef.current.innerHTML='';
         
         const player=new Vimeo.Player(playerRef.current,{
@@ -1008,14 +1156,12 @@
           autoplay:false
         });
         
-        // Aller à la position sauvegardée
         if(startTime>0){
           player.setCurrentTime(startTime).catch(()=>{});
         }
         
         playerInstanceRef.current=player;
         
-        // Sauvegarder la progression toutes les 10 secondes
         let lastSave=0;
         player.on('timeupdate',async(data)=>{
           const now=Date.now();
@@ -1025,7 +1171,6 @@
           }
         });
         
-        // Marquer comme complété à 90%
         player.on('ended',async()=>{
           await saveProgress(0,true);
           await updateCourseProgress();
@@ -1073,7 +1218,6 @@
         
         await supabase.from('enrollments').update({progress_percent:percent,status:percent===100?'completed':percent>0?'in_progress':'not_started'}).eq('id',selectedCourse.id);
         
-        // Mettre à jour localement
         setEnrollments(prev=>prev.map(e=>e.id===selectedCourse.id?{...e,progress_percent:percent}:e));
         setSelectedCourse(prev=>({...prev,progress_percent:percent}));
       };
@@ -1090,6 +1234,41 @@
         
         setVideoProgress(prev=>({...prev,[pv.id]:{...prev[pv.id],is_completed:true}}));
         await updateCourseProgress();
+      };
+
+      // Naviguer vers un chapitre
+      const goToChapter=(seconds)=>{
+        if(playerInstanceRef.current){
+          playerInstanceRef.current.setCurrentTime(seconds).catch(()=>{});
+        }
+      };
+
+      // Gestion des notes
+      const addNote=async()=>{
+        if(!newNote.trim()||!selectedCourse||!currentVideo)return;
+        let currentTime=0;
+        if(playerInstanceRef.current){
+          try{currentTime=Math.floor(await playerInstanceRef.current.getCurrentTime());}catch(e){}
+        }
+        const{data}=await supabase.from('learner_notes').insert({
+          enrollment_id:selectedCourse.id,
+          playlist_video_id:currentVideo.id,
+          content:newNote.trim(),
+          timestamp_seconds:currentTime
+        }).select().single();
+        if(data)setNotes([data,...notes]);
+        setNewNote('');
+      };
+
+      const deleteNote=async(id)=>{
+        await supabase.from('learner_notes').delete().eq('id',id);
+        setNotes(notes.filter(n=>n.id!==id));
+      };
+
+      const formatTime=(seconds)=>{
+        const m=Math.floor(seconds/60);
+        const s=seconds%60;
+        return `${m}:${s.toString().padStart(2,'0')}`;
       };
 
       if(loading)return<Loading/>;
@@ -1112,7 +1291,7 @@
           <div className="mb-4"><ProgressBar percent={progressPercent}/></div>
           
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2">
+            <div className="lg:col-span-2 space-y-4">
               <Card className="overflow-hidden">
                 <div className="aspect-video bg-black relative">
                   <div ref={playerRef} className="absolute inset-0"/>
@@ -1120,9 +1299,84 @@
                 {currentVideo&&(
                   <div className="p-4">
                     <h2 className="text-lg font-semibold">{currentVideo.videos?.title}</h2>
-                    {currentVideo.videos?.description&&<p className="text-gray-400 mt-2">{currentVideo.videos.description}</p>}
+                    {currentVideo.videos?.description&&<p className="text-gray-400 mt-2 text-sm">{currentVideo.videos.description}</p>}
                   </div>
                 )}
+              </Card>
+              
+              {/* Chapitres sous la vidéo */}
+              {chapters.length>0&&(
+                <Card className="p-4">
+                  <h3 className="font-semibold mb-3 flex items-center gap-2"><Icon name="List" size={18}/>Chapitres</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {chapters.map(c=>(
+                      <button key={c.id} onClick={()=>goToChapter(c.timestamp_seconds)} className="flex items-center gap-2 px-3 py-2 bg-gray-700 hover:bg-indigo-600 rounded-lg transition text-sm">
+                        <span className="font-mono text-xs bg-gray-600 px-2 py-0.5 rounded">{formatTime(c.timestamp_seconds)}</span>
+                        <span>{c.title}</span>
+                      </button>
+                    ))}
+                  </div>
+                </Card>
+              )}
+              
+              {/* Documents et Notes */}
+              <Card>
+                <div className="flex border-b border-gray-700">
+                  <button onClick={()=>setActiveTab('attachments')} className={`flex-1 px-4 py-3 text-sm font-medium ${activeTab==='attachments'?'text-indigo-400 border-b-2 border-indigo-400':'text-gray-400 hover:text-white'}`}>
+                    <Icon name="Paperclip" size={16} className="inline mr-2"/>Documents ({attachments.length})
+                  </button>
+                  <button onClick={()=>setActiveTab('notes')} className={`flex-1 px-4 py-3 text-sm font-medium ${activeTab==='notes'?'text-indigo-400 border-b-2 border-indigo-400':'text-gray-400 hover:text-white'}`}>
+                    <Icon name="StickyNote" size={16} className="inline mr-2"/>Mes notes ({notes.length})
+                  </button>
+                </div>
+                <div className="p-4">
+                  {activeTab==='attachments'&&(
+                    <div className="space-y-2">
+                      {attachments.length===0?<p className="text-gray-500 text-sm text-center py-4">Aucun document pour cette vidéo</p>:(
+                        attachments.map(a=>(
+                          <a key={a.id} href={a.file_url} target="_blank" rel="noopener" className="flex items-center gap-3 p-3 bg-gray-700/50 hover:bg-gray-700 rounded-lg transition">
+                            <Icon name="FileText" size={20} className="text-indigo-400"/>
+                            <div className="flex-1">
+                              <p className="font-medium text-sm">{a.title}</p>
+                              <p className="text-xs text-gray-400">{a.file_type?.toUpperCase()}</p>
+                            </div>
+                            <Icon name="Download" size={16} className="text-gray-400"/>
+                          </a>
+                        ))
+                      )}
+                    </div>
+                  )}
+                  {activeTab==='notes'&&(
+                    <div className="space-y-4">
+                      <div className="flex gap-2">
+                        <input value={newNote} onChange={e=>setNewNote(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNote()} placeholder="Ajouter une note..." className="flex-1 px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm"/>
+                        <Button size="sm" icon="Plus" onClick={addNote} disabled={!newNote.trim()}>Ajouter</Button>
+                      </div>
+                      <div className="space-y-2 max-h-64 overflow-y-auto">
+                        {notes.length===0?<p className="text-gray-500 text-sm text-center py-4">Aucune note</p>:(
+                          notes.map(n=>(
+                            <div key={n.id} className="p-3 bg-gray-700/50 rounded-lg">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1">
+                                  {n.timestamp_seconds>0&&(
+                                    <button onClick={()=>goToChapter(n.timestamp_seconds)} className="text-xs text-indigo-400 hover:underline mb-1">
+                                      📍 {formatTime(n.timestamp_seconds)}
+                                    </button>
+                                  )}
+                                  <p className="text-sm">{n.content}</p>
+                                  <p className="text-xs text-gray-500 mt-1">{new Date(n.created_at).toLocaleString('fr-FR')}</p>
+                                </div>
+                                <button onClick={()=>deleteNote(n.id)} className="p-1 hover:bg-red-600 rounded text-gray-400 hover:text-white">
+                                  <Icon name="Trash2" size={14}/>
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </Card>
             </div>
             
