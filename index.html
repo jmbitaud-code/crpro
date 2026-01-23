@@ -22,6 +22,8 @@
   <script src="https://player.vimeo.com/api/player.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   
   <style>
     *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#111827}
@@ -41,7 +43,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '3.2.1';
+    const APP_VERSION = '4.0.0';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -161,7 +163,37 @@
       const{profile,signOut,center,can,isSuperAdmin}=useAuth();
       const[sidebarOpen,setSidebarOpen]=useState(window.innerWidth>=1024);
       const[page,setPage]=useState('dashboard');
+      const[notifications,setNotifications]=useState([]);
+      const[showNotifs,setShowNotifs]=useState(false);
       const isMobile=window.innerWidth<1024;
+      
+      // Charger les notifications
+      useEffect(()=>{
+        const loadNotifications=async()=>{
+          const{data}=await supabase.from('notifications').select('*').eq('user_id',profile?.id).order('created_at',{ascending:false}).limit(20);
+          setNotifications(data||[]);
+        };
+        if(profile?.id)loadNotifications();
+        
+        // Écouter les nouvelles notifications en temps réel
+        const channel=supabase.channel('notifications').on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications',filter:`user_id=eq.${profile?.id}`},(payload)=>{
+          setNotifications(prev=>[payload.new,...prev]);
+        }).subscribe();
+        
+        return()=>{supabase.removeChannel(channel);};
+      },[profile?.id]);
+      
+      const markAsRead=async(id)=>{
+        await supabase.from('notifications').update({is_read:true}).eq('id',id);
+        setNotifications(prev=>prev.map(n=>n.id===id?{...n,is_read:true}:n));
+      };
+      
+      const markAllAsRead=async()=>{
+        await supabase.from('notifications').update({is_read:true}).eq('user_id',profile?.id).eq('is_read',false);
+        setNotifications(prev=>prev.map(n=>({...n,is_read:true})));
+      };
+      
+      const unreadCount=notifications.filter(n=>!n.is_read).length;
       
       const menu=[
         {id:'dashboard',label:'Tableau de bord',icon:'LayoutDashboard',show:true},
@@ -170,9 +202,11 @@
         {id:'users',label:'Utilisateurs',icon:'Users',show:can('manage_users')},
         {id:'videos',label:'Bibliothèque',icon:'Film',show:can('manage_videos')},
         {id:'playlists',label:'Cours',icon:'BookOpen',show:can('manage_playlists')||profile?.role==='trainer'},
+        {id:'quizzes',label:'Quiz',icon:'HelpCircle',show:can('manage_playlists')||profile?.role==='trainer'},
         {id:'enrollments',label:'Inscriptions',icon:'UserPlus',show:can('manage_enrollments')},
         {id:'permissions',label:'Permissions',icon:'Shield',show:can('manage_permissions')},
         {id:'my-courses',label:'Mes cours',icon:'GraduationCap',show:profile?.role==='learner'},
+        {id:'my-certificates',label:'Mes certificats',icon:'Award',show:profile?.role==='learner'},
       ].filter(i=>i.show);
 
       return(<div className="min-h-screen bg-gray-900 text-white flex">
@@ -185,7 +219,43 @@
         </aside>
         {sidebarOpen&&isMobile&&<div className="fixed inset-0 bg-black/50 z-30" onClick={()=>setSidebarOpen(false)}/>}
         <main className="flex-1 min-h-screen">
-          <header className="lg:hidden bg-gray-800 border-b border-gray-700 p-4 flex items-center gap-4"><button onClick={()=>setSidebarOpen(true)} className="p-2 hover:bg-gray-700 rounded-lg"><Icon name="Menu" size={24}/></button><h1 className="font-semibold">{menu.find(i=>i.id===page)?.label}</h1></header>
+          <header className="bg-gray-800 border-b border-gray-700 p-4 flex items-center gap-4">
+            <button onClick={()=>setSidebarOpen(!sidebarOpen)} className="lg:hidden p-2 hover:bg-gray-700 rounded-lg"><Icon name="Menu" size={24}/></button>
+            <h1 className="font-semibold flex-1">{menu.find(i=>i.id===page)?.label}</h1>
+            <div className="relative">
+              <button onClick={()=>setShowNotifs(!showNotifs)} className="p-2 hover:bg-gray-700 rounded-lg relative">
+                <Icon name="Bell" size={20}/>
+                {unreadCount>0&&<span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-xs flex items-center justify-center">{unreadCount>9?'9+':unreadCount}</span>}
+              </button>
+              {showNotifs&&(
+                <div className="absolute right-0 top-full mt-2 w-80 bg-gray-800 border border-gray-700 rounded-xl shadow-xl z-50 animate-fade-in">
+                  <div className="p-3 border-b border-gray-700 flex items-center justify-between">
+                    <h3 className="font-semibold">Notifications</h3>
+                    {unreadCount>0&&<button onClick={markAllAsRead} className="text-xs text-indigo-400 hover:underline">Tout marquer lu</button>}
+                  </div>
+                  <div className="max-h-80 overflow-y-auto">
+                    {notifications.length===0?<p className="p-4 text-gray-500 text-sm text-center">Aucune notification</p>:(
+                      notifications.slice(0,10).map(n=>(
+                        <div key={n.id} onClick={()=>{markAsRead(n.id);if(n.link)setPage(n.link);setShowNotifs(false);}} className={`p-3 border-b border-gray-700 hover:bg-gray-700/50 cursor-pointer ${!n.is_read?'bg-indigo-600/10':''}`}>
+                          <div className="flex items-start gap-3">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${n.type==='success'?'bg-green-500/20 text-green-400':n.type==='certificate'?'bg-yellow-500/20 text-yellow-400':'bg-indigo-500/20 text-indigo-400'}`}>
+                              <Icon name={n.type==='certificate'?'Award':n.type==='success'?'CheckCircle':'Info'} size={16}/>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium text-sm">{n.title}</p>
+                              {n.message&&<p className="text-xs text-gray-400 truncate">{n.message}</p>}
+                              <p className="text-xs text-gray-500 mt-1">{new Date(n.created_at).toLocaleString('fr-FR')}</p>
+                            </div>
+                            {!n.is_read&&<div className="w-2 h-2 bg-indigo-500 rounded-full"/>}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </header>
           <div className="p-4 lg:p-6">
             {page==='dashboard'&&<DashboardPage/>}
             {page==='analytics'&&<AnalyticsPage/>}
@@ -193,9 +263,11 @@
             {page==='users'&&<UsersPage/>}
             {page==='videos'&&<VideosPage/>}
             {page==='playlists'&&<PlaylistsPage/>}
+            {page==='quizzes'&&<QuizzesPage/>}
             {page==='enrollments'&&<EnrollmentsPage/>}
             {page==='permissions'&&<PermissionsPage/>}
             {page==='my-courses'&&<MyCoursesPage/>}
+            {page==='my-certificates'&&<MyCertificatesPage/>}
           </div>
         </main>
       </div>);
@@ -960,6 +1032,217 @@
       </div>;
     }
 
+    // Quiz Management
+    function QuizzesPage(){
+      const{center,isSuperAdmin,can,profile}=useAuth();
+      const[quizzes,setQuizzes]=useState([]);
+      const[playlists,setPlaylists]=useState([]);
+      const[loading,setLoading]=useState(true);
+      const[modal,setModal]=useState(false);
+      const[editing,setEditing]=useState(null);
+      const[form,setForm]=useState({title:'',description:'',playlist_id:'',passing_score:70,is_required:false});
+      const[saving,setSaving]=useState(false);
+      const[questionsModal,setQuestionsModal]=useState(null);
+      const[questions,setQuestions]=useState([]);
+      const[newQuestion,setNewQuestion]=useState({question_text:'',question_type:'single',answers:[{text:'',is_correct:false},{text:'',is_correct:false}]});
+
+      const load=useCallback(async()=>{
+        let q=supabase.from('quizzes').select('*,playlists(title),quiz_questions(count)').order('created_at',{ascending:false});
+        if(!isSuperAdmin&&center?.id)q=q.eq('playlists.center_id',center.id);
+        const{data:qz}=await q;
+        setQuizzes(qz||[]);
+        
+        let qp=supabase.from('playlists').select('id,title');
+        if(!isSuperAdmin&&center?.id)qp=qp.eq('center_id',center.id);
+        const{data:pl}=await qp;
+        setPlaylists(pl||[]);
+        setLoading(false);
+      },[isSuperAdmin,center?.id]);
+      
+      useEffect(()=>{load();},[load]);
+
+      const handleSave=async()=>{
+        setSaving(true);
+        const payload={
+          title:form.title,
+          description:form.description||null,
+          playlist_id:form.playlist_id||null,
+          passing_score:parseInt(form.passing_score)||70,
+          is_required:form.is_required
+        };
+        if(editing){
+          await supabase.from('quizzes').update(payload).eq('id',editing.id);
+        }else{
+          await supabase.from('quizzes').insert(payload);
+        }
+        await load();
+        setModal(false);
+        setForm({title:'',description:'',playlist_id:'',passing_score:70,is_required:false});
+        setEditing(null);
+        setSaving(false);
+      };
+
+      const handleDelete=async(id)=>{
+        if(!confirm('Supprimer ce quiz et toutes ses questions ?'))return;
+        await supabase.from('quizzes').delete().eq('id',id);
+        load();
+      };
+
+      const openQuestions=async(quiz)=>{
+        setQuestionsModal(quiz);
+        const{data}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('quiz_id',quiz.id).order('sort_order');
+        setQuestions(data||[]);
+        setNewQuestion({question_text:'',question_type:'single',answers:[{text:'',is_correct:false},{text:'',is_correct:false}]});
+      };
+
+      const addQuestion=async()=>{
+        if(!newQuestion.question_text||newQuestion.answers.filter(a=>a.text).length<2)return;
+        if(!newQuestion.answers.some(a=>a.is_correct)){alert('Au moins une réponse doit être correcte');return;}
+        
+        const{data:q}=await supabase.from('quiz_questions').insert({
+          quiz_id:questionsModal.id,
+          question_text:newQuestion.question_text,
+          question_type:newQuestion.question_type,
+          sort_order:questions.length
+        }).select().single();
+        
+        if(q){
+          const answersToInsert=newQuestion.answers.filter(a=>a.text).map((a,i)=>({
+            question_id:q.id,
+            answer_text:a.text,
+            is_correct:a.is_correct,
+            sort_order:i
+          }));
+          await supabase.from('quiz_answers').insert(answersToInsert);
+          
+          const{data:fullQ}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('id',q.id).single();
+          setQuestions([...questions,fullQ]);
+        }
+        setNewQuestion({question_text:'',question_type:'single',answers:[{text:'',is_correct:false},{text:'',is_correct:false}]});
+      };
+
+      const deleteQuestion=async(id)=>{
+        await supabase.from('quiz_questions').delete().eq('id',id);
+        setQuestions(questions.filter(q=>q.id!==id));
+      };
+
+      const updateAnswer=(index,field,value)=>{
+        const newAnswers=[...newQuestion.answers];
+        if(field==='is_correct'&&newQuestion.question_type==='single'){
+          newAnswers.forEach((a,i)=>a.is_correct=i===index);
+        }else{
+          newAnswers[index][field]=value;
+        }
+        setNewQuestion({...newQuestion,answers:newAnswers});
+      };
+
+      const addAnswerOption=()=>{
+        if(newQuestion.answers.length<6){
+          setNewQuestion({...newQuestion,answers:[...newQuestion.answers,{text:'',is_correct:false}]});
+        }
+      };
+
+      if(!can('manage_playlists')&&profile?.role!=='trainer')return<Empty icon="Lock" title="Accès refusé"/>;
+      if(loading)return<Loading/>;
+
+      return<div>
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold">Quiz</h1>
+          <Button icon="Plus" onClick={()=>{setForm({title:'',description:'',playlist_id:'',passing_score:70,is_required:false});setEditing(null);setModal(true);}}>Créer un quiz</Button>
+        </div>
+        
+        {quizzes.length===0?<Empty icon="HelpCircle" title="Aucun quiz" desc="Créez votre premier quiz"/>:(
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {quizzes.map(q=>(
+              <Card key={q.id} className="p-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <h3 className="font-semibold">{q.title}</h3>
+                    <p className="text-sm text-gray-400">{q.playlists?.title||'Quiz indépendant'}</p>
+                  </div>
+                  {q.is_required&&<span className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs">Obligatoire</span>}
+                </div>
+                <div className="flex items-center gap-4 text-sm text-gray-400 mb-3">
+                  <span><Icon name="HelpCircle" size={14} className="inline mr-1"/>{q.quiz_questions?.[0]?.count||0} questions</span>
+                  <span><Icon name="Target" size={14} className="inline mr-1"/>{q.passing_score}% requis</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="ghost" size="sm" icon="List" onClick={()=>openQuestions(q)}>Questions</Button>
+                  <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(q);setForm({title:q.title,description:q.description||'',playlist_id:q.playlist_id||'',passing_score:q.passing_score,is_required:q.is_required});setModal(true);}}/>
+                  <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(q.id)}/>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {/* Modal création/édition quiz */}
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier le quiz':'Créer un quiz'}>
+          <div className="space-y-4">
+            <Input label="Titre du quiz *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
+            <Select label="Cours associé" value={form.playlist_id} onChange={e=>setForm({...form,playlist_id:e.target.value})} options={[{value:'',label:'Aucun (quiz indépendant)'},...playlists.map(p=>({value:p.id,label:p.title}))]}/>
+            <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div>
+            <Input label="Score minimum pour réussir (%)" type="number" value={form.passing_score} onChange={e=>setForm({...form,passing_score:e.target.value})} min="0" max="100"/>
+            <Checkbox label="Quiz obligatoire pour compléter le cours" checked={form.is_required} onChange={v=>setForm({...form,is_required:v})}/>
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button>
+              <Button onClick={handleSave} loading={saving} disabled={!form.title}>Enregistrer</Button>
+            </div>
+          </div>
+        </Modal>
+
+        {/* Modal gestion des questions */}
+        <Modal isOpen={!!questionsModal} onClose={()=>setQuestionsModal(null)} title={`Questions: ${questionsModal?.title}`} size="xl">
+          <div className="space-y-6">
+            {/* Liste des questions existantes */}
+            <div>
+              <h4 className="font-medium mb-3">Questions ({questions.length})</h4>
+              <div className="space-y-3 max-h-64 overflow-y-auto">
+                {questions.map((q,i)=>(
+                  <div key={q.id} className="p-4 bg-gray-700 rounded-lg">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <p className="font-medium"><span className="text-indigo-400 mr-2">Q{i+1}.</span>{q.question_text}</p>
+                        <div className="mt-2 space-y-1">
+                          {q.quiz_answers?.map(a=>(
+                            <p key={a.id} className={`text-sm ${a.is_correct?'text-green-400':'text-gray-400'}`}>
+                              {a.is_correct?'✓':'○'} {a.answer_text}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                      <button onClick={()=>deleteQuestion(q.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="Trash2" size={16}/></button>
+                    </div>
+                  </div>
+                ))}
+                {questions.length===0&&<p className="text-gray-500 text-center py-4">Aucune question</p>}
+              </div>
+            </div>
+
+            {/* Formulaire nouvelle question */}
+            <div className="p-4 bg-gray-700/50 rounded-lg space-y-4">
+              <h4 className="font-medium">Ajouter une question</h4>
+              <div><label className="block text-sm font-medium text-gray-300 mb-1">Question *</label><textarea value={newQuestion.question_text} onChange={e=>setNewQuestion({...newQuestion,question_text:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Entrez votre question..."/></div>
+              <Select label="Type" value={newQuestion.question_type} onChange={e=>setNewQuestion({...newQuestion,question_type:e.target.value})} options={[{value:'single',label:'Choix unique'},{value:'multiple',label:'Choix multiple'}]}/>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Réponses (cochez la/les bonne(s))</label>
+                <div className="space-y-2">
+                  {newQuestion.answers.map((a,i)=>(
+                    <div key={i} className="flex items-center gap-2">
+                      <input type={newQuestion.question_type==='single'?'radio':'checkbox'} checked={a.is_correct} onChange={()=>updateAnswer(i,'is_correct',!a.is_correct)} className="w-5 h-5"/>
+                      <Input className="flex-1" placeholder={`Réponse ${i+1}`} value={a.text} onChange={e=>updateAnswer(i,'text',e.target.value)}/>
+                    </div>
+                  ))}
+                </div>
+                {newQuestion.answers.length<6&&<Button variant="ghost" size="sm" icon="Plus" onClick={addAnswerOption} className="mt-2">Ajouter une option</Button>}
+              </div>
+              <Button icon="Plus" onClick={addQuestion} disabled={!newQuestion.question_text||newQuestion.answers.filter(a=>a.text).length<2}>Ajouter la question</Button>
+            </div>
+          </div>
+        </Modal>
+      </div>;
+    }
+
     // Enrollments avec inscription en masse
     function EnrollmentsPage(){
       const{center,isSuperAdmin,profile,can}=useAuth();
@@ -1127,6 +1410,12 @@
       const[notes,setNotes]=useState([]);
       const[newNote,setNewNote]=useState('');
       const[activeTab,setActiveTab]=useState('content');
+      const[courseQuiz,setCourseQuiz]=useState(null);
+      const[quizQuestions,setQuizQuestions]=useState([]);
+      const[quizAnswers,setQuizAnswers]=useState({});
+      const[quizMode,setQuizMode]=useState(false);
+      const[quizResult,setQuizResult]=useState(null);
+      const[quizAttempts,setQuizAttempts]=useState([]);
       const playerRef=useRef(null);
       const playerInstanceRef=useRef(null);
 
@@ -1148,6 +1437,20 @@
         (progress||[]).forEach(p=>{progressMap[p.playlist_video_id]=p;});
         setVideoProgress(progressMap);
         
+        // Charger le quiz du cours
+        const{data:quiz}=await supabase.from('quizzes').select('*,quiz_questions(*,quiz_answers(*))').eq('playlist_id',enrollment.playlist_id).single();
+        if(quiz){
+          setCourseQuiz(quiz);
+          setQuizQuestions(quiz.quiz_questions||[]);
+          // Charger les tentatives précédentes
+          const{data:attempts}=await supabase.from('quiz_attempts').select('*').eq('quiz_id',quiz.id).eq('learner_id',user.id).order('created_at',{ascending:false});
+          setQuizAttempts(attempts||[]);
+        }else{
+          setCourseQuiz(null);
+          setQuizQuestions([]);
+          setQuizAttempts([]);
+        }
+        
         const firstIncomplete=pvs?.find(pv=>!progressMap[pv.id]?.is_completed);
         setCurrentVideo(firstIncomplete||pvs?.[0]||null);
       };
@@ -1161,6 +1464,12 @@
         setAttachments([]);
         setNotes([]);
         setNewNote('');
+        setCourseQuiz(null);
+        setQuizQuestions([]);
+        setQuizAnswers({});
+        setQuizMode(false);
+        setQuizResult(null);
+        setQuizAttempts([]);
         if(playerInstanceRef.current){
           playerInstanceRef.current.destroy();
           playerInstanceRef.current=null;
@@ -1170,6 +1479,78 @@
       const selectVideo=async(pv)=>{
         setCurrentVideo(pv);
       };
+      
+      // Fonctions Quiz
+      const startQuiz=()=>{
+        setQuizAnswers({});
+        setQuizResult(null);
+        setQuizMode(true);
+      };
+      
+      const selectAnswer=(questionId,answerId,isMultiple)=>{
+        if(isMultiple){
+          const current=quizAnswers[questionId]||[];
+          if(current.includes(answerId)){
+            setQuizAnswers({...quizAnswers,[questionId]:current.filter(id=>id!==answerId)});
+          }else{
+            setQuizAnswers({...quizAnswers,[questionId]:[...current,answerId]});
+          }
+        }else{
+          setQuizAnswers({...quizAnswers,[questionId]:[answerId]});
+        }
+      };
+      
+      const submitQuiz=async()=>{
+        let totalPoints=0;
+        let earnedPoints=0;
+        
+        quizQuestions.forEach(q=>{
+          const correctAnswers=q.quiz_answers.filter(a=>a.is_correct).map(a=>a.id);
+          const userAnswers=quizAnswers[q.id]||[];
+          totalPoints+=q.points||1;
+          
+          const isCorrect=correctAnswers.length===userAnswers.length&&correctAnswers.every(id=>userAnswers.includes(id));
+          if(isCorrect)earnedPoints+=(q.points||1);
+        });
+        
+        const scorePercent=totalPoints>0?Math.round((earnedPoints/totalPoints)*100):0;
+        const passed=scorePercent>=courseQuiz.passing_score;
+        
+        // Enregistrer la tentative
+        const{data:attempt}=await supabase.from('quiz_attempts').insert({
+          quiz_id:courseQuiz.id,
+          learner_id:user.id,
+          enrollment_id:selectedCourse.id,
+          score_percent:scorePercent,
+          passed,
+          completed_at:new Date().toISOString(),
+          answers:quizAnswers
+        }).select().single();
+        
+        if(attempt){
+          setQuizAttempts([attempt,...quizAttempts]);
+        }
+        
+        setQuizResult({scorePercent,passed,earnedPoints,totalPoints});
+        
+        // Notification si réussi
+        if(passed){
+          await supabase.from('notifications').insert({
+            user_id:user.id,
+            title:'Quiz réussi !',
+            message:`Vous avez obtenu ${scorePercent}% au quiz "${courseQuiz.title}"`,
+            type:'success'
+          });
+        }
+      };
+      
+      const closeQuiz=()=>{
+        setQuizMode(false);
+        setQuizResult(null);
+        setQuizAnswers({});
+      };
+      
+      const bestAttempt=quizAttempts.length>0?quizAttempts.reduce((best,a)=>a.score_percent>(best?.score_percent||0)?a:best,null):null;
 
       // Charger les ressources de la vidéo courante
       useEffect(()=>{
@@ -1267,10 +1648,33 @@
         const completedVideos=Object.values(videoProgress).filter(p=>p.is_completed).length+(videoProgress[currentVideo?.id]?.is_completed?0:1);
         const percent=totalVideos>0?Math.round((completedVideos/totalVideos)*100):0;
         
+        const wasCompleted=selectedCourse.status==='completed';
         await supabase.from('enrollments').update({progress_percent:percent,status:percent===100?'completed':percent>0?'in_progress':'not_started'}).eq('id',selectedCourse.id);
         
+        // Générer certificat si cours complété à 100%
+        if(percent===100&&!wasCompleted){
+          const certNumber='CERT-'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'-'+Math.random().toString(36).substring(2,8).toUpperCase();
+          const{data:cert}=await supabase.from('certificates').insert({
+            enrollment_id:selectedCourse.id,
+            learner_id:user.id,
+            playlist_id:selectedCourse.playlist_id,
+            certificate_number:certNumber
+          }).select().single();
+          
+          // Créer notification
+          if(cert){
+            await supabase.from('notifications').insert({
+              user_id:user.id,
+              title:'🎉 Félicitations !',
+              message:`Vous avez obtenu votre certificat pour "${selectedCourse.playlists?.title}"`,
+              type:'certificate',
+              link:'my-certificates'
+            });
+          }
+        }
+        
         setEnrollments(prev=>prev.map(e=>e.id===selectedCourse.id?{...e,progress_percent:percent}:e));
-        setSelectedCourse(prev=>({...prev,progress_percent:percent}));
+        setSelectedCourse(prev=>({...prev,progress_percent:percent,status:percent===100?'completed':percent>0?'in_progress':'not_started'}));
       };
 
       const markAsComplete=async(pv)=>{
@@ -1370,7 +1774,7 @@
                 </Card>
               )}
               
-              {/* Documents et Notes */}
+              {/* Documents, Notes et Quiz */}
               <Card>
                 <div className="flex border-b border-gray-700">
                   <button onClick={()=>setActiveTab('attachments')} className={`flex-1 px-4 py-3 text-sm font-medium ${activeTab==='attachments'?'text-indigo-400 border-b-2 border-indigo-400':'text-gray-400 hover:text-white'}`}>
@@ -1379,6 +1783,11 @@
                   <button onClick={()=>setActiveTab('notes')} className={`flex-1 px-4 py-3 text-sm font-medium ${activeTab==='notes'?'text-indigo-400 border-b-2 border-indigo-400':'text-gray-400 hover:text-white'}`}>
                     <Icon name="StickyNote" size={16} className="inline mr-2"/>Mes notes ({notes.length})
                   </button>
+                  {courseQuiz&&(
+                    <button onClick={()=>setActiveTab('quiz')} className={`flex-1 px-4 py-3 text-sm font-medium ${activeTab==='quiz'?'text-indigo-400 border-b-2 border-indigo-400':'text-gray-400 hover:text-white'}`}>
+                      <Icon name="HelpCircle" size={16} className="inline mr-2"/>Quiz {bestAttempt?.passed&&'✓'}
+                    </button>
+                  )}
                 </div>
                 <div className="p-4">
                   {activeTab==='attachments'&&(
@@ -1425,6 +1834,64 @@
                           ))
                         )}
                       </div>
+                    </div>
+                  )}
+                  {activeTab==='quiz'&&courseQuiz&&(
+                    <div>
+                      {!quizMode&&!quizResult?(
+                        <div className="text-center py-4">
+                          <Icon name="HelpCircle" size={48} className="mx-auto text-indigo-400 mb-4"/>
+                          <h4 className="font-semibold text-lg mb-2">{courseQuiz.title}</h4>
+                          {courseQuiz.description&&<p className="text-gray-400 text-sm mb-4">{courseQuiz.description}</p>}
+                          <div className="flex items-center justify-center gap-4 text-sm text-gray-400 mb-4">
+                            <span><Icon name="List" size={14} className="inline mr-1"/>{quizQuestions.length} questions</span>
+                            <span><Icon name="Target" size={14} className="inline mr-1"/>{courseQuiz.passing_score}% requis</span>
+                          </div>
+                          {bestAttempt&&(
+                            <div className={`p-3 rounded-lg mb-4 ${bestAttempt.passed?'bg-green-500/20 text-green-400':'bg-yellow-500/20 text-yellow-400'}`}>
+                              <p className="font-medium">Meilleur score: {bestAttempt.score_percent}%</p>
+                              <p className="text-sm opacity-75">{bestAttempt.passed?'Quiz réussi ✓':'Non validé'}</p>
+                            </div>
+                          )}
+                          <Button icon="Play" onClick={startQuiz}>{quizAttempts.length>0?'Repasser le quiz':'Commencer le quiz'}</Button>
+                        </div>
+                      ):quizMode&&!quizResult?(
+                        <div className="space-y-6">
+                          {quizQuestions.map((q,i)=>(
+                            <div key={q.id} className="p-4 bg-gray-700/50 rounded-lg">
+                              <p className="font-medium mb-3"><span className="text-indigo-400 mr-2">Q{i+1}.</span>{q.question_text}</p>
+                              <div className="space-y-2">
+                                {q.quiz_answers?.map(a=>(
+                                  <label key={a.id} className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition ${(quizAnswers[q.id]||[]).includes(a.id)?'bg-indigo-600':'bg-gray-700 hover:bg-gray-600'}`}>
+                                    <input type={q.question_type==='multiple'?'checkbox':'radio'} name={`q-${q.id}`} checked={(quizAnswers[q.id]||[]).includes(a.id)} onChange={()=>selectAnswer(q.id,a.id,q.question_type==='multiple')} className="sr-only"/>
+                                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${(quizAnswers[q.id]||[]).includes(a.id)?'border-white bg-white':'border-gray-500'}`}>
+                                      {(quizAnswers[q.id]||[]).includes(a.id)&&<div className="w-2 h-2 rounded-full bg-indigo-600"/>}
+                                    </div>
+                                    <span>{a.answer_text}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                          <div className="flex justify-between">
+                            <Button variant="secondary" onClick={closeQuiz}>Annuler</Button>
+                            <Button icon="Check" onClick={submitQuiz} disabled={Object.keys(quizAnswers).length<quizQuestions.length}>Valider ({Object.keys(quizAnswers).length}/{quizQuestions.length})</Button>
+                          </div>
+                        </div>
+                      ):(
+                        <div className="text-center py-4">
+                          <div className={`w-24 h-24 rounded-full mx-auto mb-4 flex items-center justify-center ${quizResult.passed?'bg-green-500':'bg-red-500'}`}>
+                            <Icon name={quizResult.passed?'Check':'X'} size={48} className="text-white"/>
+                          </div>
+                          <h4 className="font-semibold text-2xl mb-2">{quizResult.scorePercent}%</h4>
+                          <p className={`font-medium ${quizResult.passed?'text-green-400':'text-red-400'}`}>{quizResult.passed?'Quiz réussi !':'Quiz non validé'}</p>
+                          <p className="text-gray-400 text-sm mt-2">{quizResult.earnedPoints}/{quizResult.totalPoints} points</p>
+                          <div className="flex justify-center gap-3 mt-6">
+                            <Button variant="secondary" onClick={closeQuiz}>Fermer</Button>
+                            {!quizResult.passed&&<Button onClick={startQuiz}>Réessayer</Button>}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1475,6 +1942,126 @@
                 <div className="p-4">
                   <h3 className="font-semibold mb-2">{e.playlists?.title}</h3>
                   <ProgressBar percent={e.progress_percent||0} size="sm"/>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>;
+    }
+
+    // My Certificates Page
+    function MyCertificatesPage(){
+      const{user,profile}=useAuth();
+      const[certificates,setCertificates]=useState([]);
+      const[loading,setLoading]=useState(true);
+      const[generating,setGenerating]=useState(null);
+
+      useEffect(()=>{
+        const load=async()=>{
+          const{data}=await supabase.from('certificates').select('*,playlists(title),profiles:learner_id(first_name,last_name)').eq('learner_id',user.id).order('issued_at',{ascending:false});
+          setCertificates(data||[]);
+          setLoading(false);
+        };
+        load();
+      },[user.id]);
+
+      const generatePDF=async(cert)=>{
+        setGenerating(cert.id);
+        try{
+          const{jsPDF}=window.jspdf;
+          const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+          
+          // Fond
+          doc.setFillColor(31,41,55);
+          doc.rect(0,0,297,210,'F');
+          
+          // Bordure
+          doc.setDrawColor(99,102,241);
+          doc.setLineWidth(3);
+          doc.rect(10,10,277,190);
+          doc.setLineWidth(1);
+          doc.rect(15,15,267,180);
+          
+          // Titre
+          doc.setTextColor(255,255,255);
+          doc.setFontSize(40);
+          doc.setFont('helvetica','bold');
+          doc.text('CERTIFICAT DE RÉUSSITE',148.5,50,{align:'center'});
+          
+          // Ligne décorative
+          doc.setDrawColor(99,102,241);
+          doc.setLineWidth(2);
+          doc.line(80,58,217,58);
+          
+          // Texte
+          doc.setFontSize(16);
+          doc.setFont('helvetica','normal');
+          doc.setTextColor(156,163,175);
+          doc.text('Ce certificat est décerné à',148.5,80,{align:'center'});
+          
+          // Nom
+          doc.setFontSize(32);
+          doc.setFont('helvetica','bold');
+          doc.setTextColor(255,255,255);
+          doc.text(`${cert.profiles?.first_name} ${cert.profiles?.last_name}`,148.5,100,{align:'center'});
+          
+          // Texte suite
+          doc.setFontSize(16);
+          doc.setFont('helvetica','normal');
+          doc.setTextColor(156,163,175);
+          doc.text('pour avoir complété avec succès la formation',148.5,120,{align:'center'});
+          
+          // Titre du cours
+          doc.setFontSize(24);
+          doc.setFont('helvetica','bold');
+          doc.setTextColor(99,102,241);
+          doc.text(cert.playlists?.title||'Formation',148.5,140,{align:'center'});
+          
+          // Date et numéro
+          doc.setFontSize(12);
+          doc.setFont('helvetica','normal');
+          doc.setTextColor(156,163,175);
+          doc.text(`Date d'émission: ${new Date(cert.issued_at).toLocaleDateString('fr-FR')}`,148.5,165,{align:'center'});
+          doc.text(`N° ${cert.certificate_number}`,148.5,175,{align:'center'});
+          
+          // Logo/Badge
+          doc.setFillColor(99,102,241);
+          doc.circle(148.5,190,8,'F');
+          doc.setTextColor(255,255,255);
+          doc.setFontSize(10);
+          doc.text('✓',148.5,192,{align:'center'});
+          
+          // Télécharger
+          doc.save(`certificat_${cert.certificate_number}.pdf`);
+        }catch(err){
+          console.error('Erreur PDF:',err);
+          alert('Erreur lors de la génération du PDF');
+        }
+        setGenerating(null);
+      };
+
+      if(loading)return<Loading/>;
+
+      return<div>
+        <h1 className="text-2xl font-bold mb-6">Mes certificats</h1>
+        
+        {certificates.length===0?(
+          <Empty icon="Award" title="Aucun certificat" desc="Complétez des cours pour obtenir vos certificats"/>
+        ):(
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {certificates.map(cert=>(
+              <Card key={cert.id} className="overflow-hidden">
+                <div className="h-32 bg-gradient-to-br from-indigo-600 to-purple-700 flex items-center justify-center">
+                  <Icon name="Award" size={64} className="text-white/80"/>
+                </div>
+                <div className="p-4">
+                  <h3 className="font-semibold mb-1">{cert.playlists?.title}</h3>
+                  <p className="text-sm text-gray-400 mb-3">Obtenu le {new Date(cert.issued_at).toLocaleDateString('fr-FR')}</p>
+                  <p className="text-xs text-gray-500 mb-3">N° {cert.certificate_number}</p>
+                  <Button icon="Download" size="sm" onClick={()=>generatePDF(cert)} loading={generating===cert.id}>
+                    Télécharger PDF
+                  </Button>
                 </div>
               </Card>
             ))}
