@@ -44,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.4.0';
+    const APP_VERSION = '6.4.1';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -2289,7 +2289,15 @@
         };
       },[module.id,enrollmentId,user.id,cmiData,onComplete]);
       
-      const scormUrl=module.package_url+(module.package_url.endsWith('/')?'':'/')+module.entry_point;
+      // Construire l'URL correcte selon le type de module
+      // Pour les dispatch (package_url est déjà l'URL complète du contenu distant)
+      // Pour les autres (package_url est le dossier, entry_point est le fichier)
+      const isDispatch = module.metadata?.dispatch || module.package_url?.includes('pluginfile.php') || module.package_url?.endsWith('.html');
+      const scormUrl = isDispatch 
+        ? module.package_url 
+        : module.package_url + (module.package_url.endsWith('/') ? '' : '/') + module.entry_point;
+      
+      console.log('SCORM URL:', scormUrl, 'isDispatch:', isDispatch);
       
       const statusLabels={'not attempted':'Non commencé','incomplete':'En cours','completed':'Terminé','passed':'Réussi','failed':'Échoué'};
       const statusColors={'not attempted':'bg-gray-500','incomplete':'bg-yellow-500','completed':'bg-green-500','passed':'bg-green-500','failed':'bg-red-500'};
@@ -2338,7 +2346,10 @@
       const[loading,setLoading]=useState(true);
       const[selectedCourse,setSelectedCourse]=useState(null);
       const[courseVideos,setCourseVideos]=useState([]);
+      const[courseScorm,setCourseScorm]=useState([]);
       const[currentVideo,setCurrentVideo]=useState(null);
+      const[activeScorm,setActiveScorm]=useState(null);
+      const[scormProgress,setScormProgress]=useState({});
       const[videoProgress,setVideoProgress]=useState({});
       const[chapters,setChapters]=useState([]);
       const[attachments,setAttachments]=useState([]);
@@ -2367,6 +2378,18 @@
         const{data:pvs}=await supabase.from('playlist_videos').select('*,videos(*)').eq('playlist_id',enrollment.playlist_id).order('position');
         setCourseVideos(pvs||[]);
         
+        // Charger les modules SCORM du cours
+        try {
+          const{data:scorm}=await supabase.from('playlist_scorm').select('*,scorm_modules(*)').eq('playlist_id',enrollment.playlist_id).order('position');
+          setCourseScorm(scorm||[]);
+          
+          // Charger la progression SCORM
+          const{data:sp}=await supabase.from('scorm_progress').select('*').eq('enrollment_id',enrollment.id);
+          const spMap={};
+          (sp||[]).forEach(p=>{spMap[p.scorm_module_id]=p;});
+          setScormProgress(spMap);
+        } catch(e) { console.log('SCORM tables not available'); setCourseScorm([]); }
+        
         const{data:progress}=await supabase.from('video_progress').select('*').eq('enrollment_id',enrollment.id);
         const progressMap={};
         (progress||[]).forEach(p=>{progressMap[p.playlist_video_id]=p;});
@@ -2393,8 +2416,11 @@
       const closeCourse=()=>{
         setSelectedCourse(null);
         setCourseVideos([]);
+        setCourseScorm([]);
         setCurrentVideo(null);
+        setActiveScorm(null);
         setVideoProgress({});
+        setScormProgress({});
         setChapters([]);
         setAttachments([]);
         setNotes([]);
@@ -2898,6 +2924,7 @@
               <Card className="p-4">
                 <h3 className="font-semibold mb-4">Contenu du cours</h3>
                 <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+                  {/* Vidéos */}
                   {courseVideos.map((pv,i)=>{
                     const isCompleted=videoProgress[pv.id]?.is_completed;
                     const isCurrent=currentVideo?.id===pv.id;
@@ -2918,10 +2945,55 @@
                       </div>
                     );
                   })}
+                  
+                  {/* Modules SCORM */}
+                  {courseScorm.length>0&&(
+                    <>
+                      <div className="border-t border-gray-700 my-3 pt-3">
+                        <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Modules interactifs</p>
+                      </div>
+                      {courseScorm.map((ps,i)=>{
+                        const sp=scormProgress[ps.scorm_module_id];
+                        const isCompleted=sp?.completion_status==='completed'||sp?.completion_status==='passed';
+                        const inProgress=sp?.completion_status==='incomplete';
+                        return(
+                          <div key={ps.id} onClick={()=>setActiveScorm(ps.scorm_modules)} className="flex items-center gap-3 p-3 rounded-lg cursor-pointer transition hover:bg-orange-500/20 border border-orange-500/30">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isCompleted?'bg-green-500':inProgress?'bg-orange-500':'bg-orange-500/30'}`}>
+                              {isCompleted?<Icon name="Check" size={16}/>:<Icon name="Package" size={16}/>}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium truncate text-sm">{ps.scorm_modules?.title}</p>
+                              <p className="text-xs text-gray-400">
+                                {isCompleted?'✓ Terminé':inProgress?'En cours':'Module SCORM'}
+                                {sp?.score_scaled!=null&&` • ${Math.round(sp.score_scaled*100)}%`}
+                              </p>
+                            </div>
+                            <Icon name="ExternalLink" size={16} className="text-orange-400"/>
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
                 </div>
               </Card>
             </div>
           </div>
+          
+          {/* Lecteur SCORM plein écran */}
+          {activeScorm&&(
+            <ScormPlayer 
+              module={activeScorm} 
+              enrollmentId={selectedCourse.id}
+              onComplete={async()=>{
+                // Recharger la progression SCORM
+                const{data:sp}=await supabase.from('scorm_progress').select('*').eq('enrollment_id',selectedCourse.id);
+                const spMap={};
+                (sp||[]).forEach(p=>{spMap[p.scorm_module_id]=p;});
+                setScormProgress(spMap);
+              }}
+              onClose={()=>setActiveScorm(null)}
+            />
+          )}
         </div>;
       }
       
