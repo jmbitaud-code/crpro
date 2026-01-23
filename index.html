@@ -43,7 +43,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '4.0.2';
+    const APP_VERSION = '5.0.0';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -202,11 +202,17 @@
         {id:'users',label:'Utilisateurs',icon:'Users',show:can('manage_users')},
         {id:'videos',label:'Bibliothèque',icon:'Film',show:can('manage_videos')},
         {id:'playlists',label:'Cours',icon:'BookOpen',show:can('manage_playlists')||profile?.role==='trainer'},
+        {id:'paths',label:'Parcours',icon:'Map',show:can('manage_playlists')||profile?.role==='trainer'},
         {id:'quizzes',label:'Quiz',icon:'HelpCircle',show:can('manage_playlists')||profile?.role==='trainer'},
+        {id:'badges',label:'Badges',icon:'Award',show:can('manage_playlists')},
         {id:'enrollments',label:'Inscriptions',icon:'UserPlus',show:can('manage_enrollments')},
+        {id:'emails',label:'Emails',icon:'Mail',show:can('manage_users')},
         {id:'permissions',label:'Permissions',icon:'Shield',show:can('manage_permissions')},
         {id:'my-courses',label:'Mes cours',icon:'GraduationCap',show:profile?.role==='learner'},
+        {id:'my-paths',label:'Mes parcours',icon:'Map',show:profile?.role==='learner'},
+        {id:'my-badges',label:'Mes badges',icon:'Trophy',show:profile?.role==='learner'},
         {id:'my-certificates',label:'Mes certificats',icon:'Award',show:profile?.role==='learner'},
+        {id:'leaderboard',label:'Classement',icon:'Medal',show:profile?.role==='learner'},
       ].filter(i=>i.show);
 
       return(<div className="min-h-screen bg-gray-900 text-white flex">
@@ -263,11 +269,17 @@
             {page==='users'&&<UsersPage/>}
             {page==='videos'&&<VideosPage/>}
             {page==='playlists'&&<PlaylistsPage/>}
+            {page==='paths'&&<PathsPage/>}
             {page==='quizzes'&&<QuizzesPage/>}
+            {page==='badges'&&<BadgesPage/>}
             {page==='enrollments'&&<EnrollmentsPage/>}
+            {page==='emails'&&<EmailsPage/>}
             {page==='permissions'&&<PermissionsPage/>}
             {page==='my-courses'&&<MyCoursesPage/>}
+            {page==='my-paths'&&<MyPathsPage/>}
+            {page==='my-badges'&&<MyBadgesPage/>}
             {page==='my-certificates'&&<MyCertificatesPage/>}
+            {page==='leaderboard'&&<LeaderboardPage/>}
           </div>
         </main>
       </div>);
@@ -275,8 +287,11 @@
 
     // Dashboard
     function DashboardPage(){
-      const{isSuperAdmin,can}=useAuth();
-      const[stats,setStats]=useState({centers:0,users:0,videos:0,playlists:0,enrollments:0});
+      const{isSuperAdmin,can,profile}=useAuth();
+      const[stats,setStats]=useState({centers:0,users:0,videos:0,playlists:0,enrollments:0,completions:0,badges:0,quizzes:0,paths:0});
+      const[recentActivity,setRecentActivity]=useState([]);
+      const[recentBadges,setRecentBadges]=useState([]);
+      const[topLearners,setTopLearners]=useState([]);
       const[loading,setLoading]=useState(true);
 
       useEffect(()=>{
@@ -285,26 +300,129 @@
             supabase.from('profiles').select('*',{count:'exact',head:true}),
             supabase.from('videos').select('*',{count:'exact',head:true}),
             supabase.from('playlists').select('*',{count:'exact',head:true}),
-            supabase.from('enrollments').select('*',{count:'exact',head:true})
+            supabase.from('enrollments').select('*',{count:'exact',head:true}),
+            supabase.from('enrollments').select('*',{count:'exact',head:true}).eq('status','completed'),
+            supabase.from('quizzes').select('*',{count:'exact',head:true}),
+            supabase.from('learning_paths').select('*',{count:'exact',head:true}),
+            supabase.from('learner_badges').select('*',{count:'exact',head:true})
           ];
-          const[{count:users},{count:videos},{count:playlists},{count:enrollments}]=await Promise.all(queries);
+          const[{count:users},{count:videos},{count:playlists},{count:enrollments},{count:completions},{count:quizzes},{count:paths},{count:badges}]=await Promise.all(queries);
           let centers=1;
           if(isSuperAdmin){const{count}=await supabase.from('centers').select('*',{count:'exact',head:true});centers=count||0;}
-          setStats({centers,users:users||0,videos:videos||0,playlists:playlists||0,enrollments:enrollments||0});
+          setStats({centers,users:users||0,videos:videos||0,playlists:playlists||0,enrollments:enrollments||0,completions:completions||0,quizzes:quizzes||0,paths:paths||0,badges:badges||0});
+          
+          // Activité récente (inscriptions et complétions)
+          const{data:recent}=await supabase.from('enrollments').select('*,profiles:learner_id(first_name,last_name),playlists:playlist_id(title)').order('created_at',{ascending:false}).limit(5);
+          setRecentActivity(recent||[]);
+          
+          // Badges récemment obtenus
+          const{data:rBadges}=await supabase.from('learner_badges').select('*,badges(*),profiles:learner_id(first_name,last_name)').order('earned_at',{ascending:false}).limit(5);
+          setRecentBadges(rBadges||[]);
+          
+          // Top apprenants
+          const{data:pts}=await supabase.from('learner_points').select('learner_id,points');
+          const{data:profs}=await supabase.from('profiles').select('id,first_name,last_name').eq('role','learner');
+          const pointsMap={};
+          (pts||[]).forEach(p=>{pointsMap[p.learner_id]=(pointsMap[p.learner_id]||0)+p.points;});
+          const ranked=(profs||[]).map(p=>({...p,points:pointsMap[p.id]||0})).sort((a,b)=>b.points-a.points).slice(0,5);
+          setTopLearners(ranked);
+          
           setLoading(false);
         };
         load();
       },[isSuperAdmin]);
 
+      const colorClasses={gold:'bg-yellow-500',silver:'bg-gray-400',bronze:'bg-orange-600',purple:'bg-purple-500',blue:'bg-blue-500'};
+
       if(loading)return<Loading text="Chargement..."/>;
+      
       const cards=[];
       if(can('manage_centers'))cards.push({label:'Centres',value:stats.centers,icon:'Building2',color:'text-red-400'});
       if(can('manage_users'))cards.push({label:'Utilisateurs',value:stats.users,icon:'Users',color:'text-blue-400'});
       if(can('manage_videos'))cards.push({label:'Vidéos',value:stats.videos,icon:'Film',color:'text-purple-400'});
       if(can('manage_playlists'))cards.push({label:'Cours',value:stats.playlists,icon:'BookOpen',color:'text-green-400'});
+      if(can('manage_playlists'))cards.push({label:'Parcours',value:stats.paths,icon:'Map',color:'text-cyan-400'});
       if(can('manage_enrollments'))cards.push({label:'Inscriptions',value:stats.enrollments,icon:'UserPlus',color:'text-yellow-400'});
+      if(can('manage_enrollments'))cards.push({label:'Complétés',value:stats.completions,icon:'CheckCircle',color:'text-emerald-400'});
+      if(can('manage_playlists'))cards.push({label:'Badges délivrés',value:stats.badges,icon:'Award',color:'text-amber-400'});
       
-      return<div><h1 className="text-2xl font-bold mb-6">Tableau de bord</h1><div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">{cards.map(c=><Card key={c.label} className="p-4"><div className="flex items-center gap-3"><div className={c.color}><Icon name={c.icon} size={24}/></div><div><p className="text-gray-400 text-sm">{c.label}</p><p className="text-2xl font-bold">{c.value}</p></div></div></Card>)}</div></div>;
+      const completionRate=stats.enrollments>0?Math.round((stats.completions/stats.enrollments)*100):0;
+      
+      return<div>
+        <h1 className="text-2xl font-bold mb-6">Tableau de bord</h1>
+        
+        {/* Stats principales */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {cards.map(c=><Card key={c.label} className="p-4"><div className="flex items-center gap-3"><div className={c.color}><Icon name={c.icon} size={24}/></div><div><p className="text-gray-400 text-sm">{c.label}</p><p className="text-2xl font-bold">{c.value}</p></div></div></Card>)}
+        </div>
+        
+        {/* Taux de complétion */}
+        {can('view_analytics')&&(
+          <Card className="p-6 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Taux de complétion global</h2>
+              <span className="text-3xl font-bold text-indigo-400">{completionRate}%</span>
+            </div>
+            <ProgressBar percent={completionRate}/>
+          </Card>
+        )}
+        
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Activité récente */}
+          <Card className="p-4">
+            <h3 className="font-semibold mb-4 flex items-center gap-2"><Icon name="Activity" size={18}/>Activité récente</h3>
+            <div className="space-y-3">
+              {recentActivity.length===0?<p className="text-gray-500 text-sm">Aucune activité</p>:recentActivity.map(a=>(
+                <div key={a.id} className="flex items-center gap-3 text-sm">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${a.status==='completed'?'bg-green-500/20 text-green-400':'bg-blue-500/20 text-blue-400'}`}>
+                    <Icon name={a.status==='completed'?'CheckCircle':'UserPlus'} size={14}/>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate">{a.profiles?.first_name} {a.profiles?.last_name}</p>
+                    <p className="text-gray-500 text-xs truncate">{a.playlists?.title}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+          
+          {/* Badges récents */}
+          <Card className="p-4">
+            <h3 className="font-semibold mb-4 flex items-center gap-2"><Icon name="Award" size={18}/>Badges récents</h3>
+            <div className="space-y-3">
+              {recentBadges.length===0?<p className="text-gray-500 text-sm">Aucun badge</p>:recentBadges.map(b=>(
+                <div key={b.id} className="flex items-center gap-3 text-sm">
+                  <div className={`w-8 h-8 rounded-full ${colorClasses[b.badges?.color]||'bg-gray-700'} flex items-center justify-center`}>
+                    <Icon name={b.badges?.icon||'Award'} size={14} className="text-white"/>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate">{b.profiles?.first_name} {b.profiles?.last_name}</p>
+                    <p className="text-gray-500 text-xs">{b.badges?.name}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+          
+          {/* Top apprenants */}
+          <Card className="p-4">
+            <h3 className="font-semibold mb-4 flex items-center gap-2"><Icon name="Trophy" size={18}/>Top apprenants</h3>
+            <div className="space-y-3">
+              {topLearners.length===0?<p className="text-gray-500 text-sm">Aucun apprenant</p>:topLearners.map((l,i)=>(
+                <div key={l.id} className="flex items-center gap-3 text-sm">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${i===0?'bg-yellow-500':i===1?'bg-gray-400':i===2?'bg-orange-600':'bg-gray-700'}`}>
+                    {i+1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate">{l.first_name} {l.last_name}</p>
+                  </div>
+                  <span className="text-indigo-400 font-medium">{l.points} pts</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      </div>;
     }
 
     // Analytics Page
@@ -1047,16 +1165,38 @@
       const[newQuestion,setNewQuestion]=useState({question_text:'',question_type:'single',answers:[{text:'',is_correct:false},{text:'',is_correct:false}]});
 
       const load=useCallback(async()=>{
-        // Charger les quiz
-        let q=supabase.from('quizzes').select('*,playlists(title),quiz_questions(count)').order('created_at',{ascending:false});
-        const{data:qz,error:qzErr}=await q;
+        // Charger les quiz avec une requête simple
+        const{data:qz,error:qzErr}=await supabase.from('quizzes').select('*').order('created_at',{ascending:false});
         if(qzErr)console.error('Erreur quiz:',qzErr);
-        setQuizzes(qz||[]);
         
-        // Charger TOUS les cours (sans filtre pour le moment)
+        // Charger les infos des playlists séparément
+        const playlistIds=(qz||[]).filter(q=>q.playlist_id).map(q=>q.playlist_id);
+        let playlistsInfo={};
+        if(playlistIds.length>0){
+          const{data:pInfo}=await supabase.from('playlists').select('id,title').in('id',playlistIds);
+          (pInfo||[]).forEach(p=>playlistsInfo[p.id]=p);
+        }
+        
+        // Charger le nombre de questions par quiz
+        const quizIds=(qz||[]).map(q=>q.id);
+        let questionsCount={};
+        if(quizIds.length>0){
+          const{data:qCount}=await supabase.from('quiz_questions').select('quiz_id').in('quiz_id',quizIds);
+          (qCount||[]).forEach(q=>{questionsCount[q.quiz_id]=(questionsCount[q.quiz_id]||0)+1;});
+        }
+        
+        // Combiner les données
+        const enrichedQuizzes=(qz||[]).map(q=>({
+          ...q,
+          playlists:playlistsInfo[q.playlist_id]||null,
+          questions_count:questionsCount[q.id]||0
+        }));
+        
+        setQuizzes(enrichedQuizzes);
+        
+        // Charger TOUS les cours
         const{data:pl,error:plErr}=await supabase.from('playlists').select('id,title').order('title');
         if(plErr)console.error('Erreur playlists:',plErr);
-        console.log('Playlists chargées:',pl);
         setPlaylists(pl||[]);
         setLoading(false);
       },[]);
@@ -1181,7 +1321,7 @@
                   {q.is_required&&<span className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs">Obligatoire</span>}
                 </div>
                 <div className="flex items-center gap-4 text-sm text-gray-400 mb-3">
-                  <span><Icon name="HelpCircle" size={14} className="inline mr-1"/>{q.quiz_questions?.[0]?.count||0} questions</span>
+                  <span><Icon name="HelpCircle" size={14} className="inline mr-1"/>{q.questions_count||0} questions</span>
                   <span><Icon name="Target" size={14} className="inline mr-1"/>{q.passing_score}% requis</span>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -1281,7 +1421,8 @@
       const load=useCallback(async()=>{
         const{data:e}=await supabase.from('enrollments').select('*,playlists:playlist_id(title),profiles:learner_id(first_name,last_name,email)').order('created_at',{ascending:false});
         setEnrollments(e||[]);
-        let qp=supabase.from('playlists').select('id,title').eq('is_published',true);
+        // Admin peut inscrire à tous les cours (même brouillons)
+        let qp=supabase.from('playlists').select('id,title,is_published').order('title');
         let ql=supabase.from('profiles').select('id,first_name,last_name,email').eq('role','learner');
         if(!isSuperAdmin&&center?.id){qp=qp.eq('center_id',center.id);ql=ql.eq('center_id',center.id);}
         const[{data:p},{data:l}]=await Promise.all([qp,ql]);
@@ -1324,11 +1465,11 @@
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4"><h1 className="text-2xl font-bold">Inscriptions</h1><div className="flex gap-2"><Button variant="secondary" icon="Users" onClick={()=>setBulkModal(true)}>Inscription en masse</Button><Button icon="UserPlus" onClick={()=>setModal(true)}>Inscrire</Button></div></div>
         {enrollments.length===0?<Empty icon="UserPlus" title="Aucune inscription"/>:<Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Apprenant</th><th className="text-left p-4 font-medium text-gray-400">Cours</th><th className="text-left p-4 font-medium text-gray-400">Progression</th><th className="text-left p-4 font-medium text-gray-400">Date</th><th className="text-right p-4"></th></tr></thead><tbody className="divide-y divide-gray-700">{enrollments.map(e=><tr key={e.id}><td className="p-4"><p className="font-medium">{e.profiles?.first_name} {e.profiles?.last_name}</p><p className="text-sm text-gray-400">{e.profiles?.email}</p></td><td className="p-4">{e.playlists?.title||'—'}</td><td className="p-4"><ProgressBar percent={e.progress_percent||0} size="sm" showLabel={false}/></td><td className="p-4 text-gray-400">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td><td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleUnenroll(e.id)}/></td></tr>)}</tbody></table></div></Card>}
         
-        <Modal isOpen={modal} onClose={()=>setModal(false)} title="Inscrire"><div className="space-y-4"><Select label="Cours" value={form.playlist_id} onChange={e=>setForm({...form,playlist_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...playlists.map(p=>({value:p.id,label:p.title}))]}/><Select label="Apprenant" value={form.learner_id} onChange={e=>setForm({...form,learner_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...learners.map(l=>({value:l.id,label:`${l.first_name} ${l.last_name}`}))]}/><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleEnroll} loading={saving} disabled={!form.playlist_id||!form.learner_id}>Inscrire</Button></div></div></Modal>
+        <Modal isOpen={modal} onClose={()=>setModal(false)} title="Inscrire"><div className="space-y-4"><Select label="Cours" value={form.playlist_id} onChange={e=>setForm({...form,playlist_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...playlists.map(p=>({value:p.id,label:`${p.title}${p.is_published?'':' (brouillon)'}`}))]}/><Select label="Apprenant" value={form.learner_id} onChange={e=>setForm({...form,learner_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...learners.map(l=>({value:l.id,label:`${l.first_name} ${l.last_name}`}))]}/><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleEnroll} loading={saving} disabled={!form.playlist_id||!form.learner_id}>Inscrire</Button></div></div></Modal>
         
         <Modal isOpen={bulkModal} onClose={()=>setBulkModal(false)} title="Inscription en masse" size="lg">
           <div className="space-y-4">
-            <Select label="Cours" value={bulkForm.playlist_id} onChange={e=>setBulkForm({...bulkForm,playlist_id:e.target.value,selectedLearners:[]})} options={[{value:'',label:'Sélectionner un cours...'},...playlists.map(p=>({value:p.id,label:p.title}))]}/>
+            <Select label="Cours" value={bulkForm.playlist_id} onChange={e=>setBulkForm({...bulkForm,playlist_id:e.target.value,selectedLearners:[]})} options={[{value:'',label:'Sélectionner un cours...'},...playlists.map(p=>({value:p.id,label:`${p.title}${p.is_published?'':' (brouillon)'}`}))]}/>
             
             {bulkForm.playlist_id&&(
               <div>
@@ -1555,14 +1696,36 @@
         
         setQuizResult({scorePercent,passed,earnedPoints,totalPoints});
         
-        // Notification si réussi
+        // Si réussi
         if(passed){
+          // Ajouter des points (25 points par quiz réussi)
+          await supabase.from('learner_points').insert({
+            learner_id:user.id,
+            points:25,
+            reason:'quiz_passed',
+            reference_id:courseQuiz.id
+          });
+          
+          // Notification
           await supabase.from('notifications').insert({
             user_id:user.id,
             title:'Quiz réussi !',
-            message:`Vous avez obtenu ${scorePercent}% au quiz "${courseQuiz.title}"`,
+            message:`Vous avez obtenu ${scorePercent}% au quiz "${courseQuiz.title}" (+25 pts)`,
             type:'success'
           });
+          
+          // Vérifier badge "Sans faute" si 100%
+          if(scorePercent===100){
+            const{data:badge}=await supabase.from('badges').select('id,points').eq('code','perfect_quiz').single();
+            if(badge){
+              const{data:existing}=await supabase.from('learner_badges').select('id').eq('learner_id',user.id).eq('badge_id',badge.id).single();
+              if(!existing){
+                await supabase.from('learner_badges').insert({learner_id:user.id,badge_id:badge.id});
+                await supabase.from('learner_points').insert({learner_id:user.id,points:badge.points,reason:'badge_earned',reference_id:badge.id});
+                await supabase.from('notifications').insert({user_id:user.id,title:'🏆 Badge obtenu !',message:'Vous avez obtenu le badge "Sans faute"',type:'success',link:'my-badges'});
+              }
+            }
+          }
         }
       };
       
@@ -1673,8 +1836,9 @@
         const wasCompleted=selectedCourse.status==='completed';
         await supabase.from('enrollments').update({progress_percent:percent,status:percent===100?'completed':percent>0?'in_progress':'not_started'}).eq('id',selectedCourse.id);
         
-        // Générer certificat si cours complété à 100%
+        // Cours complété à 100%
         if(percent===100&&!wasCompleted){
+          // 1. Générer certificat
           const certNumber='CERT-'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'-'+Math.random().toString(36).substring(2,8).toUpperCase();
           const{data:cert}=await supabase.from('certificates').insert({
             enrollment_id:selectedCourse.id,
@@ -1683,7 +1847,45 @@
             certificate_number:certNumber
           }).select().single();
           
-          // Créer notification
+          // 2. Ajouter des points (50 points par cours complété)
+          await supabase.from('learner_points').insert({
+            learner_id:user.id,
+            points:50,
+            reason:'course_completed',
+            reference_id:selectedCourse.playlist_id
+          });
+          
+          // 3. Vérifier le badge "Premier cours"
+          const{data:completedCourses}=await supabase.from('enrollments').select('id').eq('learner_id',user.id).eq('status','completed');
+          const completedCount=(completedCourses||[]).length;
+          
+          if(completedCount===1){
+            // Badge premier cours
+            const{data:badge}=await supabase.from('badges').select('id,points').eq('code','first_course').single();
+            if(badge){
+              const{data:existing}=await supabase.from('learner_badges').select('id').eq('learner_id',user.id).eq('badge_id',badge.id).single();
+              if(!existing){
+                await supabase.from('learner_badges').insert({learner_id:user.id,badge_id:badge.id});
+                await supabase.from('learner_points').insert({learner_id:user.id,points:badge.points,reason:'badge_earned',reference_id:badge.id});
+                await supabase.from('notifications').insert({user_id:user.id,title:'🏆 Badge obtenu !',message:'Vous avez obtenu le badge "Premier pas"',type:'success',link:'my-badges'});
+              }
+            }
+          }
+          
+          if(completedCount>=5){
+            // Badge 5 cours complétés
+            const{data:badge}=await supabase.from('badges').select('id,points').eq('code','five_courses').single();
+            if(badge){
+              const{data:existing}=await supabase.from('learner_badges').select('id').eq('learner_id',user.id).eq('badge_id',badge.id).single();
+              if(!existing){
+                await supabase.from('learner_badges').insert({learner_id:user.id,badge_id:badge.id});
+                await supabase.from('learner_points').insert({learner_id:user.id,points:badge.points,reason:'badge_earned',reference_id:badge.id});
+                await supabase.from('notifications').insert({user_id:user.id,title:'🏆 Badge obtenu !',message:'Vous avez obtenu le badge "Expert en herbe"',type:'success',link:'my-badges'});
+              }
+            }
+          }
+          
+          // 4. Notification certificat
           if(cert){
             await supabase.from('notifications').insert({
               user_id:user.id,
@@ -1972,6 +2174,254 @@
       </div>;
     }
 
+    // Learning Paths Page (Admin)
+    function PathsPage(){
+      const{center,isSuperAdmin,can,profile}=useAuth();
+      const[paths,setPaths]=useState([]);
+      const[playlists,setPlaylists]=useState([]);
+      const[loading,setLoading]=useState(true);
+      const[modal,setModal]=useState(false);
+      const[editing,setEditing]=useState(null);
+      const[form,setForm]=useState({title:'',description:'',difficulty:'intermediate',estimated_duration:''});
+      const[saving,setSaving]=useState(false);
+      const[coursesModal,setCoursesModal]=useState(null);
+      const[pathCourses,setPathCourses]=useState([]);
+
+      const load=useCallback(async()=>{
+        const{data:p}=await supabase.from('learning_paths').select('*,learning_path_courses(count)').order('created_at',{ascending:false});
+        setPaths(p||[]);
+        const{data:pl}=await supabase.from('playlists').select('id,title').order('title');
+        setPlaylists(pl||[]);
+        setLoading(false);
+      },[]);
+      useEffect(()=>{load();},[load]);
+
+      const handleSave=async()=>{
+        setSaving(true);
+        const payload={title:form.title,description:form.description||null,difficulty:form.difficulty,estimated_duration:form.estimated_duration||null,center_id:center?.id,created_by:profile?.id};
+        if(editing)await supabase.from('learning_paths').update(payload).eq('id',editing.id);
+        else await supabase.from('learning_paths').insert(payload);
+        await load();setModal(false);setForm({title:'',description:'',difficulty:'intermediate',estimated_duration:''});setEditing(null);setSaving(false);
+      };
+
+      const handleDelete=async(id)=>{if(!confirm('Supprimer ce parcours ?'))return;await supabase.from('learning_paths').delete().eq('id',id);load();};
+      
+      const togglePublish=async(path)=>{await supabase.from('learning_paths').update({is_published:!path.is_published}).eq('id',path.id);load();};
+
+      const openCoursesModal=async(path)=>{
+        setCoursesModal(path);
+        const{data}=await supabase.from('learning_path_courses').select('*,playlists(title)').eq('path_id',path.id).order('position');
+        setPathCourses(data||[]);
+      };
+
+      const addCourseToPath=async(playlistId)=>{
+        if(!playlistId||pathCourses.find(c=>c.playlist_id===playlistId))return;
+        await supabase.from('learning_path_courses').insert({path_id:coursesModal.id,playlist_id:playlistId,position:pathCourses.length});
+        const{data}=await supabase.from('learning_path_courses').select('*,playlists(title)').eq('path_id',coursesModal.id).order('position');
+        setPathCourses(data||[]);
+      };
+
+      const removeCourseFromPath=async(id)=>{
+        await supabase.from('learning_path_courses').delete().eq('id',id);
+        setPathCourses(pathCourses.filter(c=>c.id!==id));
+      };
+
+      const difficultyLabels={beginner:'Débutant',intermediate:'Intermédiaire',advanced:'Avancé'};
+      const difficultyColors={beginner:'bg-green-500/20 text-green-400',intermediate:'bg-yellow-500/20 text-yellow-400',advanced:'bg-red-500/20 text-red-400'};
+
+      if(!can('manage_playlists')&&profile?.role!=='trainer')return<Empty icon="Lock" title="Accès refusé"/>;
+      if(loading)return<Loading/>;
+
+      return<div>
+        <div className="flex items-center justify-between mb-6"><h1 className="text-2xl font-bold">Parcours de formation</h1><Button icon="Plus" onClick={()=>{setForm({title:'',description:'',difficulty:'intermediate',estimated_duration:''});setEditing(null);setModal(true);}}>Créer un parcours</Button></div>
+        
+        {paths.length===0?<Empty icon="Map" title="Aucun parcours" desc="Créez votre premier parcours de formation"/>:(
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {paths.map(p=>(
+              <Card key={p.id} className="p-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div><h3 className="font-semibold">{p.title}</h3><p className="text-sm text-gray-400">{p.learning_path_courses?.[0]?.count||0} cours</p></div>
+                  <span className={`px-2 py-1 rounded text-xs ${p.is_published?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>{p.is_published?'Publié':'Brouillon'}</span>
+                </div>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className={`px-2 py-1 rounded text-xs ${difficultyColors[p.difficulty]}`}>{difficultyLabels[p.difficulty]}</span>
+                  {p.estimated_duration&&<span className="text-xs text-gray-400"><Icon name="Clock" size={12} className="inline mr-1"/>{p.estimated_duration}</span>}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="ghost" size="sm" icon="BookOpen" onClick={()=>openCoursesModal(p)}>Cours</Button>
+                  <Button variant="ghost" size="sm" icon={p.is_published?'EyeOff':'Eye'} onClick={()=>togglePublish(p)}/>
+                  <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(p);setForm({title:p.title,description:p.description||'',difficulty:p.difficulty,estimated_duration:p.estimated_duration||''});setModal(true);}}/>
+                  <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(p.id)}/>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier le parcours':'Créer un parcours'}>
+          <div className="space-y-4">
+            <Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
+            <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div>
+            <Select label="Niveau" value={form.difficulty} onChange={e=>setForm({...form,difficulty:e.target.value})} options={[{value:'beginner',label:'Débutant'},{value:'intermediate',label:'Intermédiaire'},{value:'advanced',label:'Avancé'}]}/>
+            <Input label="Durée estimée" value={form.estimated_duration} onChange={e=>setForm({...form,estimated_duration:e.target.value})} placeholder="ex: 10 heures"/>
+            <div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving} disabled={!form.title}>Enregistrer</Button></div>
+          </div>
+        </Modal>
+
+        <Modal isOpen={!!coursesModal} onClose={()=>setCoursesModal(null)} title={`Cours du parcours: ${coursesModal?.title}`} size="lg">
+          <div className="space-y-4">
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {pathCourses.map((c,i)=>(
+                <div key={c.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg">
+                  <span className="w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center text-sm font-bold">{i+1}</span>
+                  <span className="flex-1">{c.playlists?.title}</span>
+                  <button onClick={()=>removeCourseFromPath(c.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="Trash2" size={16}/></button>
+                </div>
+              ))}
+              {pathCourses.length===0&&<p className="text-gray-500 text-center py-4">Aucun cours dans ce parcours</p>}
+            </div>
+            <div className="flex gap-2">
+              <Select className="flex-1" value="" onChange={e=>addCourseToPath(e.target.value)} options={[{value:'',label:'Ajouter un cours...'},...playlists.filter(pl=>!pathCourses.find(c=>c.playlist_id===pl.id)).map(pl=>({value:pl.id,label:pl.title}))]}/>
+            </div>
+          </div>
+        </Modal>
+      </div>;
+    }
+
+    // Badges Page (Admin)
+    function BadgesPage(){
+      const{can}=useAuth();
+      const[badges,setBadges]=useState([]);
+      const[loading,setLoading]=useState(true);
+      const[modal,setModal]=useState(false);
+      const[editing,setEditing]=useState(null);
+      const[form,setForm]=useState({name:'',description:'',icon:'Award',color:'gold',points:10});
+      const[saving,setSaving]=useState(false);
+
+      const load=useCallback(async()=>{
+        const{data}=await supabase.from('badges').select('*,learner_badges(count)').order('created_at');
+        setBadges(data||[]);setLoading(false);
+      },[]);
+      useEffect(()=>{load();},[load]);
+
+      const handleSave=async()=>{
+        setSaving(true);
+        const payload={name:form.name,description:form.description||null,icon:form.icon,color:form.color,points:parseInt(form.points)||10,is_active:true};
+        if(editing)await supabase.from('badges').update(payload).eq('id',editing.id);
+        else await supabase.from('badges').insert({...payload,code:form.name.toLowerCase().replace(/\s+/g,'_')});
+        await load();setModal(false);setForm({name:'',description:'',icon:'Award',color:'gold',points:10});setEditing(null);setSaving(false);
+      };
+
+      const toggleActive=async(badge)=>{await supabase.from('badges').update({is_active:!badge.is_active}).eq('id',badge.id);load();};
+
+      const colorClasses={gold:'bg-yellow-500',silver:'bg-gray-400',bronze:'bg-orange-600',purple:'bg-purple-500',blue:'bg-blue-500'};
+      const icons=['Award','Star','Trophy','Medal','Flag','Zap','Target','Crown','Gem','Heart'];
+
+      if(!can('manage_playlists'))return<Empty icon="Lock" title="Accès refusé"/>;
+      if(loading)return<Loading/>;
+
+      return<div>
+        <div className="flex items-center justify-between mb-6"><h1 className="text-2xl font-bold">Badges & Gamification</h1><Button icon="Plus" onClick={()=>{setForm({name:'',description:'',icon:'Award',color:'gold',points:10});setEditing(null);setModal(true);}}>Créer un badge</Button></div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {badges.map(b=>(
+            <Card key={b.id} className={`p-4 ${!b.is_active?'opacity-50':''}`}>
+              <div className="flex items-center gap-3 mb-3">
+                <div className={`w-12 h-12 rounded-full ${colorClasses[b.color]} flex items-center justify-center`}><Icon name={b.icon} size={24} className="text-white"/></div>
+                <div><h3 className="font-semibold">{b.name}</h3><p className="text-sm text-gray-400">{b.points} points</p></div>
+              </div>
+              {b.description&&<p className="text-sm text-gray-400 mb-3">{b.description}</p>}
+              <p className="text-xs text-gray-500 mb-3">{b.learner_badges?.[0]?.count||0} apprenants</p>
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" icon={b.is_active?'EyeOff':'Eye'} onClick={()=>toggleActive(b)}/>
+                <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(b);setForm({name:b.name,description:b.description||'',icon:b.icon,color:b.color,points:b.points});setModal(true);}}/>
+              </div>
+            </Card>
+          ))}
+        </div>
+
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier le badge':'Créer un badge'}>
+          <div className="space-y-4">
+            <Input label="Nom *" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/>
+            <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div>
+            <div><label className="block text-sm font-medium text-gray-300 mb-2">Icône</label><div className="flex flex-wrap gap-2">{icons.map(icon=>(<button key={icon} onClick={()=>setForm({...form,icon})} className={`w-10 h-10 rounded-lg flex items-center justify-center ${form.icon===icon?'bg-indigo-600':'bg-gray-700 hover:bg-gray-600'}`}><Icon name={icon} size={20}/></button>))}</div></div>
+            <div><label className="block text-sm font-medium text-gray-300 mb-2">Couleur</label><div className="flex gap-2">{Object.entries(colorClasses).map(([color,cls])=>(<button key={color} onClick={()=>setForm({...form,color})} className={`w-10 h-10 rounded-full ${cls} ${form.color===color?'ring-2 ring-white ring-offset-2 ring-offset-gray-800':''}`}/>))}</div></div>
+            <Input label="Points" type="number" value={form.points} onChange={e=>setForm({...form,points:e.target.value})}/>
+            <div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving} disabled={!form.name}>Enregistrer</Button></div>
+          </div>
+        </Modal>
+      </div>;
+    }
+
+    // Emails Page (Admin)
+    function EmailsPage(){
+      const{can}=useAuth();
+      const[templates,setTemplates]=useState([]);
+      const[logs,setLogs]=useState([]);
+      const[loading,setLoading]=useState(true);
+      const[tab,setTab]=useState('templates');
+      const[editModal,setEditModal]=useState(null);
+      const[saving,setSaving]=useState(false);
+
+      const load=useCallback(async()=>{
+        const[{data:t},{data:l}]=await Promise.all([
+          supabase.from('email_templates').select('*').order('name'),
+          supabase.from('email_logs').select('*,profiles:recipient_id(first_name,last_name)').order('created_at',{ascending:false}).limit(50)
+        ]);
+        setTemplates(t||[]);setLogs(l||[]);setLoading(false);
+      },[]);
+      useEffect(()=>{load();},[load]);
+
+      const saveTemplate=async()=>{
+        setSaving(true);
+        await supabase.from('email_templates').update({subject:editModal.subject,body_html:editModal.body_html,is_active:editModal.is_active}).eq('id',editModal.id);
+        await load();setEditModal(null);setSaving(false);
+      };
+
+      const statusColors={pending:'bg-yellow-500/20 text-yellow-400',sent:'bg-green-500/20 text-green-400',failed:'bg-red-500/20 text-red-400'};
+
+      if(!can('manage_users'))return<Empty icon="Lock" title="Accès refusé"/>;
+      if(loading)return<Loading/>;
+
+      return<div>
+        <h1 className="text-2xl font-bold mb-6">Gestion des Emails</h1>
+        
+        <div className="flex gap-2 mb-6">
+          <Button variant={tab==='templates'?'primary':'secondary'} onClick={()=>setTab('templates')}>Templates</Button>
+          <Button variant={tab==='logs'?'primary':'secondary'} onClick={()=>setTab('logs')}>Historique</Button>
+        </div>
+
+        {tab==='templates'&&(
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {templates.map(t=>(
+              <Card key={t.id} className={`p-4 ${!t.is_active?'opacity-50':''}`}>
+                <div className="flex items-start justify-between mb-2">
+                  <div><h3 className="font-semibold">{t.name}</h3><p className="text-sm text-gray-400">{t.code}</p></div>
+                  <span className={`px-2 py-1 rounded text-xs ${t.is_active?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>{t.is_active?'Actif':'Inactif'}</span>
+                </div>
+                <p className="text-sm text-gray-300 mb-3 truncate">{t.subject}</p>
+                <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>setEditModal({...t})}>Modifier</Button>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {tab==='logs'&&(
+          <Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Destinataire</th><th className="text-left p-4 font-medium text-gray-400">Sujet</th><th className="text-left p-4 font-medium text-gray-400">Statut</th><th className="text-left p-4 font-medium text-gray-400">Date</th></tr></thead><tbody className="divide-y divide-gray-700">{logs.map(l=><tr key={l.id}><td className="p-4"><p className="font-medium">{l.profiles?.first_name} {l.profiles?.last_name}</p><p className="text-sm text-gray-400">{l.recipient_email}</p></td><td className="p-4 text-gray-300">{l.subject}</td><td className="p-4"><span className={`px-2 py-1 rounded text-xs ${statusColors[l.status]}`}>{l.status}</span></td><td className="p-4 text-gray-400">{new Date(l.created_at).toLocaleString('fr-FR')}</td></tr>)}</tbody></table></div></Card>
+        )}
+
+        <Modal isOpen={!!editModal} onClose={()=>setEditModal(null)} title={`Modifier: ${editModal?.name}`} size="lg">
+          {editModal&&<div className="space-y-4">
+            <Input label="Sujet" value={editModal.subject} onChange={e=>setEditModal({...editModal,subject:e.target.value})}/>
+            <div><label className="block text-sm font-medium text-gray-300 mb-1">Contenu HTML</label><textarea value={editModal.body_html} onChange={e=>setEditModal({...editModal,body_html:e.target.value})} rows={10} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white font-mono text-sm resize-none"/></div>
+            <div className="text-xs text-gray-500">Variables: {editModal.variables?.join(', ')}</div>
+            <Checkbox label="Email actif" checked={editModal.is_active} onChange={v=>setEditModal({...editModal,is_active:v})}/>
+            <div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setEditModal(null)}>Annuler</Button><Button onClick={saveTemplate} loading={saving}>Enregistrer</Button></div>
+          </div>}
+        </Modal>
+      </div>;
+    }
+
     // My Certificates Page
     function MyCertificatesPage(){
       const{user,profile}=useAuth();
@@ -2089,6 +2539,209 @@
             ))}
           </div>
         )}
+      </div>;
+    }
+
+    // My Paths Page (Learner)
+    function MyPathsPage(){
+      const{user}=useAuth();
+      const[paths,setPaths]=useState([]);
+      const[loading,setLoading]=useState(true);
+
+      useEffect(()=>{
+        const load=async()=>{
+          // Charger les parcours publiés avec inscription
+          const{data:enrolledPaths}=await supabase.from('path_enrollments').select('*,learning_paths(*,learning_path_courses(count))').eq('learner_id',user.id);
+          
+          // Charger aussi les parcours publiés non inscrits
+          const{data:allPaths}=await supabase.from('learning_paths').select('*,learning_path_courses(count)').eq('is_published',true);
+          
+          const enrolledIds=(enrolledPaths||[]).map(e=>e.path_id);
+          const availablePaths=(allPaths||[]).filter(p=>!enrolledIds.includes(p.id)).map(p=>({...p,enrolled:false,progress_percent:0}));
+          const myPaths=(enrolledPaths||[]).map(e=>({...e.learning_paths,enrolled:true,progress_percent:e.progress_percent,enrollment_id:e.id}));
+          
+          setPaths([...myPaths,...availablePaths]);
+          setLoading(false);
+        };
+        load();
+      },[user.id]);
+
+      const enroll=async(pathId)=>{
+        await supabase.from('path_enrollments').insert({path_id:pathId,learner_id:user.id,started_at:new Date().toISOString()});
+        window.location.reload();
+      };
+
+      const difficultyLabels={beginner:'Débutant',intermediate:'Intermédiaire',advanced:'Avancé'};
+      const difficultyColors={beginner:'bg-green-500/20 text-green-400',intermediate:'bg-yellow-500/20 text-yellow-400',advanced:'bg-red-500/20 text-red-400'};
+
+      if(loading)return<Loading/>;
+
+      return<div>
+        <h1 className="text-2xl font-bold mb-6">Parcours de formation</h1>
+        {paths.length===0?<Empty icon="Map" title="Aucun parcours disponible"/>:(
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {paths.map(p=>(
+              <Card key={p.id} className="overflow-hidden">
+                <div className="h-32 bg-gradient-to-br from-purple-600 to-indigo-700 flex items-center justify-center relative">
+                  <Icon name="Map" size={48} className="text-white/80"/>
+                  {p.enrolled&&<div className="absolute top-2 right-2 px-2 py-1 bg-green-500 rounded text-xs font-medium">Inscrit</div>}
+                </div>
+                <div className="p-4">
+                  <h3 className="font-semibold mb-2">{p.title}</h3>
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className={`px-2 py-1 rounded text-xs ${difficultyColors[p.difficulty]}`}>{difficultyLabels[p.difficulty]}</span>
+                    <span className="text-xs text-gray-400">{p.learning_path_courses?.[0]?.count||0} cours</span>
+                    {p.estimated_duration&&<span className="text-xs text-gray-400">• {p.estimated_duration}</span>}
+                  </div>
+                  {p.enrolled?(<><ProgressBar percent={p.progress_percent||0} size="sm"/><p className="text-xs text-gray-400 mt-2">{p.progress_percent||0}% complété</p></>):(<Button className="w-full" onClick={()=>enroll(p.id)}>S'inscrire</Button>)}
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>;
+    }
+
+    // My Badges Page (Learner)
+    function MyBadgesPage(){
+      const{user}=useAuth();
+      const[earnedBadges,setEarnedBadges]=useState([]);
+      const[allBadges,setAllBadges]=useState([]);
+      const[points,setPoints]=useState(0);
+      const[loading,setLoading]=useState(true);
+
+      useEffect(()=>{
+        const load=async()=>{
+          const[{data:earned},{data:all},{data:pts}]=await Promise.all([
+            supabase.from('learner_badges').select('*,badges(*)').eq('learner_id',user.id),
+            supabase.from('badges').select('*').eq('is_active',true),
+            supabase.from('learner_points').select('points').eq('learner_id',user.id)
+          ]);
+          setEarnedBadges(earned||[]);
+          setAllBadges(all||[]);
+          setPoints((pts||[]).reduce((sum,p)=>sum+p.points,0));
+          setLoading(false);
+        };
+        load();
+      },[user.id]);
+
+      const colorClasses={gold:'bg-yellow-500',silver:'bg-gray-400',bronze:'bg-orange-600',purple:'bg-purple-500',blue:'bg-blue-500'};
+      const earnedIds=earnedBadges.map(e=>e.badge_id);
+
+      if(loading)return<Loading/>;
+
+      return<div>
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold">Mes badges</h1>
+          <div className="flex items-center gap-2 px-4 py-2 bg-indigo-600 rounded-lg">
+            <Icon name="Zap" size={20}/>
+            <span className="font-bold">{points} points</span>
+          </div>
+        </div>
+
+        <div className="mb-8">
+          <h2 className="text-lg font-semibold mb-4">Badges obtenus ({earnedBadges.length})</h2>
+          {earnedBadges.length===0?<p className="text-gray-500">Aucun badge obtenu pour le moment</p>:(
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+              {earnedBadges.map(e=>(
+                <div key={e.id} className="text-center">
+                  <div className={`w-16 h-16 mx-auto rounded-full ${colorClasses[e.badges?.color]} flex items-center justify-center mb-2`}>
+                    <Icon name={e.badges?.icon} size={32} className="text-white"/>
+                  </div>
+                  <p className="font-medium text-sm">{e.badges?.name}</p>
+                  <p className="text-xs text-gray-400">+{e.badges?.points} pts</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <h2 className="text-lg font-semibold mb-4">Badges à débloquer</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            {allBadges.filter(b=>!earnedIds.includes(b.id)).map(b=>(
+              <div key={b.id} className="text-center opacity-40">
+                <div className={`w-16 h-16 mx-auto rounded-full bg-gray-700 flex items-center justify-center mb-2`}>
+                  <Icon name={b.icon} size={32} className="text-gray-500"/>
+                </div>
+                <p className="font-medium text-sm">{b.name}</p>
+                <p className="text-xs text-gray-500">+{b.points} pts</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>;
+    }
+
+    // Leaderboard Page
+    function LeaderboardPage(){
+      const{user}=useAuth();
+      const[leaderboard,setLeaderboard]=useState([]);
+      const[loading,setLoading]=useState(true);
+      const[myRank,setMyRank]=useState(null);
+
+      useEffect(()=>{
+        const load=async()=>{
+          // Calculer le classement manuellement
+          const{data:profiles}=await supabase.from('profiles').select('id,first_name,last_name').eq('role','learner');
+          const{data:points}=await supabase.from('learner_points').select('learner_id,points');
+          const{data:badges}=await supabase.from('learner_badges').select('learner_id');
+          
+          const pointsMap={};
+          (points||[]).forEach(p=>{pointsMap[p.learner_id]=(pointsMap[p.learner_id]||0)+p.points;});
+          
+          const badgesMap={};
+          (badges||[]).forEach(b=>{badgesMap[b.learner_id]=(badgesMap[b.learner_id]||0)+1;});
+          
+          const ranked=(profiles||[]).map(p=>({
+            ...p,
+            total_points:pointsMap[p.id]||0,
+            badge_count:badgesMap[p.id]||0
+          })).sort((a,b)=>b.total_points-a.total_points).map((p,i)=>({...p,rank:i+1}));
+          
+          setLeaderboard(ranked.slice(0,20));
+          setMyRank(ranked.find(r=>r.id===user.id));
+          setLoading(false);
+        };
+        load();
+      },[user.id]);
+
+      if(loading)return<Loading/>;
+
+      return<div>
+        <h1 className="text-2xl font-bold mb-6">Classement</h1>
+        
+        {myRank&&(
+          <Card className="p-4 mb-6 bg-indigo-600/20 border-indigo-500">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-indigo-600 rounded-full flex items-center justify-center text-xl font-bold">#{myRank.rank}</div>
+              <div className="flex-1">
+                <p className="font-semibold">Votre position</p>
+                <p className="text-sm text-gray-400">{myRank.total_points} points • {myRank.badge_count} badges</p>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        <Card>
+          <div className="divide-y divide-gray-700">
+            {leaderboard.map((l,i)=>(
+              <div key={l.id} className={`flex items-center gap-4 p-4 ${l.id===user.id?'bg-indigo-600/10':''}`}>
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${i===0?'bg-yellow-500':i===1?'bg-gray-400':i===2?'bg-orange-600':'bg-gray-700'}`}>
+                  {i<3?<Icon name={i===0?'Crown':'Medal'} size={20}/>:l.rank}
+                </div>
+                <div className="flex-1">
+                  <p className="font-medium">{l.first_name} {l.last_name}</p>
+                  <p className="text-sm text-gray-400">{l.badge_count} badges</p>
+                </div>
+                <div className="text-right">
+                  <p className="font-bold text-indigo-400">{l.total_points}</p>
+                  <p className="text-xs text-gray-500">points</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
       </div>;
     }
 
