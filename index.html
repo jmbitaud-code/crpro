@@ -20,6 +20,8 @@
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
   <script src="https://player.vimeo.com/api/player.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
   
   <style>
     *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#111827}
@@ -39,7 +41,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '3.0.1';
+    const APP_VERSION = '3.1.0';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -163,6 +165,7 @@
       
       const menu=[
         {id:'dashboard',label:'Tableau de bord',icon:'LayoutDashboard',show:true},
+        {id:'analytics',label:'Statistiques',icon:'BarChart3',show:can('view_analytics')},
         {id:'centers',label:'Centres',icon:'Building2',show:can('manage_centers')},
         {id:'users',label:'Utilisateurs',icon:'Users',show:can('manage_users')},
         {id:'videos',label:'Bibliothèque',icon:'Film',show:can('manage_videos')},
@@ -185,6 +188,7 @@
           <header className="lg:hidden bg-gray-800 border-b border-gray-700 p-4 flex items-center gap-4"><button onClick={()=>setSidebarOpen(true)} className="p-2 hover:bg-gray-700 rounded-lg"><Icon name="Menu" size={24}/></button><h1 className="font-semibold">{menu.find(i=>i.id===page)?.label}</h1></header>
           <div className="p-4 lg:p-6">
             {page==='dashboard'&&<DashboardPage/>}
+            {page==='analytics'&&<AnalyticsPage/>}
             {page==='centers'&&<CentersPage/>}
             {page==='users'&&<UsersPage/>}
             {page==='videos'&&<VideosPage/>}
@@ -229,6 +233,259 @@
       if(can('manage_enrollments'))cards.push({label:'Inscriptions',value:stats.enrollments,icon:'UserPlus',color:'text-yellow-400'});
       
       return<div><h1 className="text-2xl font-bold mb-6">Tableau de bord</h1><div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">{cards.map(c=><Card key={c.label} className="p-4"><div className="flex items-center gap-3"><div className={c.color}><Icon name={c.icon} size={24}/></div><div><p className="text-gray-400 text-sm">{c.label}</p><p className="text-2xl font-bold">{c.value}</p></div></div></Card>)}</div></div>;
+    }
+
+    // Analytics Page
+    function AnalyticsPage(){
+      const{can,center,isSuperAdmin}=useAuth();
+      const[data,setData]=useState({enrollments:[],courses:[],summary:{}});
+      const[loading,setLoading]=useState(true);
+      const[filter,setFilter]=useState({course:'all',period:'all'});
+      const progressChartRef=useRef(null);
+      const statusChartRef=useRef(null);
+      const courseChartRef=useRef(null);
+      const chartsRef=useRef({});
+
+      const load=useCallback(async()=>{
+        // Charger les inscriptions avec détails
+        let q=supabase.from('enrollments').select(`
+          *,
+          playlists:playlist_id(id,title),
+          profiles:learner_id(id,first_name,last_name,email)
+        `);
+        if(!isSuperAdmin&&center?.id){
+          q=q.eq('playlists.center_id',center.id);
+        }
+        const{data:enrollments}=await q;
+        
+        // Charger les cours
+        let qc=supabase.from('playlists').select('id,title,is_published');
+        if(!isSuperAdmin&&center?.id)qc=qc.eq('center_id',center.id);
+        const{data:courses}=await qc;
+
+        // Calculer les statistiques
+        const validEnrollments=(enrollments||[]).filter(e=>e.playlists&&e.profiles);
+        const summary={
+          total:validEnrollments.length,
+          notStarted:validEnrollments.filter(e=>e.status==='not_started').length,
+          inProgress:validEnrollments.filter(e=>e.status==='in_progress').length,
+          completed:validEnrollments.filter(e=>e.status==='completed').length,
+          avgProgress:validEnrollments.length?Math.round(validEnrollments.reduce((a,e)=>a+(e.progress_percent||0),0)/validEnrollments.length):0
+        };
+
+        setData({enrollments:validEnrollments,courses:courses||[],summary});
+        setLoading(false);
+      },[isSuperAdmin,center?.id]);
+
+      useEffect(()=>{load();},[load]);
+
+      // Créer les graphiques
+      useEffect(()=>{
+        if(loading||!data.enrollments.length)return;
+
+        // Détruire les anciens graphiques
+        Object.values(chartsRef.current).forEach(chart=>chart?.destroy());
+        chartsRef.current={};
+
+        // Graphique de statut (Doughnut)
+        if(statusChartRef.current){
+          const ctx=statusChartRef.current.getContext('2d');
+          chartsRef.current.status=new Chart(ctx,{
+            type:'doughnut',
+            data:{
+              labels:['Non commencé','En cours','Terminé'],
+              datasets:[{
+                data:[data.summary.notStarted,data.summary.inProgress,data.summary.completed],
+                backgroundColor:['#6b7280','#eab308','#22c55e'],
+                borderWidth:0
+              }]
+            },
+            options:{
+              responsive:true,
+              maintainAspectRatio:false,
+              plugins:{legend:{position:'bottom',labels:{color:'#9ca3af'}}}
+            }
+          });
+        }
+
+        // Graphique par cours (Bar)
+        if(courseChartRef.current){
+          const courseStats=data.courses.map(c=>{
+            const courseEnrollments=data.enrollments.filter(e=>e.playlist_id===c.id);
+            return{
+              title:c.title,
+              count:courseEnrollments.length,
+              avgProgress:courseEnrollments.length?Math.round(courseEnrollments.reduce((a,e)=>a+(e.progress_percent||0),0)/courseEnrollments.length):0
+            };
+          });
+          
+          const ctx=courseChartRef.current.getContext('2d');
+          chartsRef.current.course=new Chart(ctx,{
+            type:'bar',
+            data:{
+              labels:courseStats.map(c=>c.title.length>20?c.title.substring(0,20)+'...':c.title),
+              datasets:[
+                {label:'Inscrits',data:courseStats.map(c=>c.count),backgroundColor:'#6366f1'},
+                {label:'Progression moy. %',data:courseStats.map(c=>c.avgProgress),backgroundColor:'#22c55e'}
+              ]
+            },
+            options:{
+              responsive:true,
+              maintainAspectRatio:false,
+              scales:{
+                x:{ticks:{color:'#9ca3af'},grid:{color:'#374151'}},
+                y:{ticks:{color:'#9ca3af'},grid:{color:'#374151'}}
+              },
+              plugins:{legend:{labels:{color:'#9ca3af'}}}
+            }
+          });
+        }
+
+        // Graphique de progression (Line)
+        if(progressChartRef.current){
+          const ranges=['0-25%','26-50%','51-75%','76-100%'];
+          const progressData=[
+            data.enrollments.filter(e=>(e.progress_percent||0)<=25).length,
+            data.enrollments.filter(e=>(e.progress_percent||0)>25&&(e.progress_percent||0)<=50).length,
+            data.enrollments.filter(e=>(e.progress_percent||0)>50&&(e.progress_percent||0)<=75).length,
+            data.enrollments.filter(e=>(e.progress_percent||0)>75).length
+          ];
+          
+          const ctx=progressChartRef.current.getContext('2d');
+          chartsRef.current.progress=new Chart(ctx,{
+            type:'bar',
+            data:{
+              labels:ranges,
+              datasets:[{label:'Nombre d\'apprenants',data:progressData,backgroundColor:'#8b5cf6'}]
+            },
+            options:{
+              responsive:true,
+              maintainAspectRatio:false,
+              scales:{
+                x:{ticks:{color:'#9ca3af'},grid:{color:'#374151'}},
+                y:{ticks:{color:'#9ca3af'},grid:{color:'#374151'}}
+              },
+              plugins:{legend:{display:false}}
+            }
+          });
+        }
+
+        return()=>{
+          Object.values(chartsRef.current).forEach(chart=>chart?.destroy());
+        };
+      },[loading,data]);
+
+      // Filtrer les données
+      const filteredEnrollments=data.enrollments.filter(e=>{
+        if(filter.course!=='all'&&e.playlist_id!==filter.course)return false;
+        return true;
+      });
+
+      // Export Excel
+      const exportExcel=()=>{
+        const exportData=filteredEnrollments.map(e=>({
+          'Apprenant':e.profiles?.first_name+' '+e.profiles?.last_name,
+          'Email':e.profiles?.email,
+          'Cours':e.playlists?.title,
+          'Progression (%)':e.progress_percent||0,
+          'Statut':e.status==='not_started'?'Non commencé':e.status==='in_progress'?'En cours':'Terminé',
+          'Date inscription':new Date(e.created_at).toLocaleDateString('fr-FR')
+        }));
+        
+        const ws=XLSX.utils.json_to_sheet(exportData);
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,ws,'Statistiques');
+        XLSX.writeFile(wb,`statistiques_${new Date().toISOString().split('T')[0]}.xlsx`);
+      };
+
+      if(!can('view_analytics'))return<Empty icon="Lock" title="Accès refusé"/>;
+      if(loading)return<Loading text="Chargement des statistiques..."/>;
+
+      return<div>
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
+          <h1 className="text-2xl font-bold">Statistiques</h1>
+          <div className="flex gap-2">
+            <Select value={filter.course} onChange={e=>setFilter({...filter,course:e.target.value})} options={[{value:'all',label:'Tous les cours'},...data.courses.map(c=>({value:c.id,label:c.title}))]}/>
+            {can('export_reports')&&<Button icon="Download" variant="secondary" onClick={exportExcel}>Exporter Excel</Button>}
+          </div>
+        </div>
+
+        {/* Cartes résumé */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+          <Card className="p-4"><div className="text-gray-400 text-sm">Total inscrits</div><div className="text-2xl font-bold">{data.summary.total}</div></Card>
+          <Card className="p-4"><div className="text-gray-400 text-sm">Non commencés</div><div className="text-2xl font-bold text-gray-500">{data.summary.notStarted}</div></Card>
+          <Card className="p-4"><div className="text-gray-400 text-sm">En cours</div><div className="text-2xl font-bold text-yellow-500">{data.summary.inProgress}</div></Card>
+          <Card className="p-4"><div className="text-gray-400 text-sm">Terminés</div><div className="text-2xl font-bold text-green-500">{data.summary.completed}</div></Card>
+          <Card className="p-4"><div className="text-gray-400 text-sm">Progression moy.</div><div className="text-2xl font-bold text-indigo-500">{data.summary.avgProgress}%</div></Card>
+        </div>
+
+        {/* Graphiques */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+          <Card className="p-4">
+            <h3 className="font-semibold mb-4">Répartition par statut</h3>
+            <div className="h-64"><canvas ref={statusChartRef}/></div>
+          </Card>
+          <Card className="p-4 lg:col-span-2">
+            <h3 className="font-semibold mb-4">Statistiques par cours</h3>
+            <div className="h-64"><canvas ref={courseChartRef}/></div>
+          </Card>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          <Card className="p-4">
+            <h3 className="font-semibold mb-4">Distribution des progressions</h3>
+            <div className="h-64"><canvas ref={progressChartRef}/></div>
+          </Card>
+          <Card className="p-4">
+            <h3 className="font-semibold mb-4">Taux de complétion</h3>
+            <div className="h-64 flex items-center justify-center">
+              <div className="text-center">
+                <div className="text-6xl font-bold text-green-500">{data.summary.total?Math.round((data.summary.completed/data.summary.total)*100):0}%</div>
+                <p className="text-gray-400 mt-2">{data.summary.completed} sur {data.summary.total} terminés</p>
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        {/* Tableau détaillé */}
+        <Card>
+          <div className="p-4 border-b border-gray-700">
+            <h3 className="font-semibold">Détail des inscriptions ({filteredEnrollments.length})</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-750">
+                <tr>
+                  <th className="text-left p-4 font-medium text-gray-400">Apprenant</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Cours</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Progression</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Statut</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700">
+                {filteredEnrollments.slice(0,20).map(e=>(
+                  <tr key={e.id}>
+                    <td className="p-4">
+                      <p className="font-medium">{e.profiles?.first_name} {e.profiles?.last_name}</p>
+                      <p className="text-sm text-gray-400">{e.profiles?.email}</p>
+                    </td>
+                    <td className="p-4">{e.playlists?.title}</td>
+                    <td className="p-4"><ProgressBar percent={e.progress_percent||0} size="sm" showLabel={true}/></td>
+                    <td className="p-4">
+                      <span className={`px-2 py-1 rounded text-xs ${e.status==='completed'?'bg-green-500/20 text-green-400':e.status==='in_progress'?'bg-yellow-500/20 text-yellow-400':'bg-gray-500/20 text-gray-400'}`}>
+                        {e.status==='not_started'?'Non commencé':e.status==='in_progress'?'En cours':'Terminé'}
+                      </span>
+                    </td>
+                    <td className="p-4 text-gray-400">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {filteredEnrollments.length>20&&<p className="p-4 text-center text-gray-400">Affichage limité à 20 lignes. Exportez pour voir tout.</p>}
+          </div>
+        </Card>
+      </div>;
     }
 
     // Centers
@@ -463,6 +720,8 @@
       const[saving,setSaving]=useState(false);
       const[editVideosModal,setEditVideosModal]=useState(null);
       const[playlistVideos,setPlaylistVideos]=useState([]);
+      const sortableRef=useRef(null);
+      const sortableInstanceRef=useRef(null);
 
       const load=useCallback(async()=>{let q=supabase.from('playlists').select('*,playlist_videos(count)').order('created_at',{ascending:false});if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);const{data:p}=await q;setPlaylists(p||[]);let qv=supabase.from('videos').select('*');if(!isSuperAdmin&&center?.id)qv=qv.eq('center_id',center.id);const{data:v}=await qv;setVideos(v||[]);setLoading(false);},[isSuperAdmin,center?.id]);
       useEffect(()=>{load();},[load]);
@@ -473,6 +732,46 @@
       const addVideoToPlaylist=async(videoId)=>{const pos=playlistVideos.length;const{data}=await supabase.from('playlist_videos').insert({playlist_id:editVideosModal.id,video_id:videoId,position:pos}).select('*,videos(*)').single();if(data)setPlaylistVideos([...playlistVideos,data]);};
       const removeVideoFromPlaylist=async(pvId)=>{await supabase.from('playlist_videos').delete().eq('id',pvId);setPlaylistVideos(playlistVideos.filter(pv=>pv.id!==pvId));};
       const togglePublish=async(playlist)=>{await supabase.from('playlists').update({is_published:!playlist.is_published}).eq('id',playlist.id);load();};
+      
+      // Drag & Drop
+      useEffect(()=>{
+        if(!editVideosModal||!sortableRef.current)return;
+        
+        // Détruire l'instance précédente
+        if(sortableInstanceRef.current){
+          sortableInstanceRef.current.destroy();
+        }
+        
+        sortableInstanceRef.current=new Sortable(sortableRef.current,{
+          animation:150,
+          handle:'.drag-handle',
+          ghostClass:'opacity-50',
+          onEnd:async(evt)=>{
+            const{oldIndex,newIndex}=evt;
+            if(oldIndex===newIndex)return;
+            
+            // Réorganiser localement
+            const newOrder=[...playlistVideos];
+            const[moved]=newOrder.splice(oldIndex,1);
+            newOrder.splice(newIndex,0,moved);
+            
+            // Mettre à jour les positions
+            setPlaylistVideos(newOrder);
+            
+            // Sauvegarder en base
+            for(let i=0;i<newOrder.length;i++){
+              await supabase.from('playlist_videos').update({position:i}).eq('id',newOrder[i].id);
+            }
+          }
+        });
+        
+        return()=>{
+          if(sortableInstanceRef.current){
+            sortableInstanceRef.current.destroy();
+            sortableInstanceRef.current=null;
+          }
+        };
+      },[editVideosModal,playlistVideos.length]);
 
       if(!can('manage_playlists')&&profile?.role!=='trainer')return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
@@ -480,7 +779,7 @@
         <div className="flex items-center justify-between mb-6"><h1 className="text-2xl font-bold">Cours</h1>{can('manage_playlists')&&<Button icon="Plus" onClick={()=>{setForm({title:'',description:''});setEditing(null);setModal(true);}}>Créer</Button>}</div>
         {playlists.length===0?<Empty icon="BookOpen" title="Aucun cours"/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{playlists.map(p=><Card key={p.id} className="p-4"><div className="flex items-start justify-between mb-3"><div><h3 className="font-semibold">{p.title}</h3><p className="text-sm text-gray-400 mt-1">{p.playlist_videos?.[0]?.count||0} vidéos</p></div><span className={`px-2 py-1 rounded text-xs ${p.is_published?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>{p.is_published?'Publié':'Brouillon'}</span></div><div className="flex flex-wrap gap-2">{can('manage_playlists')&&<><Button variant="ghost" size="sm" icon="Film" onClick={()=>openEditVideos(p)}>Vidéos</Button><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(p);setForm({title:p.title,description:p.description||''});setModal(true);}}>Modifier</Button></>}<Button variant="ghost" size="sm" icon={p.is_published?'EyeOff':'Eye'} onClick={()=>togglePublish(p)}>{p.is_published?'Dépublier':'Publier'}</Button>{can('manage_playlists')&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(p.id)}/>}</div></Card>)}</div>}
         <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier':'Créer'}><div className="space-y-4"><Input label="Titre" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
-        <Modal isOpen={!!editVideosModal} onClose={()=>setEditVideosModal(null)} title={`Vidéos: ${editVideosModal?.title}`} size="lg"><div className="grid grid-cols-1 lg:grid-cols-2 gap-4"><div><h4 className="font-medium mb-3">Dans le cours ({playlistVideos.length})</h4><div className="space-y-2 max-h-96 overflow-y-auto">{playlistVideos.map((pv,i)=><div key={pv.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg"><span className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{i+1}</span><div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{pv.videos?.title}</p></div><button onClick={()=>removeVideoFromPlaylist(pv.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button></div>)}{playlistVideos.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucune vidéo</p>}</div></div><div><h4 className="font-medium mb-3">Disponibles</h4><div className="space-y-2 max-h-96 overflow-y-auto">{videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)).map(v=><div key={v.id} className="flex items-center gap-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 cursor-pointer" onClick={()=>addVideoToPlaylist(v.id)}><Icon name="Plus" size={16} className="text-indigo-400"/><div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{v.title}</p></div></div>)}{videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)).length===0&&<p className="text-gray-500 text-sm text-center py-4">Toutes ajoutées</p>}</div></div></div></Modal>
+        <Modal isOpen={!!editVideosModal} onClose={()=>setEditVideosModal(null)} title={`Vidéos: ${editVideosModal?.title}`} size="lg"><div className="grid grid-cols-1 lg:grid-cols-2 gap-4"><div><h4 className="font-medium mb-3">Dans le cours ({playlistVideos.length}) <span className="text-gray-500 text-sm font-normal">- Glissez pour réorganiser</span></h4><div ref={sortableRef} className="space-y-2 max-h-96 overflow-y-auto">{playlistVideos.map((pv,i)=><div key={pv.id} data-id={pv.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg"><div className="drag-handle cursor-grab active:cursor-grabbing p-1 hover:bg-gray-600 rounded"><Icon name="GripVertical" size={16} className="text-gray-400"/></div><span className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{i+1}</span><div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{pv.videos?.title}</p></div><button onClick={()=>removeVideoFromPlaylist(pv.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button></div>)}{playlistVideos.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucune vidéo</p>}</div></div><div><h4 className="font-medium mb-3">Disponibles</h4><div className="space-y-2 max-h-96 overflow-y-auto">{videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)).map(v=><div key={v.id} className="flex items-center gap-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 cursor-pointer" onClick={()=>addVideoToPlaylist(v.id)}><Icon name="Plus" size={16} className="text-indigo-400"/><div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{v.title}</p></div></div>)}{videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)).length===0&&<p className="text-gray-500 text-sm text-center py-4">Toutes ajoutées</p>}</div></div></div></Modal>
       </div>;
     }
 
