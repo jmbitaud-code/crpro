@@ -24,8 +24,7 @@
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <!-- JSZip temporairement désactivé pour test -->
-  <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script> -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" async></script>
   
   <style>
     *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#111827}
@@ -45,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.5.2-test';
+    const APP_VERSION = '6.5.3';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -1038,9 +1037,119 @@
       const scormFileRef=useRef(null);
       const scormZipRef=useRef(null);
 
-      // Parser un fichier ZIP SCORM Dispatch - TEMPORAIREMENT DÉSACTIVÉ
+      // Parser un fichier ZIP SCORM Dispatch
       const parseScormZip=async(file)=>{
-        alert('Fonctionnalité ZIP temporairement désactivée pour diagnostic');
+        // Vérifier que JSZip est chargé
+        if(typeof JSZip === 'undefined'){
+          alert('Bibliothèque ZIP en cours de chargement. Veuillez réessayer dans quelques secondes.');
+          return;
+        }
+        
+        setScormZipParsing(true);
+        setScormZipFile(file);
+        
+        try {
+          const zip = await JSZip.loadAsync(file);
+          let manifest = null;
+          let scoHtmlContent = null;
+          let entryPoint = 'sco_0.html';
+          const filesToUpload = [];
+          
+          // Chercher les fichiers dans le ZIP
+          const fileNames = Object.keys(zip.files);
+          for(const filename of fileNames){
+            const zipEntry = zip.files[filename];
+            if(zipEntry.dir) continue;
+            
+            const name = filename.toLowerCase();
+            const actualName = filename.split('/').pop();
+            
+            if(name.endsWith('imsmanifest.xml')){
+              manifest = await zipEntry.async('string');
+              filesToUpload.push({name:'imsmanifest.xml', content:manifest, type:'application/xml'});
+            }
+            if(name.endsWith('.html')){
+              const content = await zipEntry.async('string');
+              filesToUpload.push({name:actualName, content:content, type:'text/html'});
+              if(content.includes('data-source')){
+                scoHtmlContent = content;
+                entryPoint = actualName;
+              }
+            }
+          }
+          
+          if(!manifest){
+            alert('Fichier imsmanifest.xml non trouvé dans le ZIP');
+            setScormZipParsing(false);
+            return;
+          }
+          
+          // Parser le manifest XML
+          const parser = new DOMParser();
+          const xmlDoc = parser.parseFromString(manifest, 'text/xml');
+          
+          // Extraire le titre
+          const titleEl = xmlDoc.querySelector('title langstring') || xmlDoc.querySelector('title');
+          const title = titleEl?.textContent?.trim() || file.name.replace('.zip','');
+          
+          // Générer un slug unique
+          const slug = title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/-+/g,'-').substring(0,50) + '-' + Date.now();
+          
+          // Détecter le type SCORM
+          const schemaVersion = xmlDoc.querySelector('schemaversion')?.textContent || '';
+          let moduleType = 'scorm12';
+          if(schemaVersion.includes('2004')) moduleType = 'scorm2004';
+          
+          // Extraire l'URL distante
+          let remoteUrl = '';
+          if(scoHtmlContent){
+            const match = scoHtmlContent.match(/data-source=["']([^"']+)["']/);
+            if(match) remoteUrl = match[1];
+          }
+          
+          // Uploader vers Supabase Storage
+          let packageUrl = '';
+          try {
+            for(const f of filesToUpload){
+              const filePath = slug + '/' + f.name;
+              const blob = new Blob([f.content], {type: f.type});
+              const result = await supabase.storage.from('scorm-dispatch').upload(filePath, blob, {
+                contentType: f.type,
+                upsert: true
+              });
+              if(result.error){
+                console.error('Upload error:', f.name, result.error);
+                if(result.error.message && result.error.message.includes('bucket')){
+                  alert('Le bucket "scorm-dispatch" n\'existe pas. Créez-le dans Supabase Storage.');
+                  break;
+                }
+              }
+            }
+            const urlResult = supabase.storage.from('scorm-dispatch').getPublicUrl(slug + '/' + entryPoint);
+            packageUrl = urlResult.data?.publicUrl || '';
+          } catch(e) {
+            console.error('Storage error:', e);
+            packageUrl = remoteUrl;
+          }
+          
+          // Mettre à jour le formulaire
+          setScormForm(prev => ({
+            ...prev,
+            title: title,
+            module_type: moduleType,
+            entry_point: entryPoint,
+            remote_url: remoteUrl,
+            package_url: packageUrl || remoteUrl
+          }));
+          
+          console.log('SCORM parsed:', {title, moduleType, entryPoint, remoteUrl, packageUrl});
+          
+        } catch(err) {
+          console.error('ZIP parse error:', err);
+          alert('Erreur lecture ZIP: ' + err.message);
+        }
+        
+        setScormZipParsing(false);
       };
 
       const load=useCallback(async()=>{
