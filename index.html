@@ -43,7 +43,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '4.0.0';
+    const APP_VERSION = '4.0.1';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -1096,29 +1096,38 @@
       };
 
       const addQuestion=async()=>{
-        if(!newQuestion.question_text||newQuestion.answers.filter(a=>a.text).length<2)return;
-        if(!newQuestion.answers.some(a=>a.is_correct)){alert('Au moins une réponse doit être correcte');return;}
+        if(!newQuestion.question_text.trim()){alert('Veuillez entrer une question');return;}
+        if(newQuestion.answers.filter(a=>a.text.trim()).length<2){alert('Veuillez entrer au moins 2 réponses');return;}
+        if(!newQuestion.answers.some(a=>a.is_correct&&a.text.trim())){alert('Veuillez cocher au moins une bonne réponse');return;}
         
-        const{data:q}=await supabase.from('quiz_questions').insert({
-          quiz_id:questionsModal.id,
-          question_text:newQuestion.question_text,
-          question_type:newQuestion.question_type,
-          sort_order:questions.length
-        }).select().single();
-        
-        if(q){
-          const answersToInsert=newQuestion.answers.filter(a=>a.text).map((a,i)=>({
-            question_id:q.id,
-            answer_text:a.text,
-            is_correct:a.is_correct,
-            sort_order:i
-          }));
-          await supabase.from('quiz_answers').insert(answersToInsert);
+        try{
+          const{data:q,error:qError}=await supabase.from('quiz_questions').insert({
+            quiz_id:questionsModal.id,
+            question_text:newQuestion.question_text.trim(),
+            question_type:newQuestion.question_type,
+            sort_order:questions.length
+          }).select().single();
           
-          const{data:fullQ}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('id',q.id).single();
-          setQuestions([...questions,fullQ]);
+          if(qError)throw qError;
+          
+          if(q){
+            const answersToInsert=newQuestion.answers.filter(a=>a.text.trim()).map((a,i)=>({
+              question_id:q.id,
+              answer_text:a.text.trim(),
+              is_correct:a.is_correct,
+              sort_order:i
+            }));
+            const{error:aError}=await supabase.from('quiz_answers').insert(answersToInsert);
+            if(aError)throw aError;
+            
+            const{data:fullQ}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('id',q.id).single();
+            setQuestions(prev=>[...prev,fullQ]);
+          }
+          setNewQuestion({question_text:'',question_type:'single',answers:[{text:'',is_correct:false},{text:'',is_correct:false}]});
+        }catch(err){
+          console.error('Erreur ajout question:',err);
+          alert('Erreur: '+err.message);
         }
-        setNewQuestion({question_text:'',question_type:'single',answers:[{text:'',is_correct:false},{text:'',is_correct:false}]});
       };
 
       const deleteQuestion=async(id)=>{
@@ -1127,13 +1136,20 @@
       };
 
       const updateAnswer=(index,field,value)=>{
-        const newAnswers=[...newQuestion.answers];
-        if(field==='is_correct'&&newQuestion.question_type==='single'){
-          newAnswers.forEach((a,i)=>a.is_correct=i===index);
-        }else{
-          newAnswers[index][field]=value;
-        }
-        setNewQuestion({...newQuestion,answers:newAnswers});
+        setNewQuestion(prev=>{
+          const newAnswers=prev.answers.map((a,i)=>{
+            if(i===index){
+              if(field==='is_correct'&&prev.question_type==='single'){
+                return {...a,is_correct:true};
+              }
+              return {...a,[field]:value};
+            }else if(field==='is_correct'&&prev.question_type==='single'){
+              return {...a,is_correct:false};
+            }
+            return {...a};
+          });
+          return {...prev,answers:newAnswers};
+        });
       };
 
       const addAnswerOption=()=>{
@@ -1236,7 +1252,7 @@
                 </div>
                 {newQuestion.answers.length<6&&<Button variant="ghost" size="sm" icon="Plus" onClick={addAnswerOption} className="mt-2">Ajouter une option</Button>}
               </div>
-              <Button icon="Plus" onClick={addQuestion} disabled={!newQuestion.question_text||newQuestion.answers.filter(a=>a.text).length<2}>Ajouter la question</Button>
+              <Button icon="Plus" onClick={addQuestion} disabled={!newQuestion.question_text.trim()||newQuestion.answers.filter(a=>a.text.trim()).length<2}>Ajouter la question</Button>
             </div>
           </div>
         </Modal>
