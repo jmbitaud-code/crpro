@@ -381,41 +381,101 @@
 
     // Dashboard
     function DashboardPage(){
-      const{isSuperAdmin,can,profile}=useAuth();
+      const{isSuperAdmin,realIsSuperAdmin,can,profile,center,viewAs}=useAuth();
       const[stats,setStats]=useState({centers:0,users:0,videos:0,playlists:0,enrollments:0,completions:0,badges:0,quizzes:0,paths:0});
       const[recentActivity,setRecentActivity]=useState([]);
       const[recentBadges,setRecentBadges]=useState([]);
       const[topLearners,setTopLearners]=useState([]);
       const[loading,setLoading]=useState(true);
+      
+      // Déterminer le center_id à utiliser (réel ou simulé)
+      const effectiveCenterId=viewAs?.center_id||center?.id;
 
       useEffect(()=>{
         const load=async()=>{
-          const queries=[
-            supabase.from('profiles').select('*',{count:'exact',head:true}),
-            supabase.from('videos').select('*',{count:'exact',head:true}),
-            supabase.from('playlists').select('*',{count:'exact',head:true}),
-            supabase.from('enrollments').select('*',{count:'exact',head:true}),
-            supabase.from('enrollments').select('*',{count:'exact',head:true}).eq('status','completed'),
-            supabase.from('quizzes').select('*',{count:'exact',head:true}),
-            supabase.from('learning_paths').select('*',{count:'exact',head:true}),
-            supabase.from('learner_badges').select('*',{count:'exact',head:true})
-          ];
-          const[{count:users},{count:videos},{count:playlists},{count:enrollments},{count:completions},{count:quizzes},{count:paths},{count:badges}]=await Promise.all(queries);
+          // Si Super Admin (sans viewAs), montrer les stats globales
+          // Sinon, filtrer par center_id
+          const isGlobal=realIsSuperAdmin&&!viewAs;
+          
+          let usersQuery=supabase.from('profiles').select('*',{count:'exact',head:true});
+          let videosQuery=supabase.from('videos').select('*',{count:'exact',head:true});
+          let playlistsQuery=supabase.from('playlists').select('*',{count:'exact',head:true});
+          let enrollmentsQuery=supabase.from('enrollments').select('*',{count:'exact',head:true});
+          let completionsQuery=supabase.from('enrollments').select('*',{count:'exact',head:true}).eq('status','completed');
+          let quizzesQuery=supabase.from('quizzes').select('*',{count:'exact',head:true});
+          let pathsQuery=supabase.from('learning_paths').select('*',{count:'exact',head:true});
+          let badgesQuery=supabase.from('learner_badges').select('*',{count:'exact',head:true});
+          
+          // Filtrer par centre si pas global
+          if(!isGlobal&&effectiveCenterId){
+            usersQuery=usersQuery.eq('center_id',effectiveCenterId);
+            playlistsQuery=playlistsQuery.eq('center_id',effectiveCenterId);
+            // Pour enrollments, filtrer via les playlists du centre ou via learner_id
+            // On va filtrer les enrollments via une sous-requête
+          }
+          
+          const[{count:users},{count:videos},{count:playlists},{count:enrollments},{count:completions},{count:quizzes},{count:paths},{count:badges}]=await Promise.all([
+            usersQuery,videosQuery,playlistsQuery,enrollmentsQuery,completionsQuery,quizzesQuery,pathsQuery,badgesQuery
+          ]);
+          
           let centers=1;
-          if(isSuperAdmin){const{count}=await supabase.from('centers').select('*',{count:'exact',head:true});centers=count||0;}
-          setStats({centers,users:users||0,videos:videos||0,playlists:playlists||0,enrollments:enrollments||0,completions:completions||0,quizzes:quizzes||0,paths:paths||0,badges:badges||0});
+          if(realIsSuperAdmin&&!viewAs){
+            const{count}=await supabase.from('centers').select('*',{count:'exact',head:true});
+            centers=count||0;
+          }
           
-          // Activité récente (inscriptions et complétions)
-          const{data:recent}=await supabase.from('enrollments').select('*,profiles:learner_id(first_name,last_name),playlists:playlist_id(title)').order('created_at',{ascending:false}).limit(5);
-          setRecentActivity(recent||[]);
+          // Filtrer les stats pour le centre si nécessaire
+          let filteredEnrollments=enrollments||0;
+          let filteredCompletions=completions||0;
+          let filteredBadges=badges||0;
           
-          // Badges récemment obtenus
-          const{data:rBadges}=await supabase.from('learner_badges').select('*,badges(*),profiles:learner_id(first_name,last_name)').order('earned_at',{ascending:false}).limit(5);
-          setRecentBadges(rBadges||[]);
+          if(!isGlobal&&effectiveCenterId){
+            // Compter les enrollments des apprenants du centre
+            const{data:centerLearners}=await supabase.from('profiles').select('id').eq('center_id',effectiveCenterId).eq('role','learner');
+            const learnerIds=(centerLearners||[]).map(l=>l.id);
+            if(learnerIds.length>0){
+              const{count:ce}=await supabase.from('enrollments').select('*',{count:'exact',head:true}).in('learner_id',learnerIds);
+              const{count:cc}=await supabase.from('enrollments').select('*',{count:'exact',head:true}).in('learner_id',learnerIds).eq('status','completed');
+              const{count:cb}=await supabase.from('learner_badges').select('*',{count:'exact',head:true}).in('learner_id',learnerIds);
+              filteredEnrollments=ce||0;
+              filteredCompletions=cc||0;
+              filteredBadges=cb||0;
+            }else{
+              filteredEnrollments=0;filteredCompletions=0;filteredBadges=0;
+            }
+          }
           
-          // Top apprenants
+          setStats({
+            centers,
+            users:users||0,
+            videos:videos||0,
+            playlists:playlists||0,
+            enrollments:filteredEnrollments,
+            completions:filteredCompletions,
+            quizzes:quizzes||0,
+            paths:paths||0,
+            badges:filteredBadges
+          });
+          
+          // Activité récente (filtrée par centre si nécessaire)
+          let recentQuery=supabase.from('enrollments').select('*,profiles:learner_id(first_name,last_name,center_id),playlists:playlist_id(title)').order('created_at',{ascending:false}).limit(10);
+          const{data:recent}=await recentQuery;
+          // Filtrer côté client si pas global
+          const filteredRecent=isGlobal?recent:(recent||[]).filter(r=>r.profiles?.center_id===effectiveCenterId);
+          setRecentActivity(filteredRecent.slice(0,5));
+          
+          // Badges récemment obtenus (filtrés par centre)
+          let badgesRecentQuery=supabase.from('learner_badges').select('*,badges(*),profiles:learner_id(first_name,last_name,center_id)').order('earned_at',{ascending:false}).limit(10);
+          const{data:rBadges}=await badgesRecentQuery;
+          const filteredRBadges=isGlobal?rBadges:(rBadges||[]).filter(b=>b.profiles?.center_id===effectiveCenterId);
+          setRecentBadges(filteredRBadges.slice(0,5));
+          
+          // Top apprenants (filtrés par centre)
           const{data:pts}=await supabase.from('learner_points').select('learner_id,points');
-          const{data:profs}=await supabase.from('profiles').select('id,first_name,last_name').eq('role','learner');
+          let profsQuery=supabase.from('profiles').select('id,first_name,last_name,center_id').eq('role','learner');
+          if(!isGlobal&&effectiveCenterId)profsQuery=profsQuery.eq('center_id',effectiveCenterId);
+          const{data:profs}=await profsQuery;
+          
           const pointsMap={};
           (pts||[]).forEach(p=>{pointsMap[p.learner_id]=(pointsMap[p.learner_id]||0)+p.points;});
           const ranked=(profs||[]).map(p=>({...p,points:pointsMap[p.id]||0})).sort((a,b)=>b.points-a.points).slice(0,5);
@@ -424,21 +484,21 @@
           setLoading(false);
         };
         load();
-      },[isSuperAdmin]);
+      },[realIsSuperAdmin,viewAs,effectiveCenterId]);
 
       const colorClasses={gold:'bg-yellow-500',silver:'bg-gray-400',bronze:'bg-orange-600',purple:'bg-purple-500',blue:'bg-blue-500'};
 
       if(loading)return<Loading text="Chargement..."/>;
       
       const cards=[];
-      if(can('manage_centers'))cards.push({label:'Centres',value:stats.centers,icon:'Building2',color:'text-red-400'});
-      if(can('manage_users'))cards.push({label:'Utilisateurs',value:stats.users,icon:'Users',color:'text-blue-400'});
-      if(can('manage_videos'))cards.push({label:'Vidéos',value:stats.videos,icon:'Film',color:'text-purple-400'});
-      if(can('manage_playlists'))cards.push({label:'Cours',value:stats.playlists,icon:'BookOpen',color:'text-green-400'});
-      if(can('manage_playlists'))cards.push({label:'Parcours',value:stats.paths,icon:'Map',color:'text-cyan-400'});
-      if(can('manage_enrollments'))cards.push({label:'Inscriptions',value:stats.enrollments,icon:'UserPlus',color:'text-yellow-400'});
-      if(can('manage_enrollments'))cards.push({label:'Complétés',value:stats.completions,icon:'CheckCircle',color:'text-emerald-400'});
-      if(can('manage_playlists'))cards.push({label:'Badges délivrés',value:stats.badges,icon:'Award',color:'text-amber-400'});
+      if(can('manage_centers')&&!viewAs)cards.push({label:'Centres',value:stats.centers,icon:'Building2',color:'text-red-400'});
+      if(can('manage_users')||viewAs)cards.push({label:'Utilisateurs',value:stats.users,icon:'Users',color:'text-blue-400'});
+      if(can('manage_videos')&&!viewAs)cards.push({label:'Vidéos',value:stats.videos,icon:'Film',color:'text-purple-400'});
+      if(can('manage_playlists')||viewAs)cards.push({label:'Cours',value:stats.playlists,icon:'BookOpen',color:'text-green-400'});
+      if(can('manage_playlists')||viewAs)cards.push({label:'Parcours',value:stats.paths,icon:'Map',color:'text-cyan-400'});
+      if(can('manage_enrollments')||viewAs)cards.push({label:'Inscriptions',value:stats.enrollments,icon:'UserPlus',color:'text-yellow-400'});
+      if(can('manage_enrollments')||viewAs)cards.push({label:'Complétés',value:stats.completions,icon:'CheckCircle',color:'text-emerald-400'});
+      if((can('manage_playlists')||viewAs)&&!viewAs)cards.push({label:'Badges délivrés',value:stats.badges,icon:'Award',color:'text-amber-400'});
       
       const completionRate=stats.enrollments>0?Math.round((stats.completions/stats.enrollments)*100):0;
       
@@ -2769,15 +2829,23 @@
 
     // Leaderboard Page
     function LeaderboardPage(){
-      const{user}=useAuth();
+      const{user,center,viewAs}=useAuth();
       const[leaderboard,setLeaderboard]=useState([]);
       const[loading,setLoading]=useState(true);
       const[myRank,setMyRank]=useState(null);
+      
+      // Utiliser le center_id effectif (réel ou simulé)
+      const effectiveCenterId=viewAs?.center_id||center?.id;
 
       useEffect(()=>{
         const load=async()=>{
-          // Calculer le classement manuellement
-          const{data:profiles}=await supabase.from('profiles').select('id,first_name,last_name').eq('role','learner');
+          // Filtrer par centre
+          let profilesQuery=supabase.from('profiles').select('id,first_name,last_name,center_id').eq('role','learner');
+          if(effectiveCenterId){
+            profilesQuery=profilesQuery.eq('center_id',effectiveCenterId);
+          }
+          const{data:profiles}=await profilesQuery;
+          
           const{data:points}=await supabase.from('learner_points').select('learner_id,points');
           const{data:badges}=await supabase.from('learner_badges').select('learner_id');
           
@@ -2798,12 +2866,12 @@
           setLoading(false);
         };
         load();
-      },[user.id]);
+      },[user.id,effectiveCenterId]);
 
       if(loading)return<Loading/>;
 
       return<div>
-        <h1 className="text-2xl font-bold mb-6">Classement</h1>
+        <h1 className="text-2xl font-bold mb-6">Classement{center?.name?` - ${center.name}`:''}</h1>
         
         {myRank&&(
           <Card className="p-4 mb-6 bg-indigo-600/20 border-indigo-500">
@@ -2819,7 +2887,7 @@
 
         <Card>
           <div className="divide-y divide-gray-700">
-            {leaderboard.map((l,i)=>(
+            {leaderboard.length===0?<p className="p-4 text-gray-500 text-center">Aucun apprenant dans ce centre</p>:leaderboard.map((l,i)=>(
               <div key={l.id} className={`flex items-center gap-4 p-4 ${l.id===user.id?'bg-indigo-600/10':''}`}>
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${i===0?'bg-yellow-500':i===1?'bg-gray-400':i===2?'bg-orange-600':'bg-gray-700'}`}>
                   {i<3?<Icon name={i===0?'Crown':'Medal'} size={20}/>:l.rank}
