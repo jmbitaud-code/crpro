@@ -44,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.4.4';
+    const APP_VERSION = '6.4.5';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -2300,27 +2300,34 @@
       // Détecter si c'est un dispatch Codes Rousseau
       const isDispatch = module.metadata?.dispatch || module.package_url?.includes('pluginfile.php') || module.package_url?.includes('codesrousseau');
       const remoteUrl = module.metadata?.remote_url || module.package_url;
+      const lmsOrigin = window.location.origin; // https://www.crpro.app
       
       // Générer le HTML du dispatch dynamiquement (sans template literals pour éviter les conflits)
-      const generateDispatchHtml = (title, url) => {
+      const generateDispatchHtml = (title, url, origin) => {
+        // Ajouter lms_origin à l'URL si c'est Codes Rousseau
+        var urlWithOrigin = url;
+        if(url.includes('codesrousseau')){
+          urlWithOrigin = url + (url.includes('?') ? '&' : '?') + 'lms_origin=' + encodeURIComponent(origin);
+        }
+        
         return '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>' + title + '</title>' +
           '<style>html,body,iframe{margin:0;padding:0;overflow:hidden;width:100%;height:100%}' +
           '#wrapper{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;background:#1f2937;color:white;font-family:system-ui,sans-serif}' +
           'iframe+#wrapper{display:none}.spinner{width:40px;height:40px;border:3px solid #4f46e5;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:16px}' +
           '@keyframes spin{to{transform:rotate(360deg)}}</style>' +
-          '<script>var API=window.parent.API;var API_1484_11=window.parent.API_1484_11;' +
-          'function init(){console.log("Dispatch init");' +
+          '<script>var API=window.parent.API;var API_1484_11=window.parent.API_1484_11;var LMS_ORIGIN="' + origin + '";' +
+          'function init(){console.log("Dispatch init - LMS Origin:",LMS_ORIGIN);' +
           'var url="https://lms.codesrousseau.fr/mod/scormremote/amd/src/layer2.js?cacherev="+Math.floor(Date.now()/1000/60/5);' +
           'var script=document.createElement("script");script.src=url;' +
           'script.onerror=function(){loadContentDirectly()};document.head.appendChild(script)}' +
           'function loadContentDirectly(){var iframe=document.createElement("iframe");' +
-          'iframe.src="' + url + '";iframe.style.cssText="width:100%;height:100%;border:none";' +
+          'iframe.src="' + urlWithOrigin + '";iframe.style.cssText="width:100%;height:100%;border:none";' +
           'document.body.insertBefore(iframe,document.body.firstChild)}<\/script></head>' +
-          '<body onload="init()" data-source="' + url + '" data-clientid="">' +
+          '<body onload="init()" data-source="' + urlWithOrigin + '" data-clientid="' + origin + '" data-lms-origin="' + origin + '">' +
           '<div id="wrapper"><div class="spinner"></div><p>Chargement du module...</p></div></body></html>';
       };
       
-      const dispatchHtml = isDispatch ? generateDispatchHtml(module.title, remoteUrl) : null;
+      const dispatchHtml = isDispatch ? generateDispatchHtml(module.title, remoteUrl, lmsOrigin) : null;
       
       // URL pour les modules SCORM standards (non-dispatch)
       const scormUrl = !isDispatch 
