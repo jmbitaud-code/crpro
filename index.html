@@ -24,7 +24,8 @@
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <!-- JSZip temporairement désactivé pour test -->
+  <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script> -->
   
   <style>
     *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#111827}
@@ -44,7 +45,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.5.0';
+    const APP_VERSION = '6.5.2-test';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -1037,118 +1038,9 @@
       const scormFileRef=useRef(null);
       const scormZipRef=useRef(null);
 
-      // Parser un fichier ZIP SCORM Dispatch et uploader vers Supabase Storage
+      // Parser un fichier ZIP SCORM Dispatch - TEMPORAIREMENT DÉSACTIVÉ
       const parseScormZip=async(file)=>{
-        setScormZipParsing(true);
-        setScormZipFile(file);
-        try {
-          const zip=await JSZip.loadAsync(file);
-          let manifest=null;
-          let scoHtml=null;
-          let scoHtmlContent=null;
-          let entryPoint='sco_0.html';
-          const filesToUpload=[];
-          
-          // Chercher les fichiers dans le ZIP
-          for(const [filename,zipEntry] of Object.entries(zip.files)){
-            if(zipEntry.dir)continue;
-            const name=filename.toLowerCase();
-            const actualName=filename.split('/').pop();
-            
-            if(name.endsWith('imsmanifest.xml')){
-              manifest=await zipEntry.async('string');
-              filesToUpload.push({name:'imsmanifest.xml',content:manifest,type:'application/xml'});
-            }
-            if(name.endsWith('.html')){
-              const content=await zipEntry.async('string');
-              filesToUpload.push({name:actualName,content:content,type:'text/html'});
-              if(content.includes('data-source')){
-                scoHtml=actualName;
-                scoHtmlContent=content;
-                entryPoint=actualName;
-              }
-            }
-          }
-          
-          if(!manifest){
-            alert('Fichier imsmanifest.xml non trouvé dans le ZIP');
-            setScormZipParsing(false);
-            return;
-          }
-          
-          // Parser le manifest XML
-          const parser=new DOMParser();
-          const xmlDoc=parser.parseFromString(manifest,'text/xml');
-          
-          // Extraire le titre
-          const titleEl=xmlDoc.querySelector('title langstring')||xmlDoc.querySelector('title');
-          const title=titleEl?.textContent?.trim()||file.name.replace('.zip','');
-          
-          // Générer un slug unique pour le dossier
-          const slug=title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/-+/g,'-').substring(0,50)+'-'+Date.now();
-          
-          // Détecter le type SCORM
-          const schemaVersion=xmlDoc.querySelector('schemaversion')?.textContent||'';
-          let moduleType='scorm12';
-          if(schemaVersion.includes('2004'))moduleType='scorm2004';
-          else if(schemaVersion.includes('1.2'))moduleType='scorm12';
-          
-          // Extraire l'URL distante du fichier SCO HTML
-          let remoteUrl='';
-          if(scoHtmlContent){
-            const match=scoHtmlContent.match(/data-source=["']([^"']+)["']/);
-            if(match)remoteUrl=match[1];
-          }
-          
-          // Uploader les fichiers vers Supabase Storage
-          console.log('Uploading SCORM files to Supabase Storage...');
-          let uploadSuccess=true;
-          for(const f of filesToUpload){
-            const filePath=`${slug}/${f.name}`;
-            const blob=new Blob([f.content],{type:f.type});
-            const{error}=await supabase.storage.from('scorm-dispatch').upload(filePath,blob,{
-              contentType:f.type,
-              upsert:true
-            });
-            if(error){
-              console.error('Upload error for',f.name,':',error);
-              if(error.message.includes('bucket')&&error.message.includes('not found')){
-                alert('Erreur: Le bucket "scorm-dispatch" n\'existe pas.\nExécutez le script scorm_storage_bucket.sql dans Supabase.');
-                uploadSuccess=false;
-                break;
-              }
-            }else{
-              console.log('Uploaded:',filePath);
-            }
-          }
-          
-          if(!uploadSuccess){
-            setScormZipParsing(false);
-            return;
-          }
-          
-          // Construire l'URL publique
-          const{data:urlData}=supabase.storage.from('scorm-dispatch').getPublicUrl(`${slug}/${entryPoint}`);
-          const packageUrl=urlData?.publicUrl||'';
-          
-          console.log('SCORM package URL:',packageUrl);
-          
-          // Mettre à jour le formulaire
-          setScormForm(prev=>({
-            ...prev,
-            title,
-            module_type:moduleType,
-            entry_point:entryPoint,
-            remote_url:remoteUrl,
-            package_url:packageUrl
-          }));
-          
-          console.log('SCORM ZIP parsed and uploaded:',{title,moduleType,entryPoint,remoteUrl,packageUrl});
-        } catch(err) {
-          console.error('Erreur parsing ZIP:',err);
-          alert('Erreur lors de la lecture du ZIP: '+err.message);
-        }
-        setScormZipParsing(false);
+        alert('Fonctionnalité ZIP temporairement désactivée pour diagnostic');
       };
 
       const load=useCallback(async()=>{
