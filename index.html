@@ -24,6 +24,7 @@
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   
   <style>
     *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#111827}
@@ -43,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.3.0';
+    const APP_VERSION '6.4.0';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -1027,11 +1028,84 @@
       const[uploading,setUploading]=useState(false);
       const[scormModal,setScormModal]=useState(false);
       const[scormEditing,setScormEditing]=useState(null);
-      const[scormForm,setScormForm]=useState({title:'',description:'',module_type:'scorm2004',package_url:'',entry_point:'index.html',category:'',version:''});
+      const[scormForm,setScormForm]=useState({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'sco_0.html',category:'',version:'',remote_url:''});
       const[scormSaving,setScormSaving]=useState(false);
+      const[scormZipParsing,setScormZipParsing]=useState(false);
+      const[scormZipFile,setScormZipFile]=useState(null);
       const fileInputRef=useRef(null);
       const attachmentFileRef=useRef(null);
       const scormFileRef=useRef(null);
+      const scormZipRef=useRef(null);
+
+      // Parser un fichier ZIP SCORM Dispatch
+      const parseScormZip=async(file)=>{
+        setScormZipParsing(true);
+        setScormZipFile(file);
+        try {
+          const zip=await JSZip.loadAsync(file);
+          let manifest=null;
+          let scoHtml=null;
+          let entryPoint='sco_0.html';
+          
+          // Chercher les fichiers dans le ZIP
+          for(const [filename,zipEntry] of Object.entries(zip.files)){
+            const name=filename.toLowerCase();
+            if(name.endsWith('imsmanifest.xml')){
+              manifest=await zipEntry.async('string');
+            }
+            if(name.endsWith('.html')&&!zipEntry.dir){
+              const content=await zipEntry.async('string');
+              if(content.includes('data-source')){
+                scoHtml=content;
+                entryPoint=filename.split('/').pop();
+              }
+            }
+          }
+          
+          if(!manifest){
+            alert('Fichier imsmanifest.xml non trouvé dans le ZIP');
+            setScormZipParsing(false);
+            return;
+          }
+          
+          // Parser le manifest XML
+          const parser=new DOMParser();
+          const xmlDoc=parser.parseFromString(manifest,'text/xml');
+          
+          // Extraire le titre
+          const titleEl=xmlDoc.querySelector('title langstring')||xmlDoc.querySelector('title');
+          const title=titleEl?.textContent?.trim()||file.name.replace('.zip','');
+          
+          // Détecter le type SCORM
+          const schemaVersion=xmlDoc.querySelector('schemaversion')?.textContent||'';
+          let moduleType='scorm12';
+          if(schemaVersion.includes('2004'))moduleType='scorm2004';
+          else if(schemaVersion.includes('1.2'))moduleType='scorm12';
+          
+          // Extraire l'URL distante du fichier SCO HTML
+          let remoteUrl='';
+          if(scoHtml){
+            const match=scoHtml.match(/data-source=["']([^"']+)["']/);
+            if(match)remoteUrl=match[1];
+          }
+          
+          // Mettre à jour le formulaire
+          setScormForm(prev=>({
+            ...prev,
+            title,
+            module_type:moduleType,
+            entry_point:entryPoint,
+            remote_url:remoteUrl,
+            package_url:remoteUrl||prev.package_url // Utiliser l'URL distante si disponible
+          }));
+          
+          console.log('SCORM ZIP parsed:',{title,moduleType,entryPoint,remoteUrl});
+        } catch(err) {
+          console.error('Erreur parsing ZIP:',err);
+          alert('Erreur lors de la lecture du ZIP: '+err.message);
+        }
+        setScormZipParsing(false);
+      };
 
       const load=useCallback(async()=>{
         // Charger les vidéos
@@ -1052,7 +1126,7 @@
       },[isSuperAdmin,center?.id]);
       useEffect(()=>{load();},[load]);
       const resetForm=()=>setForm({title:'',vimeo_id:'',duration:'',category:'',description:'',sort_order:'',tags:'',theme:'',thumbnail_url:''});
-      const resetScormForm=()=>setScormForm({title:'',description:'',module_type:'scorm2004',package_url:'',entry_point:'index.html',category:'',version:''});
+      const resetScormForm=()=>{setScormForm({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'sco_0.html',category:'',version:'',remote_url:''});setScormZipFile(null);};
 
       // Gestion SCORM
       const handleScormSave=async()=>{
@@ -1062,11 +1136,11 @@
           description:scormForm.description||null,
           module_type:scormForm.module_type,
           package_url:scormForm.package_url||null,
-          entry_point:scormForm.entry_point||'index.html',
+          entry_point:scormForm.entry_point||'sco_0.html',
           category:scormForm.category||null,
-          version:scormForm.version||null,
           center_id:center?.id||null,
-          created_by:profile?.id
+          created_by:profile?.id,
+          metadata:scormForm.remote_url?{remote_url:scormForm.remote_url,dispatch:true}:{}
         };
         try {
           if(scormEditing){
@@ -1079,7 +1153,8 @@
           resetScormForm();
           setScormEditing(null);
         } catch(e) {
-          alert('Erreur: Les tables SCORM ne sont pas encore créées. Exécutez le script scorm_migration.sql dans Supabase.');
+          console.error('SCORM save error:',e);
+          alert('Erreur: Vérifiez que les tables SCORM sont créées. Exécutez scorm_migration.sql si nécessaire.');
         }
         setScormSaving(false);
       };
@@ -1359,22 +1434,58 @@
         {/* Modal SCORM */}
         <Modal isOpen={scormModal} onClose={()=>{setScormModal(false);resetScormForm();setScormEditing(null);}} title={scormEditing?'Modifier le module SCORM':'Ajouter un module SCORM'} size="lg">
           <div className="space-y-4">
-            <Alert type="info">
-              <p className="text-sm">Les modules SCORM doivent être hébergés sur un serveur externe (ex: AWS S3, Cloudflare R2) avec CORS activé. Entrez l'URL du package décompressé.</p>
-            </Alert>
+            {/* Zone d'upload ZIP */}
+            {!scormEditing&&(
+              <div className="border-2 border-dashed border-gray-600 rounded-lg p-6 text-center hover:border-indigo-500 transition-colors">
+                <input type="file" ref={scormZipRef} onChange={e=>{if(e.target.files[0])parseScormZip(e.target.files[0]);}} accept=".zip" className="hidden"/>
+                {scormZipParsing?(
+                  <div className="flex items-center justify-center gap-3">
+                    <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"/>
+                    <span>Analyse du ZIP...</span>
+                  </div>
+                ):scormZipFile?(
+                  <div>
+                    <div className="w-12 h-12 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-2">
+                      <Icon name="CheckCircle" size={24} className="text-green-400"/>
+                    </div>
+                    <p className="font-medium text-green-400">✅ {scormZipFile.name}</p>
+                    <p className="text-sm text-gray-400 mt-1">Informations extraites automatiquement</p>
+                    <Button variant="ghost" size="sm" className="mt-2" onClick={()=>{setScormZipFile(null);scormZipRef.current.value='';}}>Changer de fichier</Button>
+                  </div>
+                ):(
+                  <div onClick={()=>scormZipRef.current?.click()} className="cursor-pointer">
+                    <Icon name="Package" size={48} className="mx-auto text-gray-500 mb-3"/>
+                    <p className="font-medium">Glissez un fichier ZIP Dispatch ici</p>
+                    <p className="text-sm text-gray-400 mt-1">ou cliquez pour parcourir</p>
+                    <p className="text-xs text-gray-500 mt-2">Le titre et l'URL seront extraits automatiquement</p>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {scormZipFile&&scormForm.remote_url&&(
+              <Alert type="success">
+                <p className="text-sm"><strong>URL distante détectée :</strong> Le contenu sera chargé depuis le serveur Codes Rousseau.</p>
+              </Alert>
+            )}
+            
             <Input label="Titre *" value={scormForm.title} onChange={e=>setScormForm({...scormForm,title:e.target.value})}/>
+            
             <div className="grid grid-cols-2 gap-4">
               <Select label="Type de module" value={scormForm.module_type} onChange={e=>setScormForm({...scormForm,module_type:e.target.value})} options={[{value:'scorm12',label:'SCORM 1.2'},{value:'scorm2004',label:'SCORM 2004'},{value:'xapi',label:'xAPI (Tin Can)'},{value:'cmi5',label:'cmi5'}]}/>
-              <Input label="Version" value={scormForm.version} onChange={e=>setScormForm({...scormForm,version:e.target.value})} placeholder="1.0"/>
+              <Input label="Point d'entrée" value={scormForm.entry_point} onChange={e=>setScormForm({...scormForm,entry_point:e.target.value})} placeholder="sco_0.html"/>
             </div>
-            <Input label="URL du package *" value={scormForm.package_url} onChange={e=>setScormForm({...scormForm,package_url:e.target.value})} placeholder="https://mon-bucket.s3.amazonaws.com/scorm/module1/"/>
-            <Input label="Point d'entrée" value={scormForm.entry_point} onChange={e=>setScormForm({...scormForm,entry_point:e.target.value})} placeholder="index.html"/>
-            <Input label="Catégorie" value={scormForm.category} onChange={e=>setScormForm({...scormForm,category:e.target.value})}/>
+            
+            <Input label="URL du contenu distant *" value={scormForm.package_url} onChange={e=>setScormForm({...scormForm,package_url:e.target.value})} placeholder="https://lms.codesrousseau.fr/pluginfile.php/..."/>
+            
+            <Input label="Catégorie" value={scormForm.category} onChange={e=>setScormForm({...scormForm,category:e.target.value})} placeholder="Ex: Formation Moto, Code de la route..."/>
+            
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
-              <textarea value={scormForm.description} onChange={e=>setScormForm({...scormForm,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/>
+              <textarea value={scormForm.description} onChange={e=>setScormForm({...scormForm,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Description optionnelle du module"/>
             </div>
-            <div className="flex justify-end gap-3">
+            
+            <div className="flex justify-end gap-3 pt-2">
               <Button variant="secondary" onClick={()=>{setScormModal(false);resetScormForm();setScormEditing(null);}}>Annuler</Button>
               <Button onClick={handleScormSave} loading={scormSaving} disabled={!scormForm.title||!scormForm.package_url}>Enregistrer</Button>
             </div>
