@@ -44,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.4.3';
+    const APP_VERSION = '6.4.4';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -1142,20 +1142,28 @@
           created_by:profile?.id,
           metadata:scormForm.remote_url?{remote_url:scormForm.remote_url,dispatch:true}:{}
         };
-        try {
-          if(scormEditing){
-            await supabase.from('scorm_modules').update(payload).eq('id',scormEditing.id);
-          }else{
-            await supabase.from('scorm_modules').insert(payload);
-          }
-          await load();
-          setScormModal(false);
-          resetScormForm();
-          setScormEditing(null);
-        } catch(e) {
-          console.error('SCORM save error:',e);
-          alert('Erreur: Vérifiez que les tables SCORM sont créées. Exécutez scorm_migration.sql si nécessaire.');
+        
+        console.log('Saving SCORM module:', payload);
+        
+        let result;
+        if(scormEditing){
+          result = await supabase.from('scorm_modules').update(payload).eq('id',scormEditing.id);
+        }else{
+          result = await supabase.from('scorm_modules').insert(payload);
         }
+        
+        if(result.error){
+          console.error('SCORM save error:', result.error);
+          alert('Erreur lors de l\'enregistrement: ' + result.error.message + '\n\nVérifiez que les tables SCORM sont créées.');
+          setScormSaving(false);
+          return;
+        }
+        
+        console.log('SCORM module saved successfully');
+        await load();
+        setScormModal(false);
+        resetScormForm();
+        setScormEditing(null);
         setScormSaving(false);
       };
       
