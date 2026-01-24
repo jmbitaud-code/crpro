@@ -44,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.6.0';
+    const APP_VERSION = '6.6.1';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -1075,24 +1075,30 @@
               
               // Injecter lms_origin dans le fichier HTML pour Codes Rousseau
               if(content.includes('layer2.js') || content.includes('data-source')){
-                // Ajouter lms_origin à l'URL de layer2.js
+                
+                // Méthode 1: Définir window.lms_origin DANS le script de chargement de layer2.js
+                // Chercher le début du script et injecter la définition
+                content = content.replace(
+                  "var url = 'https://lms.codesrousseau.fr",
+                  "window.lms_origin = '" + lmsOrigin + "'; window.LMS_ORIGIN = '" + lmsOrigin + "'; var url = 'https://lms.codesrousseau.fr"
+                );
+                
+                // Méthode 2: Ajouter lms_origin à l'URL de layer2.js
                 content = content.replace(
                   /layer2\.js\?cacherev=/g,
                   'layer2.js?lms_origin=' + encodeURIComponent(lmsOrigin) + '&cacherev='
                 );
                 
-                // Ajouter data-clientid si vide
+                // Méthode 3: Ajouter data-clientid et data-lms-origin au body
                 content = content.replace(
                   'data-clientid=""',
-                  'data-clientid="' + lmsOrigin + '"'
+                  'data-clientid="' + lmsOrigin + '" data-lms-origin="' + lmsOrigin + '"'
                 );
-                
-                // Injecter window.lms_origin comme variable globale AVANT tout autre script
-                const scriptInject = '<scr'+'ipt>window.lms_origin="'+lmsOrigin+'";window.LMS_ORIGIN="'+lmsOrigin+'";</scr'+'ipt>';
-                content = content.replace('<he'+'ad>', '<he'+'ad>' + scriptInject);
                 
                 scoHtmlContent = content;
                 entryPoint = actualName;
+                
+                console.log('Modified HTML with lms_origin injection');
               }
               
               filesToUpload.push({name:actualName, content:content, type:'text/html; charset=utf-8'});
