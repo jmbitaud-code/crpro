@@ -44,12 +44,16 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.6.1';
+    const APP_VERSION = '6.6.2';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
       auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}
     });
+    
+    // Exposer lms_origin globalement pour SCORM Dispatch (Codes Rousseau)
+    window.lms_origin = window.location.origin;
+    window.LMS_ORIGIN = window.location.origin;
 
     const ROLE_LABELS={super_admin:'Super Admin',center_admin:'Admin Centre',trainer:'Formateur',learner:'Apprenant'};
     const ROLE_COLORS={super_admin:'bg-red-500',center_admin:'bg-purple-500',trainer:'bg-green-500',learner:'bg-gray-500'};
@@ -2163,6 +2167,18 @@
       const[cmiData,setCmiData]=useState({});
       const[status,setStatus]=useState('not attempted');
       const[score,setScore]=useState(null);
+      
+      // Exposer lms_origin sur window pour que layer2.js puisse le trouver
+      useEffect(() => {
+        const origin = window.location.origin;
+        window.lms_origin = origin;
+        window.LMS_ORIGIN = origin;
+        console.log('Exposed lms_origin on window:', origin);
+        
+        return () => {
+          // Cleanup optionnel
+        };
+      }, []);
       
       // Initialiser l'API SCORM
       useEffect(()=>{
