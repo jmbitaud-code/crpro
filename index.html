@@ -44,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.5.3';
+    const APP_VERSION = '6.5.5';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -1048,6 +1048,8 @@
         setScormZipParsing(true);
         setScormZipFile(file);
         
+        const lmsOrigin = window.location.origin; // https://www.crpro.app
+        
         try {
           const zip = await JSZip.loadAsync(file);
           let manifest = null;
@@ -1069,12 +1071,32 @@
               filesToUpload.push({name:'imsmanifest.xml', content:manifest, type:'application/xml'});
             }
             if(name.endsWith('.html')){
-              const content = await zipEntry.async('string');
-              filesToUpload.push({name:actualName, content:content, type:'text/html'});
-              if(content.includes('data-source')){
+              let content = await zipEntry.async('string');
+              
+              // Injecter lms_origin dans le fichier HTML pour Codes Rousseau
+              if(content.includes('layer2.js') || content.includes('data-source')){
+                // Ajouter lms_origin à l'URL de layer2.js
+                content = content.replace(
+                  /layer2\.js\?cacherev=/g,
+                  'layer2.js?lms_origin=' + encodeURIComponent(lmsOrigin) + '&cacherev='
+                );
+                
+                // Ajouter data-clientid si vide
+                content = content.replace(
+                  'data-clientid=""',
+                  'data-clientid="' + lmsOrigin + '"'
+                );
+                
+                // Ajouter un script pour définir lms_origin globalement
+                const openHead = String.fromCharCode(60) + 'head' + String.fromCharCode(62);
+                const lmsOriginScript = String.fromCharCode(60) + 'script' + String.fromCharCode(62) + 'window.lms_origin="' + lmsOrigin + '";window.LMS_ORIGIN="' + lmsOrigin + '";' + String.fromCharCode(60) + '/script' + String.fromCharCode(62);
+                content = content.replace(openHead, openHead + lmsOriginScript);
+                
                 scoHtmlContent = content;
                 entryPoint = actualName;
               }
+              
+              filesToUpload.push({name:actualName, content:content, type:'text/html; charset=utf-8'});
             }
           }
           
@@ -1110,6 +1132,7 @@
           // Uploader vers Supabase Storage
           let packageUrl = '';
           try {
+            console.log('Uploading modified SCORM files with lms_origin:', lmsOrigin);
             for(const f of filesToUpload){
               const filePath = slug + '/' + f.name;
               const blob = new Blob([f.content], {type: f.type});
@@ -1123,6 +1146,8 @@
                   alert('Le bucket "scorm-dispatch" n\'existe pas. Créez-le dans Supabase Storage.');
                   break;
                 }
+              } else {
+                console.log('Uploaded:', filePath);
               }
             }
             const urlResult = supabase.storage.from('scorm-dispatch').getPublicUrl(slug + '/' + entryPoint);
@@ -1142,7 +1167,7 @@
             package_url: packageUrl || remoteUrl
           }));
           
-          console.log('SCORM parsed:', {title, moduleType, entryPoint, remoteUrl, packageUrl});
+          console.log('SCORM parsed with lms_origin injection:', {title, moduleType, entryPoint, remoteUrl, packageUrl, lmsOrigin});
           
         } catch(err) {
           console.error('ZIP parse error:', err);
