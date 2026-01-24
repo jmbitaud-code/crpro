@@ -24,7 +24,7 @@
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" async></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   
   <style>
     *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#111827}
@@ -44,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.5.5';
+    const APP_VERSION = '6.5.7';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -1086,11 +1086,6 @@
                   'data-clientid=""',
                   'data-clientid="' + lmsOrigin + '"'
                 );
-                
-                // Ajouter un script pour définir lms_origin globalement
-                const openHead = String.fromCharCode(60) + 'head' + String.fromCharCode(62);
-                const lmsOriginScript = String.fromCharCode(60) + 'script' + String.fromCharCode(62) + 'window.lms_origin="' + lmsOrigin + '";window.LMS_ORIGIN="' + lmsOrigin + '";' + String.fromCharCode(60) + '/script' + String.fromCharCode(62);
-                content = content.replace(openHead, openHead + lmsOriginScript);
                 
                 scoHtmlContent = content;
                 entryPoint = actualName;
