@@ -44,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.6.5';
+    const APP_VERSION = '6.6.6';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -2388,41 +2388,21 @@
         };
       },[module.id,enrollmentId,user.id,cmiData,onComplete]);
       
-      // L'URL du module SCORM - utiliser srcDoc pour contourner le Content-Type
-      const [scormHtml, setScormHtml] = useState(null);
-      
-      useEffect(() => {
-        const loadScormContent = async () => {
-          try {
-            // Récupérer le contenu HTML depuis Supabase Storage
-            const response = await fetch(module.package_url);
-            let htmlContent = await response.text();
-            
-            // Injecter window.lms_origin dans le HTML
-            const origin = window.location.origin;
-            
-            // Créer le script d'injection (sans balises qui pourraient être interprétées)
-            const scriptContent = 'window.lms_origin="'+origin+'";window.LMS_ORIGIN="'+origin+'";';
-            const scriptTag = ['<','script','>',scriptContent,'</','script','>'].join('');
-            const headTag = ['<','head','>'].join('');
-            
-            htmlContent = htmlContent.replace(headTag, headTag + scriptTag);
-            
-            setScormHtml(htmlContent);
-            setLoading(false);
-            console.log('SCORM HTML loaded for srcDoc, origin:', origin);
-          } catch (err) {
-            console.error('Error loading SCORM:', err);
-            setError('Erreur de chargement: ' + err.message);
-          }
-        };
+      // L'URL du module SCORM via le loader hébergé sur GitHub Pages
+      const scormUrl = useMemo(() => {
+        if (!module.package_url) return null;
         
-        if (module.package_url) {
-          loadScormContent();
-        }
+        const origin = window.location.origin;
+        // Le loader est hébergé sur le même domaine
+        const loaderUrl = origin + '/scorm-loader.html?url=' + 
+          encodeURIComponent(module.package_url) + 
+          '&lms_origin=' + encodeURIComponent(origin);
+        
+        console.log('SCORM Loader URL:', loaderUrl);
+        return loaderUrl;
       }, [module.package_url]);
       
-      console.log('SCORM Player:', { scormHtml: scormHtml ? 'loaded' : null, module });
+      console.log('SCORM Player:', { scormUrl, module });
       
       const statusLabels={'not attempted':'Non commencé','incomplete':'En cours','completed':'Terminé','passed':'Réussi','failed':'Échoué'};
       const statusColors={'not attempted':'bg-gray-500','incomplete':'bg-yellow-500','completed':'bg-green-500','passed':'bg-green-500','failed':'bg-red-500'};
@@ -2448,14 +2428,13 @@
           
           {/* Contenu SCORM */}
           <div className="flex-1 relative">
-            {(loading || !scormHtml)&&<div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10"><Loading text="Chargement du module..."/></div>}
+            {(loading || !scormUrl)&&<div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10"><Loading text="Chargement du module..."/></div>}
             {error?<div className="absolute inset-0 flex items-center justify-center"><Alert type="error">{error}</Alert></div>:(
-              scormHtml && <iframe
+              scormUrl && <iframe
                 ref={iframeRef}
-                srcDoc={scormHtml}
+                src={scormUrl}
                 className="w-full h-full border-0"
                 allow="fullscreen"
-                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
                 onLoad={()=>setLoading(false)}
                 onError={()=>setError('Erreur de chargement du module SCORM')}
               />
