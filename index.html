@@ -39,12 +39,12 @@
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const{useState,useEffect,useRef,createContext,useContext,useCallback}=React;
+    const{useState,useEffect,useRef,createContext,useContext,useCallback,useMemo}=React;
 
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.6.3';
+    const APP_VERSION = '6.6.4';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -2388,38 +2388,30 @@
         };
       },[module.id,enrollmentId,user.id,cmiData,onComplete]);
       
-      // L'URL du module SCORM - utiliser srcDoc pour garder la même origine
-      const [scormHtml, setScormHtml] = useState(null);
-      
-      useEffect(() => {
-        const loadScormContent = async () => {
-          try {
-            // Récupérer le contenu HTML depuis Supabase Storage
-            const response = await fetch(module.package_url);
-            let htmlContent = await response.text();
-            
-            // Injecter window.lms_origin dans le HTML
-            const origin = window.location.origin;
-            const scriptTag = '<scr' + 'ipt>';
-            const scriptEnd = '</scr' + 'ipt>';
-            const headTag = '<he' + 'ad>';
-            const injectScript = scriptTag + 'window.lms_origin="'+origin+'";window.LMS_ORIGIN="'+origin+'";' + scriptEnd;
-            htmlContent = htmlContent.replace(headTag, headTag + injectScript);
-            
-            setScormHtml(htmlContent);
-            console.log('SCORM HTML loaded for srcDoc, origin:', origin);
-          } catch (err) {
-            console.error('Error loading SCORM:', err);
-            setError('Erreur de chargement: ' + err.message);
-          }
-        };
+      // L'URL du module SCORM via Edge Function pour avoir une vraie URL HTTP
+      const scormUrl = useMemo(() => {
+        if (!module.package_url) return null;
         
-        if (module.package_url) {
-          loadScormContent();
+        // Extraire le path depuis l'URL Supabase Storage
+        // Format: https://xxx.supabase.co/storage/v1/object/public/scorm-dispatch/slug/file.html
+        const match = module.package_url.match(/scorm-dispatch\/(.+)$/);
+        if (!match) {
+          console.log('Using direct URL (not scorm-dispatch):', module.package_url);
+          return module.package_url;
         }
+        
+        const filePath = match[1];
+        const origin = window.location.origin;
+        
+        // Construire l'URL de l'Edge Function
+        const edgeFunctionUrl = SUPABASE_URL + '/functions/v1/serve-scorm?path=' + 
+          encodeURIComponent(filePath) + '&lms_origin=' + encodeURIComponent(origin);
+        
+        console.log('SCORM Edge Function URL:', edgeFunctionUrl);
+        return edgeFunctionUrl;
       }, [module.package_url]);
       
-      console.log('SCORM Player:', { scormHtml: scormHtml ? 'loaded' : null, module });
+      console.log('SCORM Player:', { scormUrl, module });
       
       const statusLabels={'not attempted':'Non commencé','incomplete':'En cours','completed':'Terminé','passed':'Réussi','failed':'Échoué'};
       const statusColors={'not attempted':'bg-gray-500','incomplete':'bg-yellow-500','completed':'bg-green-500','passed':'bg-green-500','failed':'bg-red-500'};
@@ -2445,14 +2437,13 @@
           
           {/* Contenu SCORM */}
           <div className="flex-1 relative">
-            {(loading || !scormHtml)&&<div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10"><Loading text="Chargement du module..."/></div>}
+            {(loading || !scormUrl)&&<div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10"><Loading text="Chargement du module..."/></div>}
             {error?<div className="absolute inset-0 flex items-center justify-center"><Alert type="error">{error}</Alert></div>:(
-              scormHtml && <iframe
+              scormUrl && <iframe
                 ref={iframeRef}
-                srcDoc={scormHtml}
+                src={scormUrl}
                 className="w-full h-full border-0"
                 allow="fullscreen"
-                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
                 onLoad={()=>setLoading(false)}
                 onError={()=>setError('Erreur de chargement du module SCORM')}
               />
