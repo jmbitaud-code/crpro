@@ -44,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.6.6';
+    const APP_VERSION = '6.6.8';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -1081,7 +1081,6 @@
               if(content.includes('layer2.js') || content.includes('data-source')){
                 
                 // Méthode 1: Définir window.lms_origin DANS le script de chargement de layer2.js
-                // Chercher le début du script et injecter la définition
                 content = content.replace(
                   "var url = 'https://lms.codesrousseau.fr",
                   "window.lms_origin = '" + lmsOrigin + "'; window.LMS_ORIGIN = '" + lmsOrigin + "'; var url = 'https://lms.codesrousseau.fr"
@@ -1093,16 +1092,13 @@
                   'layer2.js?lms_origin=' + encodeURIComponent(lmsOrigin) + '&cacherev='
                 );
                 
-                // Méthode 3: Ajouter data-clientid et data-lms-origin au body
-                content = content.replace(
-                  'data-clientid=""',
-                  'data-clientid="' + lmsOrigin + '" data-lms-origin="' + lmsOrigin + '"'
-                );
+                // NE PAS modifier data-clientid - le laisser vide comme l'original
+                // Codes Rousseau détermine le client à partir du domaine lms_origin
                 
                 scoHtmlContent = content;
                 entryPoint = actualName;
                 
-                console.log('Modified HTML with lms_origin injection');
+                console.log('Modified HTML with lms_origin injection (data-clientid unchanged)');
               }
               
               filesToUpload.push({name:actualName, content:content, type:'text/html; charset=utf-8'});
@@ -2392,11 +2388,11 @@
       const scormUrl = useMemo(() => {
         if (!module.package_url) return null;
         
-        const origin = window.location.origin;
         // Le loader est hébergé sur le même domaine
-        const loaderUrl = origin + '/scorm-loader.html?url=' + 
-          encodeURIComponent(module.package_url) + 
-          '&lms_origin=' + encodeURIComponent(origin);
+        // On ne passe PAS lms_origin dans l'URL pour éviter les doublons
+        // window.lms_origin sera défini par le loader
+        const loaderUrl = window.location.origin + '/scorm-loader.html?url=' + 
+          encodeURIComponent(module.package_url);
         
         console.log('SCORM Loader URL:', loaderUrl);
         return loaderUrl;

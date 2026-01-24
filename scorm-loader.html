@@ -6,49 +6,56 @@
   <title>SCORM Loader</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body, iframe { width: 100%; height: 100%; border: none; overflow: hidden; }
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+    .loading { display: flex; align-items: center; justify-content: center; height: 100%; color: #666; font-family: sans-serif; }
   </style>
+  <script>
+    // Définir lms_origin globalement avec protocole complet
+    window.lms_origin = 'https://www.crpro.app';
+    window.LMS_ORIGIN = 'https://www.crpro.app';
+  </script>
 </head>
 <body>
+  <div class="loading" id="loading">Chargement du module SCORM...</div>
   <script>
-    // Récupérer les paramètres de l'URL
     const params = new URLSearchParams(window.location.search);
     const scormUrl = params.get('url');
-    const lmsOrigin = params.get('lms_origin') || window.location.origin;
+    const lmsOrigin = 'https://www.crpro.app';
     
     if (!scormUrl) {
-      document.body.innerHTML = '<h1 style="color:red;padding:20px;">Erreur: URL SCORM manquante</h1>';
+      document.getElementById('loading').innerHTML = '<span style="color:red;">Erreur: URL SCORM manquante</span>';
     } else {
-      // Définir lms_origin globalement
-      window.lms_origin = lmsOrigin;
-      window.LMS_ORIGIN = lmsOrigin;
+      // Modifier l'URL pour que window.location.search contienne lms_origin
+      const newUrl = window.location.pathname + '?lms_origin=' + encodeURIComponent(lmsOrigin);
+      history.replaceState(null, '', newUrl);
       
-      // Charger le contenu SCORM et l'injecter
       fetch(scormUrl)
         .then(r => r.text())
         .then(html => {
-          // Injecter lms_origin dans le HTML
-          const scriptTag = '<script>window.lms_origin="' + lmsOrigin + '";window.LMS_ORIGIN="' + lmsOrigin + '";<\/script>';
+          // Script à injecter - définir lms_origin
+          const injectScript = '<script>' +
+            'window.lms_origin = "' + lmsOrigin + '";' +
+            'window.LMS_ORIGIN = "' + lmsOrigin + '";' +
+            '<\/script>';
           
-          // Modifier l'URL de layer2.js pour inclure lms_origin
+          // SEULEMENT modifier l'URL de layer2.js pour inclure lms_origin
+          // NE PAS modifier data-clientid (le laisser vide comme l'original)
           html = html.replace(
             /layer2\.js\?cacherev=/g,
             'layer2.js?lms_origin=' + encodeURIComponent(lmsOrigin) + '&cacherev='
           );
           
-          // Modifier data-clientid
-          html = html.replace('data-clientid=""', 'data-clientid="' + lmsOrigin + '"');
-          
           // Injecter le script après <head>
-          html = html.replace('<head>', '<head>' + scriptTag);
+          html = html.replace('<head>', '<head>' + injectScript);
           
-          // Écrire le HTML modifié dans le document
+          // Écrire le HTML
+          document.getElementById('loading').style.display = 'none';
           document.open();
           document.write(html);
           document.close();
         })
         .catch(err => {
-          document.body.innerHTML = '<h1 style="color:red;padding:20px;">Erreur: ' + err.message + '</h1>';
+          document.getElementById('loading').innerHTML = '<span style="color:red;">Erreur: ' + err.message + '</span>';
         });
     }
   </script>
