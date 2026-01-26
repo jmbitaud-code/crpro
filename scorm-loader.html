@@ -10,9 +10,79 @@
     .loading { display: flex; align-items: center; justify-content: center; height: 100%; color: #666; font-family: sans-serif; }
   </style>
   <script>
-    // Définir lms_origin globalement avec protocole complet
+    // Définir lms_origin globalement
     window.lms_origin = 'https://www.crpro.app';
     window.LMS_ORIGIN = 'https://www.crpro.app';
+    
+    // Créer un proxy API SCORM 1.2 qui transmet au parent
+    window.API = {
+      LMSInitialize: function(p) {
+        console.log('[SCORM Loader] LMSInitialize');
+        try { if (window.parent && window.parent.API) return window.parent.API.LMSInitialize(p); } catch(e) {}
+        return 'true';
+      },
+      LMSFinish: function(p) {
+        console.log('[SCORM Loader] LMSFinish');
+        try { if (window.parent && window.parent.API) return window.parent.API.LMSFinish(p); } catch(e) {}
+        return 'true';
+      },
+      LMSGetValue: function(e) {
+        console.log('[SCORM Loader] LMSGetValue', e);
+        try { if (window.parent && window.parent.API) return window.parent.API.LMSGetValue(e); } catch(ex) {}
+        return '';
+      },
+      LMSSetValue: function(e, v) {
+        console.log('[SCORM Loader] LMSSetValue', e, v);
+        try { if (window.parent && window.parent.API) return window.parent.API.LMSSetValue(e, v); } catch(ex) {}
+        return 'true';
+      },
+      LMSCommit: function(p) {
+        console.log('[SCORM Loader] LMSCommit');
+        try { if (window.parent && window.parent.API) return window.parent.API.LMSCommit(p); } catch(e) {}
+        return 'true';
+      },
+      LMSGetLastError: function() {
+        try { if (window.parent && window.parent.API) return window.parent.API.LMSGetLastError(); } catch(e) {}
+        return '0';
+      },
+      LMSGetErrorString: function(c) {
+        try { if (window.parent && window.parent.API) return window.parent.API.LMSGetErrorString(c); } catch(e) {}
+        return 'No Error';
+      },
+      LMSGetDiagnostic: function(c) {
+        try { if (window.parent && window.parent.API) return window.parent.API.LMSGetDiagnostic(c); } catch(e) {}
+        return 'No Error';
+      }
+    };
+    
+    // Aussi exposer API_1484_11 pour SCORM 2004
+    window.API_1484_11 = {
+      Initialize: function(p) {
+        try { if (window.parent && window.parent.API_1484_11) return window.parent.API_1484_11.Initialize(p); } catch(e) {}
+        return 'true';
+      },
+      Terminate: function(p) {
+        try { if (window.parent && window.parent.API_1484_11) return window.parent.API_1484_11.Terminate(p); } catch(e) {}
+        return 'true';
+      },
+      GetValue: function(e) {
+        try { if (window.parent && window.parent.API_1484_11) return window.parent.API_1484_11.GetValue(e); } catch(ex) {}
+        return '';
+      },
+      SetValue: function(e, v) {
+        try { if (window.parent && window.parent.API_1484_11) return window.parent.API_1484_11.SetValue(e, v); } catch(ex) {}
+        return 'true';
+      },
+      Commit: function(p) {
+        try { if (window.parent && window.parent.API_1484_11) return window.parent.API_1484_11.Commit(p); } catch(e) {}
+        return 'true';
+      },
+      GetLastError: function() { return '0'; },
+      GetErrorString: function(c) { return 'No Error'; },
+      GetDiagnostic: function(c) { return 'No Error'; }
+    };
+    
+    console.log('[SCORM Loader] API proxy created, parent API:', window.parent && window.parent.API ? 'found' : 'not found');
   </script>
 </head>
 <body>
@@ -32,14 +102,34 @@
       fetch(scormUrl)
         .then(r => r.text())
         .then(html => {
-          // Script à injecter - définir lms_origin
+          // Script à injecter - recréer l'API proxy qui remonte la chaîne des parents
           const injectScript = '<script>' +
             'window.lms_origin = "' + lmsOrigin + '";' +
             'window.LMS_ORIGIN = "' + lmsOrigin + '";' +
+            // Fonction pour trouver l'API en remontant les parents
+            'function findSCORMAPI(win) {' +
+            '  var attempts = 0;' +
+            '  while (win && attempts < 10) {' +
+            '    attempts++;' +
+            '    if (win.API) return win.API;' +
+            '    if (win.parent && win.parent !== win) {' +
+            '      win = win.parent;' +
+            '    } else {' +
+            '      break;' +
+            '    }' +
+            '  }' +
+            '  return null;' +
+            '}' +
+            'var foundAPI = findSCORMAPI(window.parent);' +
+            'if (foundAPI) {' +
+            '  window.API = foundAPI;' +
+            '  console.log("[SCORM Content] Found parent API");' +
+            '} else {' +
+            '  console.log("[SCORM Content] Parent API not found");' +
+            '}' +
             '<\/script>';
           
-          // SEULEMENT modifier l'URL de layer2.js pour inclure lms_origin
-          // NE PAS modifier data-clientid (le laisser vide comme l'original)
+          // Modifier l'URL de layer2.js
           html = html.replace(
             /layer2\.js\?cacherev=/g,
             'layer2.js?lms_origin=' + encodeURIComponent(lmsOrigin) + '&cacherev='
