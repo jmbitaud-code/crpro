@@ -61,7 +61,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.8.12';
+    const APP_VERSION = '6.8.13';
     // =======================================
 
     // Masquer l'écran de chargement une fois React prêt
@@ -3621,69 +3621,28 @@
         loadResources();
       },[currentVideo?.id,selectedCourse?.id]);
 
-      // Fonction de sauvegarde de progression (définie avant le useEffect qui l'utilise)
-      const saveVideoProgress=useCallback(async(videoId,positionSeconds,completed)=>{
-        if(!selectedCourse||!videoId)return;
-        
-        const existing=videoProgress[videoId];
-        const progressData={
-          enrollment_id:selectedCourse.id,
-          playlist_video_id:videoId,
-          learner_id:user.id,
-          last_position_seconds:Math.floor(positionSeconds),
-          is_completed:completed||existing?.is_completed||false,
-          watch_time_seconds:(existing?.watch_time_seconds||0)+10
-        };
-        
-        if(completed)progressData.completed_at=new Date().toISOString();
-        
-        console.log('💾 Saving video progress:', {videoId, positionSeconds, completed, existing: !!existing?.id});
-        
-        try{
-          if(existing?.id){
-            const{data:updated,error}=await supabase.from('video_progress').update({
-              last_position_seconds:progressData.last_position_seconds,
-              is_completed:progressData.is_completed,
-              watch_time_seconds:progressData.watch_time_seconds,
-              ...(completed?{completed_at:progressData.completed_at}:{})
-            }).eq('id',existing.id).select().single();
-            
-            if(error){
-              console.error('❌ Error updating video progress:', error);
-            }else{
-              console.log('✅ Updated video progress:', updated);
-              setVideoProgress(prev=>({...prev,[videoId]:updated||{...prev[videoId],...progressData}}));
-            }
-          }else{
-            const{data:inserted,error}=await supabase.from('video_progress').insert(progressData).select().single();
-            if(error){
-              console.error('❌ Error inserting video progress:', error);
-            }else if(inserted){
-              console.log('✅ Inserted video progress:', inserted);
-              setVideoProgress(prev=>({...prev,[videoId]:inserted}));
-            }
-          }
-        }catch(err){
-          console.error('❌ Exception saving video progress:', err);
-        }
-      },[selectedCourse,videoProgress,user.id]);
+      // Ref pour accéder à videoProgress sans causer de re-render du player
+      const videoProgressRef=useRef(videoProgress);
+      useEffect(()=>{videoProgressRef.current=videoProgress;},[videoProgress]);
+      
+      // Ref pour selectedCourse
+      const selectedCourseRef=useRef(selectedCourse);
+      useEffect(()=>{selectedCourseRef.current=selectedCourse;},[selectedCourse]);
 
       // Initialiser le lecteur Vimeo
       useEffect(()=>{
-        if(!currentVideo||!playerRef.current)return;
+        if(!currentVideo||!playerRef.current||!selectedCourse)return;
         
         if(playerInstanceRef.current){
           playerInstanceRef.current.destroy();
         }
         
-        const progressData=videoProgress[currentVideo.id];
+        const progressData=videoProgressRef.current[currentVideo.id];
         const startTime=progressData?.last_position_seconds||0;
         console.log('🎬 Initializing video player:', {
           videoId: currentVideo.id,
           vimeoId: currentVideo.videos?.vimeo_id,
-          progressData,
-          startTime,
-          allProgress: videoProgress
+          startTime
         });
         playerRef.current.innerHTML='';
         
@@ -3703,43 +3662,92 @@
         
         playerInstanceRef.current=player;
         
-        // Variables locales pour éviter les problèmes de closure
+        // Variables locales pour la closure
         const videoId=currentVideo.id;
+        const visitorId=user.id;
+        const enrollmentId=selectedCourse.id;
         let lastSaveTime=0;
+        
+        // Fonction de sauvegarde locale
+        const saveProgress=async(positionSeconds,completed)=>{
+          const existing=videoProgressRef.current[videoId];
+          const progressData={
+            enrollment_id:enrollmentId,
+            playlist_video_id:videoId,
+            learner_id:visitorId,
+            last_position_seconds:Math.floor(positionSeconds),
+            is_completed:completed||existing?.is_completed||false,
+            watch_time_seconds:(existing?.watch_time_seconds||0)+10
+          };
+          
+          if(completed)progressData.completed_at=new Date().toISOString();
+          
+          console.log('💾 Saving video progress:', {videoId, positionSeconds, completed, existing: !!existing?.id});
+          
+          try{
+            if(existing?.id){
+              const{data:updated,error}=await supabase.from('video_progress').update({
+                last_position_seconds:progressData.last_position_seconds,
+                is_completed:progressData.is_completed,
+                watch_time_seconds:progressData.watch_time_seconds,
+                ...(completed?{completed_at:progressData.completed_at}:{})
+              }).eq('id',existing.id).select().single();
+              
+              if(error){
+                console.error('❌ Error updating video progress:', error);
+              }else{
+                console.log('✅ Updated video progress:', updated);
+                setVideoProgress(prev=>({...prev,[videoId]:updated||{...prev[videoId],...progressData}}));
+              }
+            }else{
+              const{data:inserted,error}=await supabase.from('video_progress').insert(progressData).select().single();
+              if(error){
+                console.error('❌ Error inserting video progress:', error);
+              }else if(inserted){
+                console.log('✅ Inserted video progress:', inserted);
+                setVideoProgress(prev=>({...prev,[videoId]:inserted}));
+              }
+            }
+          }catch(err){
+            console.error('❌ Exception saving video progress:', err);
+          }
+        };
         
         player.on('timeupdate',(data)=>{
           const now=Date.now();
           if(now-lastSaveTime>10000){ // Sauvegarder toutes les 10 secondes
             lastSaveTime=now;
-            saveVideoProgress(videoId,data.seconds,false);
+            saveProgress(data.seconds,false);
           }
         });
         
         player.on('ended',()=>{
           console.log('🏁 Video ended');
-          saveVideoProgress(videoId,0,true);
-          updateCourseProgress();
+          saveProgress(0,true);
+          // Mettre à jour la progression du cours
+          const course=selectedCourseRef.current;
+          if(course){
+            const totalVideos=courseVideos.length;
+            const completedCount=Object.values(videoProgressRef.current).filter(p=>p.is_completed).length+1;
+            const percent=totalVideos>0?Math.round((completedCount/totalVideos)*100):0;
+            supabase.from('enrollments').update({progress_percent:percent,status:percent===100?'completed':'in_progress'}).eq('id',course.id);
+          }
         });
         
         // Sauvegarder aussi quand on pause
         player.on('pause',(data)=>{
           console.log('⏸️ Video paused at:', data.seconds);
-          saveVideoProgress(videoId,data.seconds,false);
+          saveProgress(data.seconds,false);
         });
         
         return()=>{
-          // Sauvegarder la position avant de détruire le lecteur
           if(playerInstanceRef.current){
-            playerInstanceRef.current.getCurrentTime().then(time=>{
-              console.log('💾 Saving on cleanup, position:', time);
-              saveVideoProgress(videoId,time,false);
-            }).catch(()=>{});
             playerInstanceRef.current.off('timeupdate');
             playerInstanceRef.current.off('ended');
             playerInstanceRef.current.off('pause');
           }
         };
-      },[currentVideo?.id,currentVideo?.videos?.vimeo_id,saveVideoProgress]);
+      },[currentVideo?.id,currentVideo?.videos?.vimeo_id,selectedCourse?.id,user.id,courseVideos.length]);
 
       const updateCourseProgress=async()=>{
         if(!selectedCourse)return;
