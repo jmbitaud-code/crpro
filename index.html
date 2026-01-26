@@ -79,9 +79,19 @@
       return 0;
     };
 
-    const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
+    let supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
       auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}
     });
+    
+    // Fonction pour réinitialiser le client Supabase si nécessaire
+    window.resetSupabaseClient = function() {
+      console.log('🔄 Resetting Supabase client...');
+      supabase = window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
+        auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}
+      });
+      console.log('🔄 Supabase client reset complete');
+      return supabase;
+    };
     
     // Exposer lms_origin globalement pour SCORM Dispatch (Codes Rousseau)
     window.lms_origin = window.location.origin;
@@ -4713,11 +4723,15 @@
           // Clic dans un setTimeout pour ne pas bloquer
           setTimeout(function() {
             a.click();
-            // Nettoyer immédiatement
+            // Nettoyer immédiatement et réinitialiser Supabase
             setTimeout(function() {
               URL.revokeObjectURL(url);
               a.remove();
               console.log('📄 PDF downloaded and cleaned up');
+              // Réinitialiser le client Supabase pour éviter les problèmes de connexion
+              if(window.resetSupabaseClient) {
+                window.resetSupabaseClient();
+              }
             }, 100);
           }, 0);
           
