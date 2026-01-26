@@ -429,6 +429,7 @@
             </div>
           </header>
           <div className="p-4 lg:p-6">
+            {console.log('🔄 Rendering page:', page)}
             {page==='dashboard'&&<DashboardPage/>}
             {page==='analytics'&&<AnalyticsPage/>}
             {page==='scorm-tracking'&&<ScormTrackingPage/>}
@@ -5286,6 +5287,7 @@
 
     // My Badges Page (Learner)
     function MyBadgesPage(){
+      console.log('🏅 MyBadgesPage mounted');
       const{user}=useAuth();
       const[earnedBadges,setEarnedBadges]=useState([]);
       const[allBadges,setAllBadges]=useState([]);
@@ -5293,6 +5295,7 @@
       const[loading,setLoading]=useState(true);
 
       useEffect(()=>{
+        console.log('🏅 MyBadgesPage useEffect triggered');
         const load=async()=>{
           const[{data:earned},{data:all},{data:pts}]=await Promise.all([
             supabase.from('learner_badges').select('*,badges(*)').eq('learner_id',user.id),
