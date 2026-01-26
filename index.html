@@ -44,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.8.2';
+    const APP_VERSION = '6.8.4';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -1286,9 +1286,15 @@
       const[createModal,setCreateModal]=useState(false);
       const[importModal,setImportModal]=useState(false);
       const[deleteModal,setDeleteModal]=useState(null);
+      const[bulkDeleteModal,setBulkDeleteModal]=useState(false);
       const[deleting,setDeleting]=useState(false);
       const[editing,setEditing]=useState(null);
       const[search,setSearch]=useState('');
+      const[filterRole,setFilterRole]=useState('');
+      const[filterCenter,setFilterCenter]=useState('');
+      const[sortBy,setSortBy]=useState('created_at');
+      const[sortDir,setSortDir]=useState('desc');
+      const[selectedUsers,setSelectedUsers]=useState([]);
       const[form,setForm]=useState({email:'',first_name:'',last_name:'',role:'learner',center_id:''});
       const[createForm,setCreateForm]=useState({email:'',password:'',first_name:'',last_name:'',role:'learner',center_id:''});
       const[saving,setSaving]=useState(false);
@@ -1305,6 +1311,7 @@
         const{data:u}=await q;setUsers(u||[]);
         const{data:c}=await supabase.from('centers').select('id,name');setCenters(c||[]);
         setLoading(false);
+        setSelectedUsers([]);
       },[isSuperAdmin,center?.id]);
       
       useEffect(()=>{load();},[load]);
@@ -1315,10 +1322,64 @@
         return pwd;
       };
 
+      // Suppression par lot
+      const handleBulkDelete=async()=>{
+        if(!selectedUsers.length)return;
+        setDeleting(true);
+        try{
+          for(const userId of selectedUsers){
+            await supabase.from('enrollments').delete().eq('learner_id',userId);
+            await supabase.from('video_progress').delete().eq('learner_id',userId);
+            await supabase.from('scorm_progress').delete().eq('learner_id',userId);
+            await supabase.from('quiz_attempts').delete().eq('learner_id',userId);
+            await supabase.from('learner_badges').delete().eq('learner_id',userId);
+            await supabase.from('learner_points').delete().eq('learner_id',userId);
+            await supabase.from('learner_notes').delete().eq('learner_id',userId);
+            await supabase.from('notifications').delete().eq('user_id',userId);
+            await supabase.from('certificates').delete().eq('learner_id',userId);
+            await supabase.from('profiles').delete().eq('id',userId);
+          }
+          await load();
+          setBulkDeleteModal(false);
+        }catch(err){
+          console.error('Erreur suppression:',err);
+          alert('Erreur lors de la suppression: '+err.message);
+        }
+        setDeleting(false);
+      };
+
+      // Sélection
+      const toggleSelect=(userId)=>{
+        setSelectedUsers(prev=>prev.includes(userId)?prev.filter(id=>id!==userId):[...prev,userId]);
+      };
+      const toggleSelectAll=(filteredUsers)=>{
+        const selectableUsers=filteredUsers.filter(u=>u.id!==profile?.id&&u.role!=='super_admin');
+        const allSelected=selectableUsers.every(u=>selectedUsers.includes(u.id));
+        if(allSelected){
+          setSelectedUsers([]);
+        }else{
+          setSelectedUsers(selectableUsers.map(u=>u.id));
+        }
+      };
+
+      // Tri
+      const handleSort=(field)=>{
+        if(sortBy===field){
+          setSortDir(prev=>prev==='asc'?'desc':'asc');
+        }else{
+          setSortBy(field);
+          setSortDir('asc');
+        }
+      };
+
       const handleCreate=async()=>{
         if(!createForm.email||!createForm.first_name||!createForm.last_name){
           alert('Veuillez remplir tous les champs obligatoires');return;
         }
+        // Valider le rôle selon les permissions
+        const allowedRoles=isSuperAdmin?['learner','trainer','center_admin','super_admin']:['learner','trainer'];
+        const finalRole=allowedRoles.includes(createForm.role)?createForm.role:'learner';
+        
         setCreating(true);setCreateResult(null);
         try{
           const password=createForm.password||generatePassword();
@@ -1338,7 +1399,7 @@
           const{error:profileError}=await supabase.from('profiles').update({
             first_name:createForm.first_name,
             last_name:createForm.last_name,
-            role:createForm.role,
+            role:finalRole,
             center_id:targetCenterId||null
           }).eq('id',authData.user.id);
           
@@ -1403,18 +1464,22 @@
           const workbook=XLSX.read(data);
           const sheet=workbook.Sheets[workbook.SheetNames[0]];
           const jsonData=XLSX.utils.sheet_to_json(sheet);
+          // Rôles autorisés selon le type d'admin
+          const allowedRoles=isSuperAdmin?['learner','trainer','center_admin','super_admin']:['learner','trainer'];
           const mapped=jsonData.map((row,i)=>{
-            const role=String(row['Rôle']||row['Role']||row['role']||'learner').toLowerCase();
-            const validRoles=['learner','trainer','center_admin'];
+            let role=String(row['Rôle']||row['Role']||row['role']||'learner').toLowerCase();
+            // Si le rôle n'est pas autorisé pour cet admin, forcer à 'learner'
+            if(!allowedRoles.includes(role))role='learner';
             return{
               _index:i+1,
               email:String(row['Email']||row['email']||'').toLowerCase().trim(),
               first_name:row['Prénom']||row['Prenom']||row['first_name']||'',
               last_name:row['Nom']||row['last_name']||'',
-              role:validRoles.includes(role)?role:'learner',
+              role:role,
               password:row['Mot de passe']||row['Password']||row['password']||'',
               center_name:row['Centre']||row['center']||'',
-              _valid:!!(row['Email']||row['email'])&&!!(row['Prénom']||row['Prenom']||row['first_name'])&&!!(row['Nom']||row['last_name'])
+              _valid:!!(row['Email']||row['email'])&&!!(row['Prénom']||row['Prenom']||row['first_name'])&&!!(row['Nom']||row['last_name']),
+              _roleForced:!allowedRoles.includes(String(row['Rôle']||row['Role']||row['role']||'learner').toLowerCase())
             };
           });
           setImportData(mapped);setImportResult(null);
@@ -1475,21 +1540,181 @@
         XLSX.writeFile(wb,'resultat_import.xlsx');
       };
 
-      const filtered=users.filter(u=>{if(!search)return true;const s=search.toLowerCase();return u.email?.toLowerCase().includes(s)||u.first_name?.toLowerCase().includes(s)||u.last_name?.toLowerCase().includes(s);});
+      const filtered=useMemo(()=>{
+        let result=[...users];
+        // Recherche
+        if(search){
+          const s=search.toLowerCase();
+          result=result.filter(u=>u.email?.toLowerCase().includes(s)||u.first_name?.toLowerCase().includes(s)||u.last_name?.toLowerCase().includes(s));
+        }
+        // Filtre par rôle
+        if(filterRole){
+          result=result.filter(u=>u.role===filterRole);
+        }
+        // Filtre par centre
+        if(filterCenter){
+          result=result.filter(u=>u.center_id===filterCenter);
+        }
+        // Tri
+        result.sort((a,b)=>{
+          let valA,valB;
+          switch(sortBy){
+            case 'name':valA=`${a.first_name} ${a.last_name}`.toLowerCase();valB=`${b.first_name} ${b.last_name}`.toLowerCase();break;
+            case 'email':valA=a.email?.toLowerCase()||'';valB=b.email?.toLowerCase()||'';break;
+            case 'role':valA=a.role||'';valB=b.role||'';break;
+            case 'center':valA=a.centers?.name?.toLowerCase()||'';valB=b.centers?.name?.toLowerCase()||'';break;
+            default:valA=a.created_at||'';valB=b.created_at||'';
+          }
+          if(valA<valB)return sortDir==='asc'?-1:1;
+          if(valA>valB)return sortDir==='asc'?1:-1;
+          return 0;
+        });
+        return result;
+      },[users,search,filterRole,filterCenter,sortBy,sortDir]);
+
+      const selectableUsers=filtered.filter(u=>u.id!==profile?.id&&u.role!=='super_admin');
+      const allSelected=selectableUsers.length>0&&selectableUsers.every(u=>selectedUsers.includes(u.id));
 
       if(!can('manage_users'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
 
       return<div>
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-          <h1 className="text-2xl font-bold">Utilisateurs</h1>
+          <div>
+            <h1 className="text-2xl font-bold">Utilisateurs</h1>
+            <p className="text-sm text-gray-400">{users.length} utilisateur{users.length>1?'s':''}</p>
+          </div>
           <div className="flex gap-2">
+            {selectedUsers.length>0&&(
+              <Button variant="secondary" icon="Trash2" className="text-red-400 border-red-500/50 hover:bg-red-500/10" onClick={()=>setBulkDeleteModal(true)}>
+                Supprimer ({selectedUsers.length})
+              </Button>
+            )}
             <Button icon="UserPlus" onClick={()=>{resetCreateForm();setCreateModal(true);}}>Ajouter</Button>
             <Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button>
           </div>
         </div>
-        <Card className="p-4 mb-6"><Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/></Card>
-        <Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Utilisateur</th><th className="text-left p-4 font-medium text-gray-400">Rôle</th>{isSuperAdmin&&<th className="text-left p-4 font-medium text-gray-400">Centre</th>}<th className="text-right p-4"></th></tr></thead><tbody className="divide-y divide-gray-700">{filtered.length===0?<tr><td colSpan={isSuperAdmin?4:3} className="p-8 text-center text-gray-500">Aucun utilisateur trouvé</td></tr>:filtered.map(u=><tr key={u.id} className="hover:bg-gray-750/50"><td className="p-4"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center"><Icon name="User" size={18}/></div><div><p className="font-medium">{u.first_name} {u.last_name}</p><p className="text-sm text-gray-400">{u.email}</p></div></div></td><td className="p-4"><RoleBadge role={u.role}/></td>{isSuperAdmin&&<td className="p-4 text-gray-400">{u.centers?.name||'-'}</td>}<td className="p-4 text-right"><div className="flex justify-end gap-1"><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(u);setForm({email:u.email,first_name:u.first_name||'',last_name:u.last_name||'',role:u.role,center_id:u.center_id||''});setModal(true);}}/>{u.id!==profile?.id&&u.role!=='super_admin'&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400 hover:text-red-300 hover:bg-red-500/10" onClick={()=>setDeleteModal(u)}/>}</div></td></tr>)}</tbody></table></div></Card>
+        
+        {/* Filtres */}
+        <Card className="p-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/>
+            <Select value={filterRole} onChange={e=>setFilterRole(e.target.value)} options={[
+              {value:'',label:'Tous les rôles'},
+              {value:'learner',label:'Apprenants'},
+              {value:'trainer',label:'Formateurs'},
+              {value:'center_admin',label:'Admins de centre'},
+              {value:'super_admin',label:'Super Admins'}
+            ]}/>
+            {isSuperAdmin&&<Select value={filterCenter} onChange={e=>setFilterCenter(e.target.value)} options={[
+              {value:'',label:'Tous les centres'},
+              ...centers.map(c=>({value:c.id,label:c.name}))
+            ]}/>}
+            <Select value={`${sortBy}-${sortDir}`} onChange={e=>{const[field,dir]=e.target.value.split('-');setSortBy(field);setSortDir(dir);}} options={[
+              {value:'created_at-desc',label:'Plus récents'},
+              {value:'created_at-asc',label:'Plus anciens'},
+              {value:'name-asc',label:'Nom A-Z'},
+              {value:'name-desc',label:'Nom Z-A'},
+              {value:'email-asc',label:'Email A-Z'},
+              {value:'role-asc',label:'Rôle A-Z'}
+            ]}/>
+          </div>
+        </Card>
+        
+        {/* Tableau */}
+        <Card>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-750">
+                <tr>
+                  <th className="p-4 w-12">
+                    <input type="checkbox" checked={allSelected} onChange={()=>toggleSelectAll(filtered)} className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500"/>
+                  </th>
+                  <th className="text-left p-4 font-medium text-gray-400 cursor-pointer hover:text-white" onClick={()=>handleSort('name')}>
+                    <div className="flex items-center gap-1">Utilisateur {sortBy==='name'&&<Icon name={sortDir==='asc'?'ChevronUp':'ChevronDown'} size={14}/>}</div>
+                  </th>
+                  <th className="text-left p-4 font-medium text-gray-400 cursor-pointer hover:text-white" onClick={()=>handleSort('role')}>
+                    <div className="flex items-center gap-1">Rôle {sortBy==='role'&&<Icon name={sortDir==='asc'?'ChevronUp':'ChevronDown'} size={14}/>}</div>
+                  </th>
+                  {isSuperAdmin&&<th className="text-left p-4 font-medium text-gray-400 cursor-pointer hover:text-white" onClick={()=>handleSort('center')}>
+                    <div className="flex items-center gap-1">Centre {sortBy==='center'&&<Icon name={sortDir==='asc'?'ChevronUp':'ChevronDown'} size={14}/>}</div>
+                  </th>}
+                  <th className="text-left p-4 font-medium text-gray-400 cursor-pointer hover:text-white" onClick={()=>handleSort('created_at')}>
+                    <div className="flex items-center gap-1">Créé le {sortBy==='created_at'&&<Icon name={sortDir==='asc'?'ChevronUp':'ChevronDown'} size={14}/>}</div>
+                  </th>
+                  <th className="text-right p-4"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700">
+                {filtered.length===0?(
+                  <tr><td colSpan={isSuperAdmin?6:5} className="p-8 text-center text-gray-500">Aucun utilisateur trouvé</td></tr>
+                ):filtered.map(u=>(
+                  <tr key={u.id} className={`hover:bg-gray-750/50 ${selectedUsers.includes(u.id)?'bg-indigo-500/10':''}`}>
+                    <td className="p-4">
+                      {u.id!==profile?.id&&u.role!=='super_admin'?(
+                        <input type="checkbox" checked={selectedUsers.includes(u.id)} onChange={()=>toggleSelect(u.id)} className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500"/>
+                      ):<span className="w-4 h-4 block"></span>}
+                    </td>
+                    <td className="p-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center"><Icon name="User" size={18}/></div>
+                        <div>
+                          <p className="font-medium">{u.first_name} {u.last_name}</p>
+                          <p className="text-sm text-gray-400">{u.email}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="p-4"><RoleBadge role={u.role}/></td>
+                    {isSuperAdmin&&<td className="p-4 text-gray-400">{u.centers?.name||'-'}</td>}
+                    <td className="p-4 text-gray-400 text-sm">{u.created_at?new Date(u.created_at).toLocaleDateString('fr-FR'):'-'}</td>
+                    <td className="p-4 text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(u);setForm({email:u.email,first_name:u.first_name||'',last_name:u.last_name||'',role:u.role,center_id:u.center_id||''});setModal(true);}}/>
+                        {u.id!==profile?.id&&u.role!=='super_admin'&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400 hover:text-red-300 hover:bg-red-500/10" onClick={()=>setDeleteModal(u)}/>}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {filtered.length>0&&<div className="p-4 border-t border-gray-700 text-sm text-gray-400">
+            {selectedUsers.length>0?`${selectedUsers.length} sélectionné${selectedUsers.length>1?'s':''} sur `:''}{filtered.length} utilisateur{filtered.length>1?'s':''}
+          </div>}
+        </Card>
+        
+        {/* Modal de suppression par lot */}
+        <Modal isOpen={bulkDeleteModal} onClose={()=>setBulkDeleteModal(false)} title="Supprimer les utilisateurs sélectionnés">
+          <div className="space-y-4">
+            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-12 h-12 bg-red-500/20 rounded-full flex items-center justify-center">
+                  <Icon name="AlertTriangle" size={24} className="text-red-400"/>
+                </div>
+                <div>
+                  <p className="font-semibold text-red-400">Attention !</p>
+                  <p className="text-sm text-gray-400">Cette action est irréversible.</p>
+                </div>
+              </div>
+              <p className="text-sm text-gray-300">
+                Vous êtes sur le point de supprimer <strong className="text-white">{selectedUsers.length} utilisateur{selectedUsers.length>1?'s':''}</strong>.
+              </p>
+            </div>
+            <div className="bg-gray-700/50 p-3 rounded-lg max-h-48 overflow-y-auto">
+              <p className="font-medium text-gray-300 mb-2">Utilisateurs à supprimer :</p>
+              <ul className="space-y-1 text-sm">
+                {selectedUsers.map(id=>{
+                  const u=users.find(user=>user.id===id);
+                  return u?<li key={id} className="flex items-center gap-2"><Icon name="User" size={14} className="text-gray-500"/>{u.first_name} {u.last_name} <span className="text-gray-500">({u.email})</span></li>:null;
+                })}
+              </ul>
+            </div>
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={()=>setBulkDeleteModal(false)}>Annuler</Button>
+              <Button variant="primary" className="bg-red-600 hover:bg-red-700" icon="Trash2" onClick={handleBulkDelete} loading={deleting}>Supprimer {selectedUsers.length} utilisateur{selectedUsers.length>1?'s':''}</Button>
+            </div>
+          </div>
+        </Modal>
         
         {/* Modal de création d'utilisateur */}
         <Modal isOpen={createModal} onClose={()=>{setCreateModal(false);resetCreateForm();}} title="Ajouter un utilisateur">
@@ -1508,8 +1733,10 @@
                 <Select label="Rôle *" value={createForm.role} onChange={e=>setCreateForm({...createForm,role:e.target.value})} options={[
                   {value:'learner',label:'Apprenant'},
                   {value:'trainer',label:'Formateur'},
-                  {value:'center_admin',label:'Admin de centre'},
-                  ...(isSuperAdmin?[{value:'super_admin',label:'Super Admin'}]:[])
+                  ...(isSuperAdmin?[
+                    {value:'center_admin',label:'Admin de centre'},
+                    {value:'super_admin',label:'Super Admin'}
+                  ]:[])
                 ]}/>
                 {isSuperAdmin&&<Select label="Centre" value={createForm.center_id} onChange={e=>setCreateForm({...createForm,center_id:e.target.value})} options={[{value:'',label:'Aucun centre'},...centers.map(c=>({value:c.id,label:c.name}))]}/>}
                 <div className="flex justify-end gap-3 pt-2">
