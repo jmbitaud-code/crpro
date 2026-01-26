@@ -61,7 +61,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.8.7';
+    const APP_VERSION = '6.8.8';
     // =======================================
 
     // Masquer l'écran de chargement une fois React prêt
@@ -3667,22 +3667,42 @@
         const data={
           enrollment_id:selectedCourse.id,
           playlist_video_id:currentVideo.id,
-          last_position_seconds:positionSeconds,
+          learner_id:user.id,
+          last_position_seconds:Math.floor(positionSeconds),
           is_completed:completed||existing?.is_completed||false,
           watch_time_seconds:(existing?.watch_time_seconds||0)+10
         };
         
         if(completed)data.completed_at=new Date().toISOString();
         
-        if(existing){
-          await supabase.from('video_progress').update(data).eq('id',existing.id);
-        }else{
-          const{data:inserted}=await supabase.from('video_progress').insert(data).select().single();
-          if(inserted)setVideoProgress(prev=>({...prev,[currentVideo.id]:inserted}));
-        }
+        console.log('Saving video progress:', data);
         
-        if(completed){
-          setVideoProgress(prev=>({...prev,[currentVideo.id]:{...prev[currentVideo.id],...data,is_completed:true}}));
+        try{
+          if(existing?.id){
+            const{error}=await supabase.from('video_progress').update({
+              last_position_seconds:data.last_position_seconds,
+              is_completed:data.is_completed,
+              watch_time_seconds:data.watch_time_seconds,
+              ...(completed?{completed_at:data.completed_at}:{})
+            }).eq('id',existing.id);
+            
+            if(error){
+              console.error('Error updating video progress:', error);
+            }else{
+              // Mettre à jour l'état local
+              setVideoProgress(prev=>({...prev,[currentVideo.id]:{...prev[currentVideo.id],...data}}));
+            }
+          }else{
+            const{data:inserted,error}=await supabase.from('video_progress').insert(data).select().single();
+            if(error){
+              console.error('Error inserting video progress:', error);
+            }else if(inserted){
+              console.log('Inserted video progress:', inserted);
+              setVideoProgress(prev=>({...prev,[currentVideo.id]:inserted}));
+            }
+          }
+        }catch(err){
+          console.error('Exception saving video progress:', err);
         }
       };
 
