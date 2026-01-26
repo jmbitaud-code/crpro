@@ -61,7 +61,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.8.13';
+    const APP_VERSION = '6.8.14';
     // =======================================
 
     // Masquer l'écran de chargement une fois React prêt
@@ -3628,6 +3628,10 @@
       // Ref pour selectedCourse
       const selectedCourseRef=useRef(selectedCourse);
       useEffect(()=>{selectedCourseRef.current=selectedCourse;},[selectedCourse]);
+      
+      // Ref pour scormProgress
+      const scormProgressRef=useRef(scormProgress);
+      useEffect(()=>{scormProgressRef.current=scormProgress;},[scormProgress]);
 
       // Initialiser le lecteur Vimeo
       useEffect(()=>{
@@ -3721,17 +3725,23 @@
           }
         });
         
-        player.on('ended',()=>{
+        player.on('ended',async()=>{
           console.log('🏁 Video ended');
-          saveProgress(0,true);
-          // Mettre à jour la progression du cours
-          const course=selectedCourseRef.current;
-          if(course){
-            const totalVideos=courseVideos.length;
-            const completedCount=Object.values(videoProgressRef.current).filter(p=>p.is_completed).length+1;
-            const percent=totalVideos>0?Math.round((completedCount/totalVideos)*100):0;
-            supabase.from('enrollments').update({progress_percent:percent,status:percent===100?'completed':'in_progress'}).eq('id',course.id);
-          }
+          await saveProgress(0,true);
+          // Attendre un peu que l'état soit mis à jour puis recalculer
+          setTimeout(()=>{
+            // Recalculer la progression du cours
+            const totalVids=courseVideos.length;
+            const completedVids=Object.values(videoProgressRef.current).filter(p=>p.is_completed).length;
+            const totalScorms=courseScorm.length;
+            const completedScorms=Object.values(scormProgressRef.current||{}).filter(p=>p.completion_status==='completed'||p.completion_status==='passed').length;
+            const totalItems=totalVids+totalScorms;
+            const completedItems=completedVids+completedScorms;
+            const pct=totalItems>0?Math.round((completedItems/totalItems)*100):0;
+            console.log('📈 Course progress after video ended:', {totalVids, completedVids, totalScorms, completedScorms, pct});
+            supabase.from('enrollments').update({progress_percent:pct,status:pct===100?'completed':'in_progress'}).eq('id',enrollmentId);
+            setSelectedCourse(prev=>prev?{...prev,progress_percent:pct,status:pct===100?'completed':'in_progress'}:prev);
+          },500);
         });
         
         // Sauvegarder aussi quand on pause
@@ -3747,16 +3757,32 @@
             playerInstanceRef.current.off('pause');
           }
         };
-      },[currentVideo?.id,currentVideo?.videos?.vimeo_id,selectedCourse?.id,user.id,courseVideos.length]);
+      },[currentVideo?.id,currentVideo?.videos?.vimeo_id,selectedCourse?.id,user.id,courseVideos.length,courseScorm.length]);
 
-      const updateCourseProgress=async()=>{
+      const updateCourseProgress=useCallback(async()=>{
         if(!selectedCourse)return;
+        
+        // Compter les vidéos complétées
         const totalVideos=courseVideos.length;
-        const completedVideos=Object.values(videoProgress).filter(p=>p.is_completed).length+(videoProgress[currentVideo?.id]?.is_completed?0:1);
-        const percent=totalVideos>0?Math.round((completedVideos/totalVideos)*100):0;
+        const completedVideos=Object.values(videoProgressRef.current).filter(p=>p.is_completed).length;
+        
+        // Compter les SCORM complétés
+        const totalScorm=courseScorm.length;
+        const completedScorm=Object.values(scormProgress).filter(p=>p.completion_status==='completed'||p.completion_status==='passed').length;
+        
+        // Calculer le pourcentage total
+        const totalItems=totalVideos+totalScorm;
+        const completedItems=completedVideos+completedScorm;
+        const percent=totalItems>0?Math.round((completedItems/totalItems)*100):0;
+        
+        console.log('📈 Updating course progress:', {totalVideos, completedVideos, totalScorm, completedScorm, percent});
         
         const wasCompleted=selectedCourse.status==='completed';
         await supabase.from('enrollments').update({progress_percent:percent,status:percent===100?'completed':percent>0?'in_progress':'not_started'}).eq('id',selectedCourse.id);
+        
+        // Mettre à jour l'état local
+        setSelectedCourse(prev=>({...prev,progress_percent:percent,status:percent===100?'completed':percent>0?'in_progress':'not_started'}));
+        setEnrollments(prev=>prev.map(e=>e.id===selectedCourse.id?{...e,progress_percent:percent,status:percent===100?'completed':percent>0?'in_progress':'not_started'}:e));
         
         // Cours complété à 100%
         if(percent===100&&!wasCompleted){
@@ -4127,6 +4153,18 @@
                 const spMap={};
                 (sp||[]).forEach(p=>{spMap[p.module_id]=p;});
                 setScormProgress(spMap);
+                
+                // Recalculer et mettre à jour la progression du cours
+                const totalVids=courseVideos.length;
+                const completedVids=Object.values(videoProgressRef.current).filter(p=>p.is_completed).length;
+                const totalScorms=courseScorm.length;
+                const completedScorms=Object.values(spMap).filter(p=>p.completion_status==='completed'||p.completion_status==='passed').length;
+                const totalItems=totalVids+totalScorms;
+                const completedItems=completedVids+completedScorms;
+                const pct=totalItems>0?Math.round((completedItems/totalItems)*100):0;
+                console.log('📈 Course progress after SCORM:', {totalVids, completedVids, totalScorms, completedScorms, pct});
+                await supabase.from('enrollments').update({progress_percent:pct,status:pct===100?'completed':'in_progress'}).eq('id',selectedCourse.id);
+                setSelectedCourse(prev=>prev?{...prev,progress_percent:pct,status:pct===100?'completed':'in_progress'}:prev);
               }}
               onClose={()=>setActiveScorm(null)}
             />
