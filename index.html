@@ -61,7 +61,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.8.15';
+    const APP_VERSION = '6.8.16';
     // =======================================
 
     // Masquer l'écran de chargement une fois React prêt
@@ -3786,13 +3786,54 @@
         
         // Cours complété à 100%
         if(percent===100&&!wasCompleted){
-          // 1. Générer certificat
+          console.log('🎉 Cours complété à 100% ! Génération certificat...');
+          
+          // Calculer la note moyenne (SCORM + Quiz)
+          let totalScore=0;
+          let scoreCount=0;
+          
+          // Scores SCORM
+          Object.values(scormProgressRef.current||{}).forEach(sp=>{
+            if(sp.score_scaled!==null&&sp.score_scaled!==undefined){
+              totalScore+=sp.score_scaled*100;
+              scoreCount++;
+            }
+          });
+          
+          // Scores Quiz (si disponibles)
+          const{data:quizAttempts}=await supabase.from('quiz_attempts').select('score_percent').eq('enrollment_id',selectedCourse.id).eq('passed',true);
+          (quizAttempts||[]).forEach(qa=>{
+            if(qa.score_percent!==null){
+              totalScore+=qa.score_percent;
+              scoreCount++;
+            }
+          });
+          
+          const avgScore=scoreCount>0?Math.round(totalScore/scoreCount):null;
+          
+          // Calculer la durée de réalisation (temps entre inscription et maintenant)
+          const enrollmentDate=new Date(selectedCourse.created_at);
+          const completionDate=new Date();
+          const durationSeconds=Math.floor((completionDate-enrollmentDate)/1000);
+          
+          // Calculer aussi le temps total de visionnage
+          let totalWatchTime=0;
+          Object.values(videoProgressRef.current||{}).forEach(vp=>{
+            totalWatchTime+=(vp.watch_time_seconds||0);
+          });
+          
+          console.log('📊 Certificat stats:', {avgScore, durationSeconds, totalWatchTime});
+          
+          // 1. Générer certificat avec note et durée
           const certNumber='CERT-'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'-'+Math.random().toString(36).substring(2,8).toUpperCase();
           const{data:cert}=await supabase.from('certificates').insert({
             enrollment_id:selectedCourse.id,
             learner_id:user.id,
             playlist_id:selectedCourse.playlist_id,
-            certificate_number:certNumber
+            certificate_number:certNumber,
+            score:avgScore,
+            duration_seconds:totalWatchTime>0?totalWatchTime:durationSeconds,
+            completed_at:completionDate.toISOString()
           }).select().single();
           
           // 2. Ajouter des points (50 points par cours complété)
@@ -3838,7 +3879,7 @@
             await supabase.from('notifications').insert({
               user_id:user.id,
               title:'🎉 Félicitations !',
-              message:`Vous avez obtenu votre certificat pour "${selectedCourse.playlists?.title}"`,
+              message:`Vous avez obtenu votre certificat pour "${selectedCourse.playlists?.title}"${avgScore?' avec une note de '+avgScore+'%':''}`,
               type:'certificate',
               link:'my-certificates'
             });
@@ -4504,6 +4545,15 @@
           const{jsPDF}=window.jspdf;
           const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
           
+          // Fonction pour formater la durée
+          const formatDuration=(seconds)=>{
+            if(!seconds)return null;
+            const hours=Math.floor(seconds/3600);
+            const mins=Math.floor((seconds%3600)/60);
+            if(hours>0)return `${hours}h ${mins}min`;
+            return `${mins} minutes`;
+          };
+          
           // Fond
           doc.setFillColor(31,41,55);
           doc.rect(0,0,297,210,'F');
@@ -4519,43 +4569,73 @@
           doc.setTextColor(255,255,255);
           doc.setFontSize(40);
           doc.setFont('helvetica','bold');
-          doc.text('CERTIFICAT DE RÉUSSITE',148.5,50,{align:'center'});
+          doc.text('CERTIFICAT DE RÉUSSITE',148.5,45,{align:'center'});
           
           // Ligne décorative
           doc.setDrawColor(99,102,241);
           doc.setLineWidth(2);
-          doc.line(80,58,217,58);
+          doc.line(80,53,217,53);
           
           // Texte
           doc.setFontSize(16);
           doc.setFont('helvetica','normal');
           doc.setTextColor(156,163,175);
-          doc.text('Ce certificat est décerné à',148.5,80,{align:'center'});
+          doc.text('Ce certificat est décerné à',148.5,70,{align:'center'});
           
           // Nom
           doc.setFontSize(32);
           doc.setFont('helvetica','bold');
           doc.setTextColor(255,255,255);
-          doc.text(`${cert.profiles?.first_name} ${cert.profiles?.last_name}`,148.5,100,{align:'center'});
+          doc.text(`${cert.profiles?.first_name||''} ${cert.profiles?.last_name||''}`.trim()||'Apprenant',148.5,88,{align:'center'});
           
           // Texte suite
           doc.setFontSize(16);
           doc.setFont('helvetica','normal');
           doc.setTextColor(156,163,175);
-          doc.text('pour avoir complété avec succès la formation',148.5,120,{align:'center'});
+          doc.text('pour avoir complété avec succès la formation',148.5,105,{align:'center'});
           
           // Titre du cours
           doc.setFontSize(24);
           doc.setFont('helvetica','bold');
           doc.setTextColor(99,102,241);
-          doc.text(cert.playlists?.title||'Formation',148.5,140,{align:'center'});
+          doc.text(cert.playlists?.title||'Formation',148.5,122,{align:'center'});
+          
+          // Note et Durée (si disponibles)
+          let yPos=140;
+          if(cert.score!==null||cert.duration_seconds){
+            doc.setFontSize(14);
+            doc.setFont('helvetica','normal');
+            
+            const infos=[];
+            if(cert.score!==null){
+              infos.push(`Note obtenue: ${Math.round(cert.score)}%`);
+            }
+            if(cert.duration_seconds){
+              infos.push(`Durée de formation: ${formatDuration(cert.duration_seconds)}`);
+            }
+            
+            if(infos.length>0){
+              // Cadre pour les infos
+              const boxWidth=180;
+              const boxHeight=infos.length*12+10;
+              doc.setFillColor(55,65,81);
+              doc.roundedRect(148.5-boxWidth/2,yPos-5,boxWidth,boxHeight,3,3,'F');
+              
+              doc.setTextColor(255,255,255);
+              infos.forEach((info,i)=>{
+                doc.text(info,148.5,yPos+8+i*12,{align:'center'});
+              });
+              
+              yPos+=boxHeight+10;
+            }
+          }
           
           // Date et numéro
           doc.setFontSize(12);
           doc.setFont('helvetica','normal');
           doc.setTextColor(156,163,175);
-          doc.text(`Date d'émission: ${new Date(cert.issued_at).toLocaleDateString('fr-FR')}`,148.5,165,{align:'center'});
-          doc.text(`N° ${cert.certificate_number}`,148.5,175,{align:'center'});
+          doc.text(`Date d'émission: ${new Date(cert.issued_at||cert.completed_at).toLocaleDateString('fr-FR')}`,148.5,yPos+5,{align:'center'});
+          doc.text(`N° ${cert.certificate_number}`,148.5,yPos+15,{align:'center'});
           
           // Logo/Badge
           doc.setFillColor(99,102,241);
@@ -4582,21 +4662,40 @@
           <Empty icon="Award" title="Aucun certificat" desc="Complétez des cours pour obtenir vos certificats"/>
         ):(
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {certificates.map(cert=>(
+            {certificates.map(cert=>{
+              const formatDur=(s)=>{if(!s)return null;const h=Math.floor(s/3600);const m=Math.floor((s%3600)/60);return h>0?`${h}h ${m}min`:`${m}min`;};
+              return(
               <Card key={cert.id} className="overflow-hidden">
-                <div className="h-32 bg-gradient-to-br from-indigo-600 to-purple-700 flex items-center justify-center">
+                <div className="h-32 bg-gradient-to-br from-indigo-600 to-purple-700 flex items-center justify-center relative">
                   <Icon name="Award" size={64} className="text-white/80"/>
+                  {cert.score!==null&&(
+                    <div className="absolute top-2 right-2 bg-white/20 backdrop-blur rounded-lg px-2 py-1">
+                      <span className="text-white font-bold">{Math.round(cert.score)}%</span>
+                    </div>
+                  )}
                 </div>
                 <div className="p-4">
                   <h3 className="font-semibold mb-1">{cert.playlists?.title}</h3>
-                  <p className="text-sm text-gray-400 mb-3">Obtenu le {new Date(cert.issued_at).toLocaleDateString('fr-FR')}</p>
+                  <p className="text-sm text-gray-400 mb-2">Obtenu le {new Date(cert.issued_at||cert.completed_at).toLocaleDateString('fr-FR')}</p>
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {cert.score!==null&&(
+                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">
+                        <Icon name="Star" size={12}/> Note: {Math.round(cert.score)}%
+                      </span>
+                    )}
+                    {cert.duration_seconds&&(
+                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs">
+                        <Icon name="Clock" size={12}/> {formatDur(cert.duration_seconds)}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-gray-500 mb-3">N° {cert.certificate_number}</p>
                   <Button icon="Download" size="sm" onClick={()=>generatePDF(cert)} loading={generating===cert.id}>
                     Télécharger PDF
                   </Button>
                 </div>
               </Card>
-            ))}
+            );})}
           </div>
         )}
       </div>;
