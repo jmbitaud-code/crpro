@@ -61,7 +61,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.8.10';
+    const APP_VERSION = '6.8.12';
     // =======================================
 
     // Masquer l'écran de chargement une fois React prêt
@@ -3451,9 +3451,15 @@
           setScormProgress(spMap);
         } catch(e) { console.log('SCORM tables not available'); setCourseScorm([]); }
         
-        const{data:progress}=await supabase.from('video_progress').select('*').eq('enrollment_id',enrollment.id);
+        const{data:progress,error:progressError}=await supabase.from('video_progress').select('*').eq('enrollment_id',enrollment.id);
+        console.log('📊 Loaded video progress:', {enrollmentId: enrollment.id, count: progress?.length, progress, error: progressError});
         const progressMap={};
-        (progress||[]).forEach(p=>{progressMap[p.playlist_video_id]=p;});
+        (progress||[]).forEach(p=>{
+          // Utiliser playlist_video_id en priorité, sinon course_video_id
+          const videoKey = p.playlist_video_id || p.course_video_id;
+          if(videoKey) progressMap[videoKey]=p;
+        });
+        console.log('📊 Progress map:', progressMap);
         setVideoProgress(progressMap);
         
         // Charger le quiz du cours
@@ -3623,7 +3629,6 @@
         const progressData={
           enrollment_id:selectedCourse.id,
           playlist_video_id:videoId,
-          course_video_id:videoId, // Compatibilité avec ancienne colonne
           learner_id:user.id,
           last_position_seconds:Math.floor(positionSeconds),
           is_completed:completed||existing?.is_completed||false,
@@ -3671,8 +3676,15 @@
           playerInstanceRef.current.destroy();
         }
         
-        const startTime=videoProgress[currentVideo.id]?.last_position_seconds||0;
-        console.log('🎬 Initializing video player, startTime:', startTime);
+        const progressData=videoProgress[currentVideo.id];
+        const startTime=progressData?.last_position_seconds||0;
+        console.log('🎬 Initializing video player:', {
+          videoId: currentVideo.id,
+          vimeoId: currentVideo.videos?.vimeo_id,
+          progressData,
+          startTime,
+          allProgress: videoProgress
+        });
         playerRef.current.innerHTML='';
         
         const player=new Vimeo.Player(playerRef.current,{
@@ -3807,7 +3819,6 @@
         await supabase.from('video_progress').upsert({
           enrollment_id:selectedCourse.id,
           playlist_video_id:pv.id,
-          course_video_id:pv.id, // Compatibilité avec ancienne colonne
           learner_id:user.id,
           is_completed:true,
           completed_at:new Date().toISOString(),
@@ -4610,9 +4621,19 @@
         const{data:enr}=await supabase.from('enrollments').select('*,playlists:playlist_id(id,title)').eq('learner_id',user.id);
         setEnrollments(enr||[]);
         
-        // Charger la progression vidéo
-        const{data:vp}=await supabase.from('video_progress').select('*,playlist_videos:playlist_video_id(videos:video_id(title,duration))').eq('learner_id',user.id);
-        setVideoProgress(vp||[]);
+        // Charger la progression vidéo - essayer aussi avec enrollment_id
+        const{data:vp,error:vpError}=await supabase.from('video_progress').select('*,playlist_videos:playlist_video_id(videos:video_id(title,duration))').eq('learner_id',user.id);
+        console.log('📊 MyProgressPage - video_progress by learner_id:', {count: vp?.length, data: vp, error: vpError});
+        
+        // Si pas de résultats par learner_id, essayer par enrollment_id
+        let videoProgressData = vp || [];
+        if(videoProgressData.length === 0 && enr?.length > 0) {
+          const enrollmentIds = enr.map(e => e.id);
+          const{data:vpByEnrollment} = await supabase.from('video_progress').select('*,playlist_videos:playlist_video_id(videos:video_id(title,duration))').in('enrollment_id', enrollmentIds);
+          console.log('📊 MyProgressPage - video_progress by enrollment_id:', {count: vpByEnrollment?.length, data: vpByEnrollment});
+          videoProgressData = vpByEnrollment || [];
+        }
+        setVideoProgress(videoProgressData);
         
         // Charger la progression SCORM
         const{data:sp}=await supabase.from('scorm_progress').select('*,scorm_modules:module_id(title,category),enrollments:enrollment_id(playlists:playlist_id(title))').eq('learner_id',user.id);
