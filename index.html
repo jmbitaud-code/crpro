@@ -4575,9 +4575,14 @@
       const[loading,setLoading]=useState(true);
       const[generating,setGenerating]=useState(null);
 
+      console.log('🎫 MyCertificatesPage render:', {loading, generating, certificatesCount: certificates.length});
+
       useEffect(()=>{
+        console.log('🎫 MyCertificatesPage useEffect triggered');
         const load=async()=>{
-          const{data}=await supabase.from('certificates').select('*,playlists(title),profiles:learner_id(first_name,last_name)').eq('learner_id',user.id).order('issued_at',{ascending:false});
+          console.log('🎫 Loading certificates...');
+          const{data,error}=await supabase.from('certificates').select('*,playlists(title),profiles:learner_id(first_name,last_name)').eq('learner_id',user.id).order('issued_at',{ascending:false});
+          console.log('🎫 Certificates loaded:', {count: data?.length, error});
           setCertificates(data||[]);
           setLoading(false);
         };
@@ -4585,6 +4590,7 @@
       },[user.id]);
 
       const generatePDF=async(cert)=>{
+        console.log('📄 generatePDF started for:', cert.id);
         setGenerating(cert.id);
         try{
           const{jsPDF}=window.jspdf;
@@ -4691,12 +4697,16 @@
           
           // Télécharger - utiliser setTimeout pour isoler du cycle React
           const fileName=`certificat_${cert.certificate_number}.pdf`;
+          console.log('📄 About to save PDF:', fileName);
           setTimeout(()=>{
             try{
+              console.log('📄 Calling doc.save...');
               doc.save(fileName);
+              console.log('📄 doc.save completed');
             }catch(e){
               console.error('PDF save error:',e);
             }
+            console.log('📄 Setting generating to null');
             setGenerating(null);
           },100);
         }catch(err){
@@ -4706,6 +4716,7 @@
         }
       };
 
+      console.log('🎫 MyCertificatesPage about to render, loading:', loading);
       if(loading)return<Loading/>;
 
       return<div>
