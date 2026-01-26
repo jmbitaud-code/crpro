@@ -4696,41 +4696,32 @@
           doc.setFontSize(10);
           doc.text('V',148.5,193,{align:'center'});
           
-          // Télécharger via Blob - avec nettoyage immédiat
-          const fileName=`certificat_${cert.certificate_number}.pdf`;
+          // Télécharger via Blob - méthode simple et fiable
+          const fileName='certificat_'+cert.certificate_number+'.pdf';
           console.log('📄 About to save PDF:', fileName);
           
           // Créer le blob et l'URL
           const pdfBlob = doc.output('blob');
           const blobUrl = URL.createObjectURL(pdfBlob);
           
-          // Créer un iframe caché pour le téléchargement
-          const iframe = document.createElement('iframe');
-          iframe.style.display = 'none';
-          document.body.appendChild(iframe);
+          // Créer le lien de téléchargement
+          const link = document.createElement('a');
+          link.href = blobUrl;
+          link.download = fileName;
+          link.style.cssText = 'position:fixed;left:-9999px';
+          document.body.appendChild(link);
           
-          // Télécharger via l'iframe
-          const iframeDoc = iframe.contentWindow.document;
-          iframeDoc.open();
-          iframeDoc.write(`
-            <html><body>
-            <a id="dl" href="${blobUrl}" download="${fileName}">Download</a>
-            <script>
-              document.getElementById('dl').click();
-              window.parent.postMessage('downloaded', '*');
-            </script>
-            </body></html>
-          `);
-          iframeDoc.close();
+          // Cliquer et nettoyer
+          link.click();
           
-          // Nettoyer après un court délai
-          setTimeout(() => {
+          // Nettoyer après un délai
+          setTimeout(function(){
             console.log('📄 Cleaning up...');
             URL.revokeObjectURL(blobUrl);
-            if(iframe.parentNode) iframe.parentNode.removeChild(iframe);
+            if(link.parentNode)link.parentNode.removeChild(link);
             setGenerating(null);
             console.log('📄 Cleanup complete');
-          }, 1000);
+          }, 500);
           
         }catch(err){
           console.error('Erreur PDF:',err);
