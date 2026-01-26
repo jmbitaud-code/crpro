@@ -4696,32 +4696,16 @@
           doc.setFontSize(10);
           doc.text('V',148.5,193,{align:'center'});
           
-          // Télécharger via Blob - méthode simple et fiable
+          // Ouvrir le PDF dans un nouvel onglet (l'utilisateur peut le sauvegarder depuis là)
           const fileName='certificat_'+cert.certificate_number+'.pdf';
-          console.log('📄 About to save PDF:', fileName);
+          console.log('📄 About to open PDF:', fileName);
           
-          // Créer le blob et l'URL
-          const pdfBlob = doc.output('blob');
-          const blobUrl = URL.createObjectURL(pdfBlob);
+          // Ouvrir dans un nouvel onglet
+          const pdfOutput = doc.output('bloburl');
+          window.open(pdfOutput, '_blank');
           
-          // Créer le lien de téléchargement
-          const link = document.createElement('a');
-          link.href = blobUrl;
-          link.download = fileName;
-          link.style.cssText = 'position:fixed;left:-9999px';
-          document.body.appendChild(link);
-          
-          // Cliquer et nettoyer
-          link.click();
-          
-          // Nettoyer après un délai
-          setTimeout(function(){
-            console.log('📄 Cleaning up...');
-            URL.revokeObjectURL(blobUrl);
-            if(link.parentNode)link.parentNode.removeChild(link);
-            setGenerating(null);
-            console.log('📄 Cleanup complete');
-          }, 500);
+          console.log('📄 PDF opened in new tab');
+          setGenerating(null);
           
         }catch(err){
           console.error('Erreur PDF:',err);
@@ -5301,37 +5285,61 @@
       const[allBadges,setAllBadges]=useState([]);
       const[points,setPoints]=useState(0);
       const[loading,setLoading]=useState(true);
+      const[error,setError]=useState(null);
 
       useEffect(()=>{
         console.log('🏅 MyBadgesPage useEffect triggered');
+        let isMounted = true;
+        
         const load=async()=>{
           console.log('🏅 Loading badges data...');
+          console.log('🏅 Supabase client:', typeof supabase, supabase ? 'exists' : 'null');
+          
           try{
-            const[{data:earned,error:e1},{data:all,error:e2},{data:pts,error:e3}]=await Promise.all([
+            // Ajouter un timeout de 10 secondes
+            const timeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Timeout après 10s')), 10000)
+            );
+            
+            const dataPromise = Promise.all([
               supabase.from('learner_badges').select('*,badges(*)').eq('learner_id',user.id),
               supabase.from('badges').select('*').eq('is_active',true),
               supabase.from('learner_points').select('points').eq('learner_id',user.id)
             ]);
+            
+            console.log('🏅 Waiting for data...');
+            const results = await Promise.race([dataPromise, timeoutPromise]);
+            console.log('🏅 Got results:', results);
+            
+            const [{data:earned,error:e1},{data:all,error:e2},{data:pts,error:e3}] = results;
             console.log('🏅 Badges loaded:', {earned: earned?.length, all: all?.length, pts: pts?.length, errors: {e1,e2,e3}});
-            setEarnedBadges(earned||[]);
-            setAllBadges(all||[]);
-            setPoints((pts||[]).reduce((sum,p)=>sum+p.points,0));
-            console.log('🏅 Setting loading to false');
-            setLoading(false);
-            console.log('🏅 Loading set to false');
+            
+            if(isMounted){
+              setEarnedBadges(earned||[]);
+              setAllBadges(all||[]);
+              setPoints((pts||[]).reduce((sum,p)=>sum+p.points,0));
+              console.log('🏅 Setting loading to false');
+              setLoading(false);
+            }
           }catch(err){
             console.error('🏅 Error loading badges:', err);
-            setLoading(false);
+            if(isMounted){
+              setError(err.message);
+              setLoading(false);
+            }
           }
         };
         load();
+        
+        return () => { isMounted = false; };
       },[user.id]);
 
       const colorClasses={gold:'bg-yellow-500',silver:'bg-gray-400',bronze:'bg-orange-600',purple:'bg-purple-500',blue:'bg-blue-500'};
       const earnedIds=earnedBadges.map(e=>e.badge_id);
 
-      console.log('🏅 MyBadgesPage render, loading:', loading);
+      console.log('🏅 MyBadgesPage render, loading:', loading, 'error:', error);
       if(loading)return<Loading/>;
+      if(error)return<div className="text-red-500">Erreur: {error}</div>;
 
       return<div>
         <div className="flex items-center justify-between mb-6">
