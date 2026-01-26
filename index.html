@@ -2266,8 +2266,7 @@
                   completion_status:lessonStatus,
                   success_status:lessonStatus==='passed'?'passed':lessonStatus==='failed'?'failed':null,
                   score_scaled:scoreScaled,
-                  cmi_data:SCORM12_API._data,
-                  last_access:new Date().toISOString()
+                  cmi_data:SCORM12_API._data
                 },{onConflict:'enrollment_id,scorm_module_id'});
                 
                 if(error){
@@ -2368,8 +2367,7 @@
                   completion_status:completionStatus,
                   success_status:successStatus!=='unknown'?successStatus:null,
                   score_scaled:scoreScaled,
-                  cmi_data:SCORM2004_API._data,
-                  last_access:new Date().toISOString()
+                  cmi_data:SCORM2004_API._data
                 },{onConflict:'enrollment_id,scorm_module_id'});
                 
                 if(error){
