@@ -44,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.7.1';
+    const APP_VERSION = '6.8.0';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -313,6 +313,7 @@
         {id:'emails',label:'Emails',icon:'Mail',show:!viewAs&&can('manage_users')},
         {id:'permissions',label:'Permissions',icon:'Shield',show:!viewAs&&can('manage_permissions')},
         {id:'my-courses',label:'Mes cours',icon:'GraduationCap',show:showAsLearner},
+        {id:'my-progress',label:'Mon suivi',icon:'BarChart3',show:showAsLearner},
         {id:'my-paths',label:'Mes parcours',icon:'Map',show:showAsLearner},
         {id:'my-badges',label:'Mes badges',icon:'Trophy',show:showAsLearner},
         {id:'my-certificates',label:'Mes certificats',icon:'Award',show:showAsLearner},
@@ -410,6 +411,7 @@
             {page==='emails'&&<EmailsPage/>}
             {page==='permissions'&&<PermissionsPage/>}
             {page==='my-courses'&&<MyCoursesPage/>}
+            {page==='my-progress'&&<MyProgressPage/>}
             {page==='my-paths'&&<MyPathsPage/>}
             {page==='my-badges'&&<MyBadgesPage/>}
             {page==='my-certificates'&&<MyCertificatesPage/>}
@@ -4009,6 +4011,423 @@
                 </div>
               </Card>
             ))}
+          </div>
+        )}
+      </div>;
+    }
+
+    // ============================================================
+    // PAGE: Mon Suivi (MyProgressPage) - Tableau de bord apprenant complet
+    // ============================================================
+    function MyProgressPage(){
+      const{user,profile}=useAuth();
+      const[loading,setLoading]=useState(true);
+      const[activeTab,setActiveTab]=useState('overview');
+      
+      // Données globales
+      const[enrollments,setEnrollments]=useState([]);
+      const[videoProgress,setVideoProgress]=useState([]);
+      const[scormProgress,setScormProgress]=useState([]);
+      const[quizAttempts,setQuizAttempts]=useState([]);
+      const[sessions,setSessions]=useState([]);
+      
+      // Stats calculées
+      const[stats,setStats]=useState({
+        totalCourses:0,completedCourses:0,
+        totalVideos:0,watchedVideos:0,totalWatchTime:0,
+        totalScorm:0,completedScorm:0,passedScorm:0,avgScormScore:0,
+        totalQuizzes:0,passedQuizzes:0,avgQuizScore:0,
+        totalSessionTime:0,sessionsCount:0,lastActivity:null
+      });
+      
+      // Graphiques
+      const activityChartRef=useRef(null);
+      const progressChartRef=useRef(null);
+      const chartsRef=useRef({});
+
+      // Enregistrer la session actuelle
+      useEffect(()=>{
+        const sessionStart=new Date();
+        const sessionId=`session_${Date.now()}`;
+        
+        // Enregistrer le début de session dans localStorage
+        const existingSessions=JSON.parse(localStorage.getItem(`lms_sessions_${user.id}`)||'[]');
+        existingSessions.push({id:sessionId,start:sessionStart.toISOString(),end:null});
+        localStorage.setItem(`lms_sessions_${user.id}`,JSON.stringify(existingSessions.slice(-50))); // Garder les 50 dernières
+        
+        // À la fermeture, mettre à jour la fin de session
+        const handleUnload=()=>{
+          const sessions=JSON.parse(localStorage.getItem(`lms_sessions_${user.id}`)||'[]');
+          const idx=sessions.findIndex(s=>s.id===sessionId);
+          if(idx!==-1){
+            sessions[idx].end=new Date().toISOString();
+            sessions[idx].duration=Math.round((new Date()-sessionStart)/1000);
+            localStorage.setItem(`lms_sessions_${user.id}`,JSON.stringify(sessions));
+          }
+        };
+        
+        window.addEventListener('beforeunload',handleUnload);
+        return()=>{
+          handleUnload();
+          window.removeEventListener('beforeunload',handleUnload);
+        };
+      },[user.id]);
+
+      const load=useCallback(async()=>{
+        // Charger les inscriptions
+        const{data:enr}=await supabase.from('enrollments').select('*,playlists:playlist_id(id,title)').eq('learner_id',user.id);
+        setEnrollments(enr||[]);
+        
+        // Charger la progression vidéo
+        const{data:vp}=await supabase.from('video_progress').select('*,playlist_videos:playlist_video_id(videos:video_id(title,duration))').eq('learner_id',user.id);
+        setVideoProgress(vp||[]);
+        
+        // Charger la progression SCORM
+        const{data:sp}=await supabase.from('scorm_progress').select('*,scorm_modules:module_id(title,category),enrollments:enrollment_id(playlists:playlist_id(title))').eq('learner_id',user.id);
+        setScormProgress(sp||[]);
+        
+        // Charger les tentatives de quiz
+        const{data:qa}=await supabase.from('quiz_attempts').select('*,quizzes:quiz_id(title,passing_score)').eq('learner_id',user.id);
+        setQuizAttempts(qa||[]);
+        
+        // Charger les sessions depuis localStorage
+        const localSessions=JSON.parse(localStorage.getItem(`lms_sessions_${user.id}`)||'[]');
+        setSessions(localSessions);
+        
+        // Calculer les stats
+        const totalCourses=(enr||[]).length;
+        const completedCourses=(enr||[]).filter(e=>e.status==='completed').length;
+        
+        const totalVideos=(vp||[]).length;
+        const watchedVideos=(vp||[]).filter(v=>v.is_completed).length;
+        const totalWatchTime=(vp||[]).reduce((a,v)=>a+(v.watch_time_seconds||0),0);
+        
+        const totalScorm=(sp||[]).length;
+        const completedScorm=(sp||[]).filter(s=>s.completion_status==='completed'||s.completion_status==='passed').length;
+        const passedScorm=(sp||[]).filter(s=>s.completion_status==='passed'||s.success_status==='passed').length;
+        const scormWithScore=(sp||[]).filter(s=>s.score_scaled!==null);
+        const avgScormScore=scormWithScore.length>0?scormWithScore.reduce((a,s)=>a+(s.score_scaled||0),0)/scormWithScore.length:0;
+        
+        const quizzesTaken=[...new Set((qa||[]).map(q=>q.quiz_id))].length;
+        const passedQuizzes=(qa||[]).filter(q=>q.passed).length;
+        const avgQuizScore=(qa||[]).length>0?(qa||[]).reduce((a,q)=>a+(q.score_percent||0),0)/(qa||[]).length:0;
+        
+        const sessionsWithDuration=localSessions.filter(s=>s.duration);
+        const totalSessionTime=sessionsWithDuration.reduce((a,s)=>a+(s.duration||0),0);
+        const sessionsCount=localSessions.length;
+        
+        // Dernière activité
+        const dates=[
+          ...(enr||[]).map(e=>e.updated_at),
+          ...(vp||[]).map(v=>v.updated_at),
+          ...(sp||[]).map(s=>s.updated_at),
+          ...(qa||[]).map(q=>q.created_at)
+        ].filter(Boolean).sort((a,b)=>new Date(b)-new Date(a));
+        const lastActivity=dates[0]||null;
+        
+        setStats({
+          totalCourses,completedCourses,
+          totalVideos,watchedVideos,totalWatchTime,
+          totalScorm,completedScorm,passedScorm,avgScormScore,
+          totalQuizzes:quizzesTaken,passedQuizzes,avgQuizScore,
+          totalSessionTime,sessionsCount,lastActivity
+        });
+        
+        setLoading(false);
+      },[user.id]);
+
+      useEffect(()=>{load();},[load]);
+
+      // Créer les graphiques
+      useEffect(()=>{
+        if(loading||activeTab!=='overview')return;
+        
+        // Détruire les anciens graphiques
+        Object.values(chartsRef.current).forEach(c=>c?.destroy());
+        chartsRef.current={};
+        
+        // Graphique d'activité par jour (7 derniers jours)
+        if(activityChartRef.current){
+          const last7Days=[];
+          for(let i=6;i>=0;i--){
+            const d=new Date();
+            d.setDate(d.getDate()-i);
+            last7Days.push(d.toISOString().slice(0,10));
+          }
+          
+          const activityByDay=last7Days.map(day=>{
+            const dayVideos=videoProgress.filter(v=>v.updated_at?.slice(0,10)===day).length;
+            const dayScorm=scormProgress.filter(s=>s.updated_at?.slice(0,10)===day).length;
+            const dayQuiz=quizAttempts.filter(q=>q.created_at?.slice(0,10)===day).length;
+            return dayVideos+dayScorm+dayQuiz;
+          });
+          
+          chartsRef.current.activity=new Chart(activityChartRef.current,{
+            type:'bar',
+            data:{
+              labels:last7Days.map(d=>{const date=new Date(d);return date.toLocaleDateString('fr-FR',{weekday:'short',day:'numeric'});}),
+              datasets:[{
+                label:'Activités',
+                data:activityByDay,
+                backgroundColor:'#6366f1'
+              }]
+            },
+            options:{
+              responsive:true,
+              maintainAspectRatio:false,
+              scales:{
+                x:{ticks:{color:'#9ca3af'},grid:{display:false}},
+                y:{ticks:{color:'#9ca3af'},grid:{color:'#374151'},beginAtZero:true}
+              },
+              plugins:{legend:{display:false}}
+            }
+          });
+        }
+        
+        // Graphique de progression
+        if(progressChartRef.current){
+          chartsRef.current.progress=new Chart(progressChartRef.current,{
+            type:'doughnut',
+            data:{
+              labels:['Cours terminés','Cours en cours','Vidéos vues','SCORM réussis'],
+              datasets:[{
+                data:[stats.completedCourses,stats.totalCourses-stats.completedCourses,stats.watchedVideos,stats.passedScorm],
+                backgroundColor:['#22c55e','#eab308','#3b82f6','#f97316']
+              }]
+            },
+            options:{
+              responsive:true,
+              maintainAspectRatio:false,
+              plugins:{legend:{position:'bottom',labels:{color:'#9ca3af'}}}
+            }
+          });
+        }
+        
+        return()=>{
+          Object.values(chartsRef.current).forEach(c=>c?.destroy());
+        };
+      },[loading,activeTab,videoProgress,scormProgress,quizAttempts,stats]);
+
+      // Formatage du temps
+      const formatDuration=(seconds)=>{
+        if(!seconds||seconds<60)return `${seconds||0}s`;
+        const h=Math.floor(seconds/3600);
+        const m=Math.floor((seconds%3600)/60);
+        const s=seconds%60;
+        if(h>0)return `${h}h ${m}m`;
+        return `${m}m ${s}s`;
+      };
+
+      if(loading)return<Loading/>;
+
+      return<div>
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold">Mon suivi</h1>
+            <p className="text-gray-400 text-sm">Tableau de bord de votre progression</p>
+          </div>
+          {stats.lastActivity&&<p className="text-sm text-gray-500">Dernière activité: {new Date(stats.lastActivity).toLocaleDateString('fr-FR')}</p>}
+        </div>
+
+        {/* Stats principales */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
+          <Card className="p-4 text-center">
+            <Icon name="BookOpen" size={24} className="mx-auto text-indigo-400 mb-2"/>
+            <p className="text-2xl font-bold">{stats.completedCourses}/{stats.totalCourses}</p>
+            <p className="text-xs text-gray-400">Cours terminés</p>
+          </Card>
+          <Card className="p-4 text-center">
+            <Icon name="Play" size={24} className="mx-auto text-blue-400 mb-2"/>
+            <p className="text-2xl font-bold">{stats.watchedVideos}</p>
+            <p className="text-xs text-gray-400">Vidéos vues</p>
+          </Card>
+          <Card className="p-4 text-center">
+            <Icon name="Clock" size={24} className="mx-auto text-purple-400 mb-2"/>
+            <p className="text-2xl font-bold">{formatDuration(stats.totalWatchTime)}</p>
+            <p className="text-xs text-gray-400">Temps vidéo</p>
+          </Card>
+          <Card className="p-4 text-center">
+            <Icon name="Package" size={24} className="mx-auto text-orange-400 mb-2"/>
+            <p className="text-2xl font-bold">{stats.passedScorm}/{stats.totalScorm}</p>
+            <p className="text-xs text-gray-400">SCORM réussis</p>
+          </Card>
+          <Card className="p-4 text-center">
+            <Icon name="HelpCircle" size={24} className="mx-auto text-green-400 mb-2"/>
+            <p className="text-2xl font-bold">{Math.round(stats.avgQuizScore)}%</p>
+            <p className="text-xs text-gray-400">Score quiz moy.</p>
+          </Card>
+          <Card className="p-4 text-center">
+            <Icon name="Activity" size={24} className="mx-auto text-cyan-400 mb-2"/>
+            <p className="text-2xl font-bold">{formatDuration(stats.totalSessionTime)}</p>
+            <p className="text-xs text-gray-400">Temps total LMS</p>
+          </Card>
+        </div>
+
+        {/* Onglets */}
+        <Tabs tabs={[
+          {id:'overview',label:'Vue d\'ensemble',icon:'LayoutDashboard'},
+          {id:'courses',label:'Mes cours',icon:'BookOpen'},
+          {id:'videos',label:'Vidéos',icon:'Film'},
+          {id:'scorm',label:'Modules SCORM',icon:'Package'},
+          {id:'sessions',label:'Connexions',icon:'Clock'}
+        ]} active={activeTab} onChange={setActiveTab}/>
+
+        {/* Vue d'ensemble */}
+        {activeTab==='overview'&&(
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="p-6">
+              <h3 className="font-semibold mb-4">Activité des 7 derniers jours</h3>
+              <div className="h-48"><canvas ref={activityChartRef}></canvas></div>
+            </Card>
+            <Card className="p-6">
+              <h3 className="font-semibold mb-4">Répartition de la progression</h3>
+              <div className="h-48"><canvas ref={progressChartRef}></canvas></div>
+            </Card>
+            
+            {/* Résumé rapide */}
+            <Card className="p-6 lg:col-span-2">
+              <h3 className="font-semibold mb-4">Résumé</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                  <p className="text-sm text-gray-400 mb-2">Progression cours</p>
+                  <ProgressBar percent={stats.totalCourses>0?(stats.completedCourses/stats.totalCourses)*100:0} color="indigo"/>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-400 mb-2">Score SCORM moyen</p>
+                  <ProgressBar percent={stats.avgScormScore*100} color={stats.avgScormScore>=0.7?'green':stats.avgScormScore>=0.5?'yellow':'red'}/>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-400 mb-2">Score Quiz moyen</p>
+                  <ProgressBar percent={stats.avgQuizScore} color={stats.avgQuizScore>=70?'green':stats.avgQuizScore>=50?'yellow':'red'}/>
+                </div>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Détail des cours */}
+        {activeTab==='courses'&&(
+          <Card>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-750"><tr>
+                  <th className="text-left p-4 font-medium text-gray-400">Cours</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Statut</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Progression</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Inscrit le</th>
+                </tr></thead>
+                <tbody className="divide-y divide-gray-700">
+                  {enrollments.length===0?<tr><td colSpan="4" className="p-8 text-center text-gray-500">Aucun cours</td></tr>:enrollments.map(e=>(
+                    <tr key={e.id}>
+                      <td className="p-4 font-medium">{e.playlists?.title}</td>
+                      <td className="p-4"><span className={`px-2 py-1 rounded text-xs ${e.status==='completed'?'bg-green-500':'bg-yellow-500'}`}>{e.status==='completed'?'Terminé':'En cours'}</span></td>
+                      <td className="p-4"><div className="w-32"><ProgressBar percent={e.progress_percent||0} size="sm" showLabel={false}/></div></td>
+                      <td className="p-4 text-gray-400 text-sm">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+
+        {/* Détail des vidéos */}
+        {activeTab==='videos'&&(
+          <Card>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-750"><tr>
+                  <th className="text-left p-4 font-medium text-gray-400">Vidéo</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Statut</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Temps visionné</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Dernière vue</th>
+                </tr></thead>
+                <tbody className="divide-y divide-gray-700">
+                  {videoProgress.length===0?<tr><td colSpan="4" className="p-8 text-center text-gray-500">Aucune vidéo visionnée</td></tr>:videoProgress.slice(0,50).map(v=>(
+                    <tr key={v.id}>
+                      <td className="p-4"><div className="flex items-center gap-3"><Icon name="Film" size={16} className="text-blue-400"/><span className="font-medium">{v.playlist_videos?.videos?.title||'Vidéo'}</span></div></td>
+                      <td className="p-4">{v.is_completed?<span className="text-green-400">✓ Terminée</span>:<span className="text-yellow-400">En cours</span>}</td>
+                      <td className="p-4 text-gray-400">{formatDuration(v.watch_time_seconds)}</td>
+                      <td className="p-4 text-gray-400 text-sm">{v.updated_at?new Date(v.updated_at).toLocaleDateString('fr-FR'):'-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {videoProgress.length>50&&<p className="p-4 text-center text-gray-500 text-sm">Affichage des 50 dernières vidéos</p>}
+            </div>
+          </Card>
+        )}
+
+        {/* Détail SCORM */}
+        {activeTab==='scorm'&&(
+          <Card>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-750"><tr>
+                  <th className="text-left p-4 font-medium text-gray-400">Module</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Cours</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Statut</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Score</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Date</th>
+                </tr></thead>
+                <tbody className="divide-y divide-gray-700">
+                  {scormProgress.length===0?<tr><td colSpan="5" className="p-8 text-center text-gray-500">Aucun module SCORM</td></tr>:scormProgress.map(s=>(
+                    <tr key={s.id}>
+                      <td className="p-4"><div className="flex items-center gap-3"><div className="w-8 h-8 bg-orange-500/20 rounded flex items-center justify-center"><Icon name="Package" size={16} className="text-orange-400"/></div><div><p className="font-medium">{s.scorm_modules?.title}</p>{s.scorm_modules?.category&&<p className="text-xs text-gray-500">{s.scorm_modules.category}</p>}</div></div></td>
+                      <td className="p-4 text-gray-400 text-sm">{s.enrollments?.playlists?.title||'-'}</td>
+                      <td className="p-4"><ScormStatusBadge status={s.completion_status}/></td>
+                      <td className="p-4"><ScoreBadge score={s.score_scaled}/></td>
+                      <td className="p-4 text-gray-400 text-sm">{s.updated_at?new Date(s.updated_at).toLocaleDateString('fr-FR'):'-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+
+        {/* Historique des connexions */}
+        {activeTab==='sessions'&&(
+          <div className="space-y-6">
+            <Card className="p-6">
+              <h3 className="font-semibold mb-4">Statistiques de connexion</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="text-center p-4 bg-gray-700/50 rounded-lg">
+                  <p className="text-3xl font-bold text-cyan-400">{stats.sessionsCount}</p>
+                  <p className="text-sm text-gray-400">Sessions totales</p>
+                </div>
+                <div className="text-center p-4 bg-gray-700/50 rounded-lg">
+                  <p className="text-3xl font-bold text-purple-400">{formatDuration(stats.totalSessionTime)}</p>
+                  <p className="text-sm text-gray-400">Temps total</p>
+                </div>
+                <div className="text-center p-4 bg-gray-700/50 rounded-lg">
+                  <p className="text-3xl font-bold text-green-400">{stats.sessionsCount>0?formatDuration(Math.round(stats.totalSessionTime/stats.sessionsCount)):'-'}</p>
+                  <p className="text-sm text-gray-400">Durée moyenne</p>
+                </div>
+              </div>
+            </Card>
+            
+            <Card>
+              <div className="p-4 border-b border-gray-700">
+                <h3 className="font-semibold">Historique des connexions</h3>
+              </div>
+              <div className="divide-y divide-gray-700 max-h-96 overflow-y-auto">
+                {sessions.length===0?<p className="p-8 text-center text-gray-500">Aucune session enregistrée</p>:sessions.slice().reverse().map((s,i)=>(
+                  <div key={s.id||i} className="p-4 flex items-center gap-4">
+                    <div className="w-10 h-10 bg-cyan-500/20 rounded-full flex items-center justify-center">
+                      <Icon name="LogIn" size={18} className="text-cyan-400"/>
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-medium">{new Date(s.start).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'})}</p>
+                      <p className="text-sm text-gray-400">{new Date(s.start).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})} - {s.end?new Date(s.end).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}):'En cours'}</p>
+                    </div>
+                    <div className="text-right">
+                      {s.duration?<p className="font-medium text-cyan-400">{formatDuration(s.duration)}</p>:<span className="px-2 py-1 bg-green-500 rounded text-xs">Actif</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
           </div>
         )}
       </div>;
