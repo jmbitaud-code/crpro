@@ -3143,34 +3143,16 @@
                 
                 console.log('SCORM Saving:', {enrollmentId, moduleId:module.id, lessonStatus, scoreScaled});
                 
-                // Check if record exists first
-                const{data:existing}=await supabase.from('scorm_progress')
-                  .select('id')
-                  .eq('enrollment_id',enrollmentId)
-                  .eq('module_id',module.id)
-                  .maybeSingle();
-                
-                let result;
-                if(existing){
-                  // Update existing record
-                  result=await supabase.from('scorm_progress').update({
-                    completion_status:lessonStatus,
-                    success_status:lessonStatus==='passed'?'passed':lessonStatus==='failed'?'failed':null,
-                    score_scaled:scoreScaled,
-                    cmi_data:SCORM12_API._data
-                  }).eq('id',existing.id);
-                }else{
-                  // Insert new record
-                  result=await supabase.from('scorm_progress').insert({
-                    enrollment_id:enrollmentId,
-                    module_id:module.id,
-                    learner_id:user.id,
-                    completion_status:lessonStatus,
-                    success_status:lessonStatus==='passed'?'passed':lessonStatus==='failed'?'failed':null,
-                    score_scaled:scoreScaled,
-                    cmi_data:SCORM12_API._data
-                  });
-                }
+                // Utiliser upsert pour éviter les erreurs de duplicate key
+                const result=await supabase.from('scorm_progress').upsert({
+                  enrollment_id:enrollmentId,
+                  module_id:module.id,
+                  learner_id:user.id,
+                  completion_status:lessonStatus,
+                  success_status:lessonStatus==='passed'?'passed':lessonStatus==='failed'?'failed':null,
+                  score_scaled:scoreScaled,
+                  cmi_data:SCORM12_API._data
+                },{onConflict:'enrollment_id,module_id'});
                 
                 if(result.error){
                   console.error('SCORM Save Error:', result.error);
@@ -3264,34 +3246,16 @@
                 
                 console.log('SCORM 2004 Saving:', {enrollmentId, moduleId:module.id, completionStatus, scoreScaled});
                 
-                // Check if record exists first
-                const{data:existing}=await supabase.from('scorm_progress')
-                  .select('id')
-                  .eq('enrollment_id',enrollmentId)
-                  .eq('module_id',module.id)
-                  .maybeSingle();
-                
-                let result;
-                if(existing){
-                  // Update existing record
-                  result=await supabase.from('scorm_progress').update({
-                    completion_status:completionStatus,
-                    success_status:successStatus!=='unknown'?successStatus:null,
-                    score_scaled:scoreScaled,
-                    cmi_data:SCORM2004_API._data
-                  }).eq('id',existing.id);
-                }else{
-                  // Insert new record
-                  result=await supabase.from('scorm_progress').insert({
-                    enrollment_id:enrollmentId,
-                    module_id:module.id,
-                    learner_id:user.id,
-                    completion_status:completionStatus,
-                    success_status:successStatus!=='unknown'?successStatus:null,
-                    score_scaled:scoreScaled,
-                    cmi_data:SCORM2004_API._data
-                  });
-                }
+                // Utiliser upsert pour éviter les erreurs de duplicate key
+                const result=await supabase.from('scorm_progress').upsert({
+                  enrollment_id:enrollmentId,
+                  module_id:module.id,
+                  learner_id:user.id,
+                  completion_status:completionStatus,
+                  success_status:successStatus!=='unknown'?successStatus:null,
+                  score_scaled:scoreScaled,
+                  cmi_data:SCORM2004_API._data
+                },{onConflict:'enrollment_id,module_id'});
                 
                 if(result.error){
                   console.error('SCORM 2004 Save Error:', result.error);
@@ -3778,8 +3742,12 @@
           }
         });
         
+        // Flag pour éviter que pause écrase le statut après ended
+        let videoEnded=false;
+        
         player.on('ended',async()=>{
           console.log('🏁 Video ended');
+          videoEnded=true;
           await saveProgress(0,true);
           // Attendre un peu que l'état soit mis à jour puis recalculer
           setTimeout(async()=>{
@@ -3804,8 +3772,12 @@
           },500);
         });
         
-        // Sauvegarder aussi quand on pause
+        // Sauvegarder aussi quand on pause (mais pas si la vidéo vient de se terminer)
         player.on('pause',(data)=>{
+          if(videoEnded){
+            console.log('⏸️ Video paused after ended, ignoring...');
+            return;
+          }
           console.log('⏸️ Video paused at:', data.seconds);
           saveProgress(data.seconds,false);
         });
