@@ -5297,15 +5297,24 @@
       useEffect(()=>{
         console.log('🏅 MyBadgesPage useEffect triggered');
         const load=async()=>{
-          const[{data:earned},{data:all},{data:pts}]=await Promise.all([
-            supabase.from('learner_badges').select('*,badges(*)').eq('learner_id',user.id),
-            supabase.from('badges').select('*').eq('is_active',true),
-            supabase.from('learner_points').select('points').eq('learner_id',user.id)
-          ]);
-          setEarnedBadges(earned||[]);
-          setAllBadges(all||[]);
-          setPoints((pts||[]).reduce((sum,p)=>sum+p.points,0));
-          setLoading(false);
+          console.log('🏅 Loading badges data...');
+          try{
+            const[{data:earned,error:e1},{data:all,error:e2},{data:pts,error:e3}]=await Promise.all([
+              supabase.from('learner_badges').select('*,badges(*)').eq('learner_id',user.id),
+              supabase.from('badges').select('*').eq('is_active',true),
+              supabase.from('learner_points').select('points').eq('learner_id',user.id)
+            ]);
+            console.log('🏅 Badges loaded:', {earned: earned?.length, all: all?.length, pts: pts?.length, errors: {e1,e2,e3}});
+            setEarnedBadges(earned||[]);
+            setAllBadges(all||[]);
+            setPoints((pts||[]).reduce((sum,p)=>sum+p.points,0));
+            console.log('🏅 Setting loading to false');
+            setLoading(false);
+            console.log('🏅 Loading set to false');
+          }catch(err){
+            console.error('🏅 Error loading badges:', err);
+            setLoading(false);
+          }
         };
         load();
       },[user.id]);
@@ -5313,6 +5322,7 @@
       const colorClasses={gold:'bg-yellow-500',silver:'bg-gray-400',bronze:'bg-orange-600',purple:'bg-purple-500',blue:'bg-blue-500'};
       const earnedIds=earnedBadges.map(e=>e.badge_id);
 
+      console.log('🏅 MyBadgesPage render, loading:', loading);
       if(loading)return<Loading/>;
 
       return<div>
