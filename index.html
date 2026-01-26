@@ -44,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.6.9';
+    const APP_VERSION = '6.6.10';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -2252,23 +2252,35 @@
             console.log('SCORM 1.2: LMSCommit');
             // Sauvegarder dans Supabase
             const saveData=async()=>{
-              const lessonStatus=SCORM12_API._data['cmi.core.lesson_status']||'not attempted';
-              const scoreRaw=SCORM12_API._data['cmi.core.score.raw'];
-              const scoreScaled=scoreRaw?parseFloat(scoreRaw)/100:null;
-              
-              await supabase.from('scorm_progress').upsert({
-                enrollment_id:enrollmentId,
-                scorm_module_id:module.id,
-                learner_id:user.id,
-                completion_status:lessonStatus,
-                success_status:lessonStatus==='passed'?'passed':lessonStatus==='failed'?'failed':null,
-                score_scaled:scoreScaled,
-                cmi_data:SCORM12_API._data,
-                last_access:new Date().toISOString()
-              },{onConflict:'enrollment_id,scorm_module_id'});
-              
-              if(lessonStatus==='completed'||lessonStatus==='passed'){
-                if(onComplete)onComplete();
+              try{
+                const lessonStatus=SCORM12_API._data['cmi.core.lesson_status']||'not attempted';
+                const scoreRaw=SCORM12_API._data['cmi.core.score.raw'];
+                const scoreScaled=scoreRaw?parseFloat(scoreRaw)/100:null;
+                
+                console.log('SCORM Saving:', {enrollmentId, moduleId:module.id, lessonStatus, scoreScaled});
+                
+                const{data,error}=await supabase.from('scorm_progress').upsert({
+                  enrollment_id:enrollmentId,
+                  scorm_module_id:module.id,
+                  learner_id:user.id,
+                  completion_status:lessonStatus,
+                  success_status:lessonStatus==='passed'?'passed':lessonStatus==='failed'?'failed':null,
+                  score_scaled:scoreScaled,
+                  cmi_data:SCORM12_API._data,
+                  last_access:new Date().toISOString()
+                },{onConflict:'enrollment_id,scorm_module_id'});
+                
+                if(error){
+                  console.error('SCORM Save Error:', error);
+                }else{
+                  console.log('SCORM Saved successfully');
+                }
+                
+                if(lessonStatus==='completed'||lessonStatus==='passed'){
+                  if(onComplete)onComplete();
+                }
+              }catch(err){
+                console.error('SCORM Save Exception:', err);
               }
             };
             saveData();
@@ -2342,23 +2354,35 @@
           Commit:function(param){
             console.log('SCORM 2004: Commit');
             const saveData=async()=>{
-              const completionStatus=SCORM2004_API._data['cmi.completion_status']||'not attempted';
-              const successStatus=SCORM2004_API._data['cmi.success_status']||'unknown';
-              const scoreScaled=SCORM2004_API._data['cmi.score.scaled']?parseFloat(SCORM2004_API._data['cmi.score.scaled']):null;
-              
-              await supabase.from('scorm_progress').upsert({
-                enrollment_id:enrollmentId,
-                scorm_module_id:module.id,
-                learner_id:user.id,
-                completion_status:completionStatus,
-                success_status:successStatus!=='unknown'?successStatus:null,
-                score_scaled:scoreScaled,
-                cmi_data:SCORM2004_API._data,
-                last_access:new Date().toISOString()
-              },{onConflict:'enrollment_id,scorm_module_id'});
-              
-              if(completionStatus==='completed'||successStatus==='passed'){
-                if(onComplete)onComplete();
+              try{
+                const completionStatus=SCORM2004_API._data['cmi.completion_status']||'not attempted';
+                const successStatus=SCORM2004_API._data['cmi.success_status']||'unknown';
+                const scoreScaled=SCORM2004_API._data['cmi.score.scaled']?parseFloat(SCORM2004_API._data['cmi.score.scaled']):null;
+                
+                console.log('SCORM 2004 Saving:', {enrollmentId, moduleId:module.id, completionStatus, scoreScaled});
+                
+                const{data,error}=await supabase.from('scorm_progress').upsert({
+                  enrollment_id:enrollmentId,
+                  scorm_module_id:module.id,
+                  learner_id:user.id,
+                  completion_status:completionStatus,
+                  success_status:successStatus!=='unknown'?successStatus:null,
+                  score_scaled:scoreScaled,
+                  cmi_data:SCORM2004_API._data,
+                  last_access:new Date().toISOString()
+                },{onConflict:'enrollment_id,scorm_module_id'});
+                
+                if(error){
+                  console.error('SCORM 2004 Save Error:', error);
+                }else{
+                  console.log('SCORM 2004 Saved successfully');
+                }
+                
+                if(completionStatus==='completed'||successStatus==='passed'){
+                  if(onComplete)onComplete();
+                }
+              }catch(err){
+                console.error('SCORM 2004 Save Exception:', err);
               }
             };
             saveData();
