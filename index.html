@@ -44,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.6.13';
+    const APP_VERSION = '6.7.0';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -67,6 +67,24 @@
       view_analytics:'Voir les statistiques',
       export_reports:'Exporter les rapports',
       manage_permissions:'Gérer les permissions'
+    };
+    
+    // Labels et couleurs SCORM
+    const SCORM_STATUS_LABELS={
+      'not attempted':'Non commencé',
+      'incomplete':'En cours',
+      'completed':'Terminé',
+      'passed':'Réussi',
+      'failed':'Échoué',
+      'unknown':'Inconnu'
+    };
+    const SCORM_STATUS_COLORS={
+      'not attempted':'bg-gray-500',
+      'incomplete':'bg-yellow-500',
+      'completed':'bg-green-500',
+      'passed':'bg-green-500',
+      'failed':'bg-red-500',
+      'unknown':'bg-gray-500'
     };
 
     // Auth Context avec mode "Vue comme"
@@ -175,6 +193,21 @@
     const Modal=({isOpen,onClose,title,children,size='md'})=>{if(!isOpen)return null;const s={sm:'max-w-md',md:'max-w-lg',lg:'max-w-2xl',xl:'max-w-4xl',full:'max-w-6xl'};return(<div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"><div className="absolute inset-0 bg-black/70" onClick={onClose}/><div className={`relative bg-gray-800 rounded-xl w-full ${s[size]} max-h-[90vh] overflow-auto`}><div className="sticky top-0 bg-gray-800 p-4 border-b border-gray-700 flex items-center justify-between z-10"><h2 className="text-lg font-semibold">{title}</h2><button onClick={onClose} className="p-2 hover:bg-gray-700 rounded-lg"><Icon name="X" size={20}/></button></div><div className="p-4">{children}</div></div></div>);};
     const Card=({children,className='',...props})=><div className={`bg-gray-800 rounded-xl border border-gray-700 ${className}`} {...props}>{children}</div>;
     const RoleBadge=({role})=><span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${ROLE_COLORS[role]||'bg-gray-500'} text-white`}>{ROLE_LABELS[role]||role}</span>;
+    
+    // Score Badge pour SCORM
+    const ScoreBadge=({score,showLabel=true})=>{
+      if(score===null||score===undefined)return<span className="text-gray-500 text-sm">—</span>;
+      const percent=Math.round(score*100);
+      const color=percent>=70?'text-green-400':percent>=50?'text-yellow-400':'text-red-400';
+      return<span className={`font-semibold ${color}`}>{percent}%{showLabel&&' score'}</span>;
+    };
+    
+    // Status Badge pour SCORM
+    const ScormStatusBadge=({status})=>{
+      const label=SCORM_STATUS_LABELS[status]||status||'Inconnu';
+      const color=SCORM_STATUS_COLORS[status]||'bg-gray-500';
+      return<span className={`px-2 py-0.5 rounded text-xs font-medium ${color}`}>{label}</span>;
+    };
     const Loading=({text})=><div className="flex flex-col items-center justify-center p-8"><div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"/>{text&&<p className="text-gray-400 mt-4">{text}</p>}</div>;
     const Empty=({icon,title,desc,action})=><div className="flex flex-col items-center justify-center p-8 text-center"><div className="text-gray-500 mb-4"><Icon name={icon} size={48}/></div><h3 className="text-lg font-medium text-gray-300">{title}</h3>{desc&&<p className="text-gray-500 mt-1">{desc}</p>}{action&&<div className="mt-4">{action}</div>}</div>;
     const Alert=({type='info',children})=>{const colors={info:'bg-blue-500/20 text-blue-300',success:'bg-green-500/20 text-green-300',warning:'bg-yellow-500/20 text-yellow-300',error:'bg-red-500/20 text-red-300'};return<div className={`p-4 rounded-lg ${colors[type]}`}>{children}</div>;};
@@ -268,6 +301,7 @@
       const menu=[
         {id:'dashboard',label:'Tableau de bord',icon:'LayoutDashboard',show:!showAsLearner},
         {id:'analytics',label:'Statistiques',icon:'BarChart3',show:!showAsLearner&&can('view_analytics')},
+        {id:'scorm-tracking',label:'Suivi SCORM',icon:'Package',show:!showAsLearner&&(can('view_analytics')||can('manage_enrollments'))},
         {id:'centers',label:'Centres',icon:'Building2',show:showAsSuperAdmin},
         {id:'users',label:'Utilisateurs',icon:'Users',show:!viewAs&&can('manage_users')},
         {id:'videos',label:'Bibliothèque',icon:'Film',show:!viewAs&&can('manage_videos')},
@@ -364,6 +398,7 @@
           <div className="p-4 lg:p-6">
             {page==='dashboard'&&<DashboardPage/>}
             {page==='analytics'&&<AnalyticsPage/>}
+            {page==='scorm-tracking'&&<ScormTrackingPage/>}
             {page==='centers'&&<CentersPage/>}
             {page==='users'&&<UsersPage/>}
             {page==='videos'&&<VideosPage/>}
@@ -384,13 +419,194 @@
       </div>);
     }
 
+    // ============================================================
+    // PAGE: Suivi SCORM (ScormTrackingPage) - v6.7
+    // ============================================================
+    function ScormTrackingPage(){
+      const{can,center,isSuperAdmin}=useAuth();
+      const[scormProgress,setScormProgress]=useState([]);
+      const[modules,setModules]=useState([]);
+      const[courses,setCourses]=useState([]);
+      const[loading,setLoading]=useState(true);
+      const[filter,setFilter]=useState({module:'all',course:'all',status:'all',search:''});
+      const[selectedLearner,setSelectedLearner]=useState(null);
+      const[learnerHistory,setLearnerHistory]=useState([]);
+      const[stats,setStats]=useState({total:0,completed:0,passed:0,failed:0,avgScore:0});
+
+      const load=useCallback(async()=>{
+        const{data:mods}=await supabase.from('scorm_modules').select('id,title,category');
+        setModules(mods||[]);
+        
+        let qc=supabase.from('playlists').select('id,title');
+        if(!isSuperAdmin&&center?.id)qc=qc.eq('center_id',center.id);
+        const{data:crs}=await qc;
+        setCourses(crs||[]);
+        
+        const{data:progress}=await supabase.from('scorm_progress').select(`
+          *,
+          scorm_modules:module_id(id,title,category),
+          profiles:learner_id(id,first_name,last_name,email),
+          enrollments:enrollment_id(id,playlist_id,playlists:playlist_id(id,title))
+        `).order('updated_at',{ascending:false});
+        
+        setScormProgress(progress||[]);
+        
+        const filtered=progress||[];
+        const total=filtered.length;
+        const completed=filtered.filter(p=>p.completion_status==='completed'||p.completion_status==='passed').length;
+        const passed=filtered.filter(p=>p.completion_status==='passed'||p.success_status==='passed').length;
+        const failed=filtered.filter(p=>p.completion_status==='failed'||p.success_status==='failed').length;
+        const withScore=filtered.filter(p=>p.score_scaled!==null);
+        const avgScore=withScore.length>0?withScore.reduce((a,p)=>a+p.score_scaled,0)/withScore.length:0;
+        
+        setStats({total,completed,passed,failed,avgScore});
+        setLoading(false);
+      },[isSuperAdmin,center?.id]);
+
+      useEffect(()=>{load();},[load]);
+
+      const filteredProgress=useMemo(()=>{
+        return scormProgress.filter(p=>{
+          if(filter.module!=='all'&&p.module_id!==filter.module)return false;
+          if(filter.course!=='all'&&p.enrollments?.playlist_id!==filter.course)return false;
+          if(filter.status!=='all'){
+            const status=p.completion_status||'not attempted';
+            if(filter.status==='completed'&&status!=='completed'&&status!=='passed')return false;
+            if(filter.status==='in_progress'&&status!=='incomplete')return false;
+            if(filter.status==='not_started'&&status!=='not attempted')return false;
+            if(filter.status==='failed'&&status!=='failed')return false;
+          }
+          if(filter.search){
+            const search=filter.search.toLowerCase();
+            const name=`${p.profiles?.first_name||''} ${p.profiles?.last_name||''}`.toLowerCase();
+            const email=(p.profiles?.email||'').toLowerCase();
+            if(!name.includes(search)&&!email.includes(search))return false;
+          }
+          return true;
+        });
+      },[scormProgress,filter]);
+
+      const openLearnerDetail=async(learnerId,learnerName)=>{
+        const{data}=await supabase.from('scorm_progress').select(`*,scorm_modules:module_id(id,title,category),enrollments:enrollment_id(playlists:playlist_id(title))`).eq('learner_id',learnerId).order('updated_at',{ascending:false});
+        setLearnerHistory(data||[]);
+        setSelectedLearner({id:learnerId,name:learnerName});
+      };
+
+      const exportCSV=()=>{
+        const headers=['Apprenant','Email','Module','Cours','Statut','Score','Date'];
+        const rows=filteredProgress.map(p=>[
+          `${p.profiles?.first_name||''} ${p.profiles?.last_name||''}`,
+          p.profiles?.email||'',
+          p.scorm_modules?.title||'',
+          p.enrollments?.playlists?.title||'',
+          SCORM_STATUS_LABELS[p.completion_status]||p.completion_status||'',
+          p.score_scaled!==null?`${Math.round(p.score_scaled*100)}%`:'',
+          p.updated_at?new Date(p.updated_at).toLocaleDateString('fr-FR'):''
+        ]);
+        const csv=[headers,...rows].map(r=>r.map(c=>`"${c}"`).join(',')).join('\n');
+        const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement('a');a.href=url;a.download=`suivi-scorm-${new Date().toISOString().slice(0,10)}.csv`;a.click();
+        URL.revokeObjectURL(url);
+      };
+
+      if(!can('view_analytics')&&!can('manage_enrollments'))return<Empty icon="Lock" title="Accès refusé"/>;
+      if(loading)return<Loading/>;
+
+      return<div>
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
+          <h1 className="text-2xl font-bold">Suivi SCORM</h1>
+          <Button variant="secondary" icon="Download" onClick={exportCSV}>Exporter CSV</Button>
+        </div>
+
+        {/* Stats globales */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+          <Card className="p-4"><div className="flex items-center gap-3"><div className="text-blue-400"><Icon name="Users" size={24}/></div><div><p className="text-gray-400 text-sm">Total sessions</p><p className="text-2xl font-bold">{stats.total}</p></div></div></Card>
+          <Card className="p-4"><div className="flex items-center gap-3"><div className="text-green-400"><Icon name="CheckCircle" size={24}/></div><div><p className="text-gray-400 text-sm">Terminés</p><p className="text-2xl font-bold">{stats.completed}</p></div></div></Card>
+          <Card className="p-4"><div className="flex items-center gap-3"><div className="text-emerald-400"><Icon name="Award" size={24}/></div><div><p className="text-gray-400 text-sm">Réussis</p><p className="text-2xl font-bold">{stats.passed}</p></div></div></Card>
+          <Card className="p-4"><div className="flex items-center gap-3"><div className="text-red-400"><Icon name="XCircle" size={24}/></div><div><p className="text-gray-400 text-sm">Échoués</p><p className="text-2xl font-bold">{stats.failed}</p></div></div></Card>
+          <Card className="p-4"><div className="flex items-center gap-3"><div className="text-indigo-400"><Icon name="Target" size={24}/></div><div><p className="text-gray-400 text-sm">Score moyen</p><p className="text-2xl font-bold">{Math.round(stats.avgScore*100)}%</p></div></div></Card>
+        </div>
+
+        {/* Filtres */}
+        <Card className="p-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Input icon="Search" placeholder="Rechercher un apprenant..." value={filter.search} onChange={e=>setFilter({...filter,search:e.target.value})}/>
+            <Select value={filter.module} onChange={e=>setFilter({...filter,module:e.target.value})} options={[{value:'all',label:'Tous les modules'},...modules.map(m=>({value:m.id,label:m.title}))]}/>
+            <Select value={filter.course} onChange={e=>setFilter({...filter,course:e.target.value})} options={[{value:'all',label:'Tous les cours'},...courses.map(c=>({value:c.id,label:c.title}))]}/>
+            <Select value={filter.status} onChange={e=>setFilter({...filter,status:e.target.value})} options={[{value:'all',label:'Tous les statuts'},{value:'completed',label:'Terminés/Réussis'},{value:'in_progress',label:'En cours'},{value:'not_started',label:'Non commencés'},{value:'failed',label:'Échoués'}]}/>
+          </div>
+        </Card>
+
+        {/* Tableau des résultats */}
+        {filteredProgress.length===0?<Empty icon="Package" title="Aucune donnée SCORM" desc="Aucun apprenant n'a encore lancé de module SCORM"/>:(
+          <Card>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-750"><tr>
+                  <th className="text-left p-4 font-medium text-gray-400">Apprenant</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Module</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Cours</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Statut</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Score</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Dernière activité</th>
+                  <th className="text-right p-4"></th>
+                </tr></thead>
+                <tbody className="divide-y divide-gray-700">
+                  {filteredProgress.map(p=>(
+                    <tr key={p.id} className="hover:bg-gray-750/50">
+                      <td className="p-4"><p className="font-medium">{p.profiles?.first_name} {p.profiles?.last_name}</p><p className="text-sm text-gray-400">{p.profiles?.email}</p></td>
+                      <td className="p-4"><div className="flex items-center gap-2"><div className="w-8 h-8 bg-orange-500/20 rounded flex items-center justify-center"><Icon name="Package" size={16} className="text-orange-400"/></div><div><p className="font-medium text-sm">{p.scorm_modules?.title||'Module inconnu'}</p>{p.scorm_modules?.category&&<p className="text-xs text-gray-500">{p.scorm_modules.category}</p>}</div></div></td>
+                      <td className="p-4 text-gray-400">{p.enrollments?.playlists?.title||'—'}</td>
+                      <td className="p-4"><ScormStatusBadge status={p.completion_status}/></td>
+                      <td className="p-4"><ScoreBadge score={p.score_scaled} showLabel={false}/></td>
+                      <td className="p-4 text-gray-400 text-sm">{p.updated_at?new Date(p.updated_at).toLocaleString('fr-FR'):'-'}</td>
+                      <td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Eye" onClick={()=>openLearnerDetail(p.learner_id,`${p.profiles?.first_name} ${p.profiles?.last_name}`)}>Détails</Button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+
+        {/* Modal détail apprenant */}
+        <Modal isOpen={!!selectedLearner} onClose={()=>setSelectedLearner(null)} title={`Historique SCORM - ${selectedLearner?.name}`} size="xl">
+          <div className="space-y-4">
+            {learnerHistory.length===0?<p className="text-gray-500 text-center py-4">Aucun historique SCORM</p>:(
+              <div className="space-y-3">
+                {learnerHistory.map(h=>(
+                  <div key={h.id} className="p-4 bg-gray-700/50 rounded-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center"><Icon name="Package" size={20} className="text-orange-400"/></div>
+                        <div><p className="font-semibold">{h.scorm_modules?.title}</p><p className="text-sm text-gray-400">{h.enrollments?.playlists?.title||'Cours inconnu'}</p></div>
+                      </div>
+                      <ScormStatusBadge status={h.completion_status}/>
+                    </div>
+                    <div className="grid grid-cols-3 gap-4 mt-3 pt-3 border-t border-gray-600">
+                      <div><p className="text-xs text-gray-500">Score</p><ScoreBadge score={h.score_scaled}/></div>
+                      <div><p className="text-xs text-gray-500">Succès</p><p className="font-medium">{h.success_status||'—'}</p></div>
+                      <div><p className="text-xs text-gray-500">Mise à jour</p><p className="text-sm">{h.updated_at?new Date(h.updated_at).toLocaleString('fr-FR'):'-'}</p></div>
+                    </div>
+                    {h.cmi_data&&(<details className="mt-3"><summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-300">Voir les données CMI brutes</summary><pre className="mt-2 p-2 bg-gray-800 rounded text-xs overflow-auto max-h-32">{JSON.stringify(h.cmi_data,null,2)}</pre></details>)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Modal>
+      </div>;
+    }
+
     // Dashboard
     function DashboardPage(){
       const{isSuperAdmin,realIsSuperAdmin,can,profile,center,viewAs}=useAuth();
-      const[stats,setStats]=useState({centers:0,users:0,videos:0,playlists:0,enrollments:0,completions:0,badges:0,quizzes:0,paths:0});
+      const[stats,setStats]=useState({centers:0,users:0,videos:0,playlists:0,enrollments:0,completions:0,badges:0,quizzes:0,paths:0,scormSessions:0,scormCompleted:0});
       const[recentActivity,setRecentActivity]=useState([]);
       const[recentBadges,setRecentBadges]=useState([]);
       const[topLearners,setTopLearners]=useState([]);
+      const[recentScorm,setRecentScorm]=useState([]);
       const[loading,setLoading]=useState(true);
       
       // Déterminer le center_id à utiliser (réel ou simulé)
@@ -410,6 +626,8 @@
           let quizzesQuery=supabase.from('quizzes').select('*',{count:'exact',head:true});
           let pathsQuery=supabase.from('learning_paths').select('*',{count:'exact',head:true});
           let badgesQuery=supabase.from('learner_badges').select('*',{count:'exact',head:true});
+          let scormQuery=supabase.from('scorm_progress').select('*',{count:'exact',head:true});
+          let scormCompletedQuery=supabase.from('scorm_progress').select('*',{count:'exact',head:true}).or('completion_status.eq.completed,completion_status.eq.passed');
           
           // Filtrer par centre si pas global
           if(!isGlobal&&effectiveCenterId){
@@ -419,8 +637,8 @@
             // On va filtrer les enrollments via une sous-requête
           }
           
-          const[{count:users},{count:videos},{count:playlists},{count:enrollments},{count:completions},{count:quizzes},{count:paths},{count:badges}]=await Promise.all([
-            usersQuery,videosQuery,playlistsQuery,enrollmentsQuery,completionsQuery,quizzesQuery,pathsQuery,badgesQuery
+          const[{count:users},{count:videos},{count:playlists},{count:enrollments},{count:completions},{count:quizzes},{count:paths},{count:badges},{count:scormSessions},{count:scormCompleted}]=await Promise.all([
+            usersQuery,videosQuery,playlistsQuery,enrollmentsQuery,completionsQuery,quizzesQuery,pathsQuery,badgesQuery,scormQuery,scormCompletedQuery
           ]);
           
           let centers=1;
@@ -459,7 +677,9 @@
             completions:filteredCompletions,
             quizzes:quizzes||0,
             paths:paths||0,
-            badges:filteredBadges
+            badges:filteredBadges,
+            scormSessions:scormSessions||0,
+            scormCompleted:scormCompleted||0
           });
           
           // Activité récente (filtrée par centre si nécessaire)
@@ -468,6 +688,10 @@
           // Filtrer côté client si pas global
           const filteredRecent=isGlobal?recent:(recent||[]).filter(r=>r.profiles?.center_id===effectiveCenterId);
           setRecentActivity(filteredRecent.slice(0,5));
+          
+          // Activité SCORM récente
+          const{data:scormRecent}=await supabase.from('scorm_progress').select('*,profiles:learner_id(first_name,last_name),scorm_modules:module_id(title)').order('updated_at',{ascending:false}).limit(5);
+          setRecentScorm(scormRecent||[]);
           
           // Badges récemment obtenus (filtrés par centre)
           let badgesRecentQuery=supabase.from('learner_badges').select('*,badges(*),profiles:learner_id(first_name,last_name,center_id)').order('earned_at',{ascending:false}).limit(10);
@@ -504,8 +728,10 @@
       if(can('manage_enrollments')||viewAs)cards.push({label:'Inscriptions',value:stats.enrollments,icon:'UserPlus',color:'text-yellow-400'});
       if(can('manage_enrollments')||viewAs)cards.push({label:'Complétés',value:stats.completions,icon:'CheckCircle',color:'text-emerald-400'});
       if((can('manage_playlists')||viewAs)&&!viewAs)cards.push({label:'Badges délivrés',value:stats.badges,icon:'Award',color:'text-amber-400'});
+      if(can('view_analytics')||viewAs)cards.push({label:'Sessions SCORM',value:stats.scormSessions,icon:'Package',color:'text-orange-400'});
       
       const completionRate=stats.enrollments>0?Math.round((stats.completions/stats.enrollments)*100):0;
+      const scormRate=stats.scormSessions>0?Math.round((stats.scormCompleted/stats.scormSessions)*100):0;
       
       return<div>
         <h1 className="text-2xl font-bold mb-6">Tableau de bord</h1>
@@ -517,16 +743,25 @@
         
         {/* Taux de complétion */}
         {can('view_analytics')&&(
-          <Card className="p-6 mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Taux de complétion global</h2>
-              <span className="text-3xl font-bold text-indigo-400">{completionRate}%</span>
-            </div>
-            <ProgressBar percent={completionRate}/>
-          </Card>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <Card className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold">Taux de complétion cours</h2>
+                <span className="text-3xl font-bold text-indigo-400">{completionRate}%</span>
+              </div>
+              <ProgressBar percent={completionRate} showLabel={false}/>
+            </Card>
+            <Card className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold">Taux de réussite SCORM</h2>
+                <span className="text-3xl font-bold text-orange-400">{scormRate}%</span>
+              </div>
+              <ProgressBar percent={scormRate} showLabel={false} color="yellow"/>
+            </Card>
+          </div>
         )}
         
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Activité récente */}
           <Card className="p-4">
             <h3 className="font-semibold mb-4 flex items-center gap-2"><Icon name="Activity" size={18}/>Activité récente</h3>
@@ -540,6 +775,25 @@
                     <p className="truncate">{a.profiles?.first_name} {a.profiles?.last_name}</p>
                     <p className="text-gray-500 text-xs truncate">{a.playlists?.title}</p>
                   </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+          
+          {/* Activité SCORM récente - NOUVEAU */}
+          <Card className="p-4">
+            <h3 className="font-semibold mb-4 flex items-center gap-2"><Icon name="Package" size={18} className="text-orange-400"/>SCORM récent</h3>
+            <div className="space-y-3">
+              {recentScorm.length===0?<p className="text-gray-500 text-sm">Aucune activité SCORM</p>:recentScorm.map(s=>(
+                <div key={s.id} className="flex items-center gap-3 text-sm">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${s.completion_status==='passed'||s.completion_status==='completed'?'bg-green-500/20 text-green-400':'bg-orange-500/20 text-orange-400'}`}>
+                    <Icon name={s.completion_status==='passed'||s.completion_status==='completed'?'CheckCircle':'Package'} size={14}/>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate">{s.profiles?.first_name} {s.profiles?.last_name}</p>
+                    <p className="text-gray-500 text-xs truncate">{s.scorm_modules?.title}</p>
+                  </div>
+                  {s.score_scaled!==null&&<span className="text-xs font-medium text-indigo-400">{Math.round(s.score_scaled*100)}%</span>}
                 </div>
               ))}
             </div>
