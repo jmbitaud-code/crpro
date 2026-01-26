@@ -61,7 +61,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.8.14';
+    const APP_VERSION = '6.8.15';
     // =======================================
 
     // Masquer l'écran de chargement une fois React prêt
@@ -3844,10 +3844,7 @@
             });
           }
         }
-        
-        setEnrollments(prev=>prev.map(e=>e.id===selectedCourse.id?{...e,progress_percent:percent}:e));
-        setSelectedCourse(prev=>({...prev,progress_percent:percent,status:percent===100?'completed':percent>0?'in_progress':'not_started'}));
-      };
+      },[selectedCourse,courseVideos.length,courseScorm.length,scormProgress,user.id]);
 
       const markAsComplete=async(pv)=>{
         await supabase.from('video_progress').upsert({
