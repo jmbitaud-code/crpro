@@ -4692,20 +4692,27 @@
           // Télécharger avec blob pour éviter problème de navigation
           const pdfBlob=doc.output('blob');
           const url=URL.createObjectURL(pdfBlob);
-          const link=document.createElement('a');
-          link.href=url;
-          link.download=`certificat_${cert.certificate_number}.pdf`;
-          link.style.display='none';
-          document.body.appendChild(link);
-          link.click();
-          setTimeout(()=>{
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
-          },250);
+          
+          // Utiliser requestAnimationFrame pour s'assurer que le DOM est stable
+          requestAnimationFrame(()=>{
+            const link=document.createElement('a');
+            link.href=url;
+            link.download=`certificat_${cert.certificate_number}.pdf`;
+            link.style.display='none';
+            document.body.appendChild(link);
+            link.click();
+            
+            // Nettoyer après un délai suffisant
+            setTimeout(()=>{
+              if(link.parentNode)document.body.removeChild(link);
+              URL.revokeObjectURL(url);
+              setGenerating(null);
+            },500);
+          });
+          return; // Sortir du try, le finally ne sera pas exécuté
         }catch(err){
           console.error('Erreur PDF:',err);
           alert('Erreur lors de la generation du PDF');
-        }finally{
           setGenerating(null);
         }
       };
