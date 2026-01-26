@@ -4689,27 +4689,16 @@
           doc.setFontSize(10);
           doc.text('V',148.5,193,{align:'center'});
           
-          // Télécharger avec blob pour éviter problème de navigation
-          const pdfBlob=doc.output('blob');
-          const url=URL.createObjectURL(pdfBlob);
-          
-          // Utiliser requestAnimationFrame pour s'assurer que le DOM est stable
-          requestAnimationFrame(()=>{
-            const link=document.createElement('a');
-            link.href=url;
-            link.download=`certificat_${cert.certificate_number}.pdf`;
-            link.style.display='none';
-            document.body.appendChild(link);
-            link.click();
-            
-            // Nettoyer après un délai suffisant
-            setTimeout(()=>{
-              if(link.parentNode)document.body.removeChild(link);
-              URL.revokeObjectURL(url);
-              setGenerating(null);
-            },500);
-          });
-          return; // Sortir du try, le finally ne sera pas exécuté
+          // Télécharger - utiliser setTimeout pour isoler du cycle React
+          const fileName=`certificat_${cert.certificate_number}.pdf`;
+          setTimeout(()=>{
+            try{
+              doc.save(fileName);
+            }catch(e){
+              console.error('PDF save error:',e);
+            }
+            setGenerating(null);
+          },100);
         }catch(err){
           console.error('Erreur PDF:',err);
           alert('Erreur lors de la generation du PDF');
