@@ -6,38 +6,11 @@
   <title>Course Builder Pro</title>
   <meta name="description" content="Plateforme de création et diffusion de cours vidéo multi-centres">
   <meta name="theme-color" content="#1f2937">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>">
   
-  <!-- CSS critique inline pour l'écran de chargement -->
-  <style>
-    *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#111827}
-    #loading-screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#111827;z-index:9999}
-    #loading-screen .logo{width:64px;height:64px;background:#4f46e5;border-radius:16px;display:flex;align-items:center;justify-content:center;margin-bottom:24px}
-    #loading-screen .logo svg{width:32px;height:32px;color:white}
-    #loading-screen h1{color:white;font-size:24px;font-weight:bold;margin:0 0 8px}
-    #loading-screen p{color:#9ca3af;font-size:14px;margin:0 0 24px}
-    #loading-screen .spinner{width:32px;height:32px;border:3px solid #374151;border-top-color:#4f46e5;border-radius:50%;animation:spin 1s linear infinite}
-    @keyframes spin{to{transform:rotate(360deg)}}
-    .no-scrollbar::-webkit-scrollbar{display:none}.no-scrollbar{-ms-overflow-style:none;scrollbar-width:none}
-    .animate-spin{animation:spin 1s linear infinite}
-    @keyframes fade-in{from{opacity:0}to{opacity:1}}.animate-fade-in{animation:fade-in .2s ease-out}
-    input,textarea,select,button{font-family:inherit}
-    .progress-bar{transition:width 0.3s ease}
-    .aspect-video iframe{position:absolute;top:0;left:0;width:100%;height:100%}
-  </style>
-</head>
-<body>
-  <!-- Écran de chargement -->
-  <div id="loading-screen">
-    <div class="logo"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg></div>
-    <h1>Course Builder Pro</h1>
-    <p>Chargement en cours...</p>
-    <div class="spinner"></div>
-  </div>
-  
-  <div id="root"></div>
-  
-  <!-- Scripts essentiels -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -45,39 +18,34 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config={theme:{extend:{colors:{gray:{750:'#2d3748',850:'#1a1f2e'}}}}}</script>
   <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+  <script src="https://player.vimeo.com/api/player.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   
-  <!-- Scripts différés (chargés après) -->
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js" defer></script>
-  <script src="https://player.vimeo.com/api/player.js" defer></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
-  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js" defer></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" defer></script>
-  
+  <style>
+    *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#111827}
+    .no-scrollbar::-webkit-scrollbar{display:none}.no-scrollbar{-ms-overflow-style:none;scrollbar-width:none}
+    @keyframes spin{to{transform:rotate(360deg)}}.animate-spin{animation:spin 1s linear infinite}
+    @keyframes fade-in{from{opacity:0}to{opacity:1}}.animate-fade-in{animation:fade-in .2s ease-out}
+    input,textarea,select,button{font-family:inherit}
+    .progress-bar{transition:width 0.3s ease}
+    .aspect-video iframe{position:absolute;top:0;left:0;width:100%;height:100%}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
   <script type="text/babel">
     const{useState,useEffect,useRef,createContext,useContext,useCallback,useMemo}=React;
 
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.8.17';
+    const APP_VERSION = '6.6.13';
     // =======================================
-
-    // Masquer l'écran de chargement une fois React prêt
-    const hideLoadingScreen=()=>{
-      const el=document.getElementById('loading-screen');
-      if(el)el.style.display='none';
-    };
-
-    // Convertir une durée "MM:SS" ou "HH:MM:SS" en secondes
-    const parseDuration=(duration)=>{
-      if(!duration)return 0;
-      const parts=duration.split(':').map(Number);
-      if(parts.length===2)return parts[0]*60+parts[1];
-      if(parts.length===3)return parts[0]*3600+parts[1]*60+parts[2];
-      return 0;
-    };
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
       auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}
@@ -99,24 +67,6 @@
       view_analytics:'Voir les statistiques',
       export_reports:'Exporter les rapports',
       manage_permissions:'Gérer les permissions'
-    };
-    
-    // Labels et couleurs SCORM
-    const SCORM_STATUS_LABELS={
-      'not attempted':'Non commencé',
-      'incomplete':'En cours',
-      'completed':'Terminé',
-      'passed':'Réussi',
-      'failed':'Échoué',
-      'unknown':'Inconnu'
-    };
-    const SCORM_STATUS_COLORS={
-      'not attempted':'bg-gray-500',
-      'incomplete':'bg-yellow-500',
-      'completed':'bg-green-500',
-      'passed':'bg-green-500',
-      'failed':'bg-red-500',
-      'unknown':'bg-gray-500'
     };
 
     // Auth Context avec mode "Vue comme"
@@ -225,21 +175,6 @@
     const Modal=({isOpen,onClose,title,children,size='md'})=>{if(!isOpen)return null;const s={sm:'max-w-md',md:'max-w-lg',lg:'max-w-2xl',xl:'max-w-4xl',full:'max-w-6xl'};return(<div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"><div className="absolute inset-0 bg-black/70" onClick={onClose}/><div className={`relative bg-gray-800 rounded-xl w-full ${s[size]} max-h-[90vh] overflow-auto`}><div className="sticky top-0 bg-gray-800 p-4 border-b border-gray-700 flex items-center justify-between z-10"><h2 className="text-lg font-semibold">{title}</h2><button onClick={onClose} className="p-2 hover:bg-gray-700 rounded-lg"><Icon name="X" size={20}/></button></div><div className="p-4">{children}</div></div></div>);};
     const Card=({children,className='',...props})=><div className={`bg-gray-800 rounded-xl border border-gray-700 ${className}`} {...props}>{children}</div>;
     const RoleBadge=({role})=><span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${ROLE_COLORS[role]||'bg-gray-500'} text-white`}>{ROLE_LABELS[role]||role}</span>;
-    
-    // Score Badge pour SCORM
-    const ScoreBadge=({score,showLabel=true})=>{
-      if(score===null||score===undefined)return<span className="text-gray-500 text-sm">—</span>;
-      const percent=Math.round(score*100);
-      const color=percent>=70?'text-green-400':percent>=50?'text-yellow-400':'text-red-400';
-      return<span className={`font-semibold ${color}`}>{percent}%{showLabel&&' score'}</span>;
-    };
-    
-    // Status Badge pour SCORM
-    const ScormStatusBadge=({status})=>{
-      const label=SCORM_STATUS_LABELS[status]||status||'Inconnu';
-      const color=SCORM_STATUS_COLORS[status]||'bg-gray-500';
-      return<span className={`px-2 py-0.5 rounded text-xs font-medium ${color}`}>{label}</span>;
-    };
     const Loading=({text})=><div className="flex flex-col items-center justify-center p-8"><div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"/>{text&&<p className="text-gray-400 mt-4">{text}</p>}</div>;
     const Empty=({icon,title,desc,action})=><div className="flex flex-col items-center justify-center p-8 text-center"><div className="text-gray-500 mb-4"><Icon name={icon} size={48}/></div><h3 className="text-lg font-medium text-gray-300">{title}</h3>{desc&&<p className="text-gray-500 mt-1">{desc}</p>}{action&&<div className="mt-4">{action}</div>}</div>;
     const Alert=({type='info',children})=>{const colors={info:'bg-blue-500/20 text-blue-300',success:'bg-green-500/20 text-green-300',warning:'bg-yellow-500/20 text-yellow-300',error:'bg-red-500/20 text-red-300'};return<div className={`p-4 rounded-lg ${colors[type]}`}>{children}</div>;};
@@ -333,7 +268,6 @@
       const menu=[
         {id:'dashboard',label:'Tableau de bord',icon:'LayoutDashboard',show:!showAsLearner},
         {id:'analytics',label:'Statistiques',icon:'BarChart3',show:!showAsLearner&&can('view_analytics')},
-        {id:'scorm-tracking',label:'Suivi SCORM',icon:'Package',show:!showAsLearner&&(can('view_analytics')||can('manage_enrollments'))},
         {id:'centers',label:'Centres',icon:'Building2',show:showAsSuperAdmin},
         {id:'users',label:'Utilisateurs',icon:'Users',show:!viewAs&&can('manage_users')},
         {id:'videos',label:'Bibliothèque',icon:'Film',show:!viewAs&&can('manage_videos')},
@@ -345,7 +279,6 @@
         {id:'emails',label:'Emails',icon:'Mail',show:!viewAs&&can('manage_users')},
         {id:'permissions',label:'Permissions',icon:'Shield',show:!viewAs&&can('manage_permissions')},
         {id:'my-courses',label:'Mes cours',icon:'GraduationCap',show:showAsLearner},
-        {id:'my-progress',label:'Mon suivi',icon:'BarChart3',show:showAsLearner},
         {id:'my-paths',label:'Mes parcours',icon:'Map',show:showAsLearner},
         {id:'my-badges',label:'Mes badges',icon:'Trophy',show:showAsLearner},
         {id:'my-certificates',label:'Mes certificats',icon:'Award',show:showAsLearner},
@@ -431,7 +364,6 @@
           <div className="p-4 lg:p-6">
             {page==='dashboard'&&<DashboardPage/>}
             {page==='analytics'&&<AnalyticsPage/>}
-            {page==='scorm-tracking'&&<ScormTrackingPage/>}
             {page==='centers'&&<CentersPage/>}
             {page==='users'&&<UsersPage/>}
             {page==='videos'&&<VideosPage/>}
@@ -443,7 +375,6 @@
             {page==='emails'&&<EmailsPage/>}
             {page==='permissions'&&<PermissionsPage/>}
             {page==='my-courses'&&<MyCoursesPage/>}
-            {page==='my-progress'&&<MyProgressPage/>}
             {page==='my-paths'&&<MyPathsPage/>}
             {page==='my-badges'&&<MyBadgesPage/>}
             {page==='my-certificates'&&<MyCertificatesPage/>}
@@ -453,346 +384,13 @@
       </div>);
     }
 
-    // ============================================================
-    // PAGE: Suivi SCORM (ScormTrackingPage) - v6.7.1
-    // ============================================================
-    function ScormTrackingPage(){
-      const{can,center,isSuperAdmin,profile}=useAuth();
-      const[scormProgress,setScormProgress]=useState([]);
-      const[modules,setModules]=useState([]);
-      const[courses,setCourses]=useState([]);
-      const[learners,setLearners]=useState([]);
-      const[loading,setLoading]=useState(true);
-      const[filter,setFilter]=useState({module:'all',course:'all',status:'all',learner:'all',search:''});
-      const[selectedLearner,setSelectedLearner]=useState(null);
-      const[learnerHistory,setLearnerHistory]=useState([]);
-      const[stats,setStats]=useState({total:0,completed:0,passed:0,failed:0,inProgress:0,avgScore:0});
-      const[activeTab,setActiveTab]=useState('table');
-      const chartRef=useRef(null);
-      const chartInstance=useRef(null);
-
-      const load=useCallback(async()=>{
-        // Charger les modules SCORM
-        const{data:mods}=await supabase.from('scorm_modules').select('id,title,category');
-        setModules(mods||[]);
-        
-        // Charger les cours (filtrés par centre si nécessaire)
-        let qc=supabase.from('playlists').select('id,title');
-        if(!isSuperAdmin&&center?.id)qc=qc.eq('center_id',center.id);
-        const{data:crs}=await qc;
-        setCourses(crs||[]);
-        
-        // Charger les apprenants (filtrés par centre)
-        let ql=supabase.from('profiles').select('id,first_name,last_name,email').eq('role','learner');
-        if(!isSuperAdmin&&center?.id)ql=ql.eq('center_id',center.id);
-        const{data:lrn}=await ql;
-        setLearners(lrn||[]);
-        const learnerIds=(lrn||[]).map(l=>l.id);
-        
-        // Charger la progression SCORM avec les infos liées
-        let q=supabase.from('scorm_progress').select(`
-          *,
-          scorm_modules:module_id(id,title,category),
-          profiles:learner_id(id,first_name,last_name,email,center_id),
-          enrollments:enrollment_id(id,playlist_id,playlists:playlist_id(id,title,center_id))
-        `).order('updated_at',{ascending:false});
-        
-        const{data:progress}=await q;
-        
-        // Filtrer par centre côté client si pas super admin
-        let filtered=progress||[];
-        if(!isSuperAdmin&&center?.id){
-          filtered=filtered.filter(p=>
-            learnerIds.includes(p.learner_id)||
-            p.profiles?.center_id===center.id||
-            p.enrollments?.playlists?.center_id===center.id
-          );
-        }
-        
-        setScormProgress(filtered);
-        
-        // Calculer les stats
-        const total=filtered.length;
-        const completed=filtered.filter(p=>p.completion_status==='completed'||p.completion_status==='passed').length;
-        const passed=filtered.filter(p=>p.completion_status==='passed'||p.success_status==='passed').length;
-        const failed=filtered.filter(p=>p.completion_status==='failed'||p.success_status==='failed').length;
-        const inProgress=filtered.filter(p=>p.completion_status==='incomplete').length;
-        const withScore=filtered.filter(p=>p.score_scaled!==null&&p.score_scaled!==undefined);
-        const avgScore=withScore.length>0?withScore.reduce((a,p)=>a+(p.score_scaled||0),0)/withScore.length:0;
-        
-        setStats({total,completed,passed,failed,inProgress,avgScore});
-        setLoading(false);
-      },[isSuperAdmin,center?.id]);
-
-      useEffect(()=>{load();},[load]);
-
-      // Créer le graphique
-      useEffect(()=>{
-        if(loading||!chartRef.current||activeTab!=='charts')return;
-        
-        // Détruire l'ancien graphique
-        if(chartInstance.current){
-          chartInstance.current.destroy();
-        }
-        
-        // Données par statut
-        const statusData={
-          labels:['Réussis','Terminés','En cours','Échoués','Non commencés'],
-          datasets:[{
-            data:[stats.passed,stats.completed-stats.passed,stats.inProgress,stats.failed,stats.total-stats.completed-stats.inProgress-stats.failed],
-            backgroundColor:['#22c55e','#3b82f6','#eab308','#ef4444','#6b7280']
-          }]
-        };
-        
-        chartInstance.current=new Chart(chartRef.current,{
-          type:'doughnut',
-          data:statusData,
-          options:{
-            responsive:true,
-            maintainAspectRatio:false,
-            plugins:{
-              legend:{position:'bottom',labels:{color:'#9ca3af',padding:15}}
-            }
-          }
-        });
-        
-        return()=>{
-          if(chartInstance.current){
-            chartInstance.current.destroy();
-          }
-        };
-      },[loading,stats,activeTab]);
-
-      // Filtrer les données
-      const filteredProgress=useMemo(()=>{
-        return scormProgress.filter(p=>{
-          if(filter.module!=='all'&&p.module_id!==filter.module)return false;
-          if(filter.course!=='all'&&p.enrollments?.playlist_id!==filter.course)return false;
-          if(filter.learner!=='all'&&p.learner_id!==filter.learner)return false;
-          if(filter.status!=='all'){
-            const status=p.completion_status||'not attempted';
-            if(filter.status==='completed'&&status!=='completed'&&status!=='passed')return false;
-            if(filter.status==='in_progress'&&status!=='incomplete')return false;
-            if(filter.status==='not_started'&&status!=='not attempted')return false;
-            if(filter.status==='failed'&&status!=='failed')return false;
-            if(filter.status==='passed'&&status!=='passed')return false;
-          }
-          if(filter.search){
-            const search=filter.search.toLowerCase();
-            const name=`${p.profiles?.first_name||''} ${p.profiles?.last_name||''}`.toLowerCase();
-            const email=(p.profiles?.email||'').toLowerCase();
-            const moduleName=(p.scorm_modules?.title||'').toLowerCase();
-            if(!name.includes(search)&&!email.includes(search)&&!moduleName.includes(search))return false;
-          }
-          return true;
-        });
-      },[scormProgress,filter]);
-
-      // Stats par module
-      const moduleStats=useMemo(()=>{
-        const stats={};
-        scormProgress.forEach(p=>{
-          const modId=p.module_id;
-          const modTitle=p.scorm_modules?.title||'Inconnu';
-          if(!stats[modId])stats[modId]={id:modId,title:modTitle,total:0,completed:0,passed:0,failed:0,scores:[]};
-          stats[modId].total++;
-          if(p.completion_status==='completed'||p.completion_status==='passed')stats[modId].completed++;
-          if(p.completion_status==='passed'||p.success_status==='passed')stats[modId].passed++;
-          if(p.completion_status==='failed'||p.success_status==='failed')stats[modId].failed++;
-          if(p.score_scaled!==null)stats[modId].scores.push(p.score_scaled);
-        });
-        return Object.values(stats).map(s=>({
-          ...s,
-          avgScore:s.scores.length>0?s.scores.reduce((a,b)=>a+b,0)/s.scores.length:0,
-          completionRate:s.total>0?Math.round((s.completed/s.total)*100):0
-        }));
-      },[scormProgress]);
-
-      // Ouvrir le détail d'un apprenant
-      const openLearnerDetail=async(learnerId,learnerName)=>{
-        const{data}=await supabase.from('scorm_progress').select(`*,scorm_modules:module_id(id,title,category),enrollments:enrollment_id(playlists:playlist_id(title))`).eq('learner_id',learnerId).order('updated_at',{ascending:false});
-        setLearnerHistory(data||[]);
-        setSelectedLearner({id:learnerId,name:learnerName});
-      };
-
-      // Export CSV
-      const exportCSV=()=>{
-        const headers=['Apprenant','Email','Module','Cours','Statut','Succès','Score','Date mise à jour'];
-        const rows=filteredProgress.map(p=>[
-          `${p.profiles?.first_name||''} ${p.profiles?.last_name||''}`,
-          p.profiles?.email||'',
-          p.scorm_modules?.title||'',
-          p.enrollments?.playlists?.title||'',
-          SCORM_STATUS_LABELS[p.completion_status]||p.completion_status||'',
-          p.success_status||'',
-          p.score_scaled!==null?`${Math.round(p.score_scaled*100)}%`:'',
-          p.updated_at?new Date(p.updated_at).toLocaleString('fr-FR'):''
-        ]);
-        const csv=[headers,...rows].map(r=>r.map(c=>`"${c}"`).join(',')).join('\n');
-        const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
-        const url=URL.createObjectURL(blob);
-        const a=document.createElement('a');a.href=url;a.download=`suivi-scorm-${new Date().toISOString().slice(0,10)}.csv`;a.click();
-        URL.revokeObjectURL(url);
-      };
-
-      if(!can('view_analytics')&&!can('manage_enrollments'))return<Empty icon="Lock" title="Accès refusé"/>;
-      if(loading)return<Loading/>;
-
-      return<div>
-        <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-          <h1 className="text-2xl font-bold">Suivi SCORM</h1>
-          <div className="flex gap-2">
-            <Button variant="ghost" icon="RefreshCw" onClick={load}>Actualiser</Button>
-            <Button variant="secondary" icon="Download" onClick={exportCSV}>Exporter CSV</Button>
-          </div>
-        </div>
-
-        {/* Stats globales */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
-          <Card className="p-4"><div className="flex items-center gap-3"><div className="text-blue-400"><Icon name="Users" size={24}/></div><div><p className="text-gray-400 text-sm">Total</p><p className="text-2xl font-bold">{stats.total}</p></div></div></Card>
-          <Card className="p-4"><div className="flex items-center gap-3"><div className="text-green-400"><Icon name="CheckCircle" size={24}/></div><div><p className="text-gray-400 text-sm">Terminés</p><p className="text-2xl font-bold">{stats.completed}</p></div></div></Card>
-          <Card className="p-4"><div className="flex items-center gap-3"><div className="text-emerald-400"><Icon name="Award" size={24}/></div><div><p className="text-gray-400 text-sm">Réussis</p><p className="text-2xl font-bold">{stats.passed}</p></div></div></Card>
-          <Card className="p-4"><div className="flex items-center gap-3"><div className="text-yellow-400"><Icon name="Clock" size={24}/></div><div><p className="text-gray-400 text-sm">En cours</p><p className="text-2xl font-bold">{stats.inProgress}</p></div></div></Card>
-          <Card className="p-4"><div className="flex items-center gap-3"><div className="text-red-400"><Icon name="XCircle" size={24}/></div><div><p className="text-gray-400 text-sm">Échoués</p><p className="text-2xl font-bold">{stats.failed}</p></div></div></Card>
-          <Card className="p-4"><div className="flex items-center gap-3"><div className="text-indigo-400"><Icon name="Target" size={24}/></div><div><p className="text-gray-400 text-sm">Score moy.</p><p className="text-2xl font-bold">{Math.round(stats.avgScore*100)}%</p></div></div></Card>
-        </div>
-
-        {/* Onglets */}
-        <Tabs tabs={[
-          {id:'table',label:'Tableau',icon:'Table'},
-          {id:'charts',label:'Graphiques',icon:'PieChart'},
-          {id:'modules',label:'Par module',icon:'Package'}
-        ]} active={activeTab} onChange={setActiveTab}/>
-
-        {/* Filtres */}
-        <Card className="p-4 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-            <Input icon="Search" placeholder="Rechercher..." value={filter.search} onChange={e=>setFilter({...filter,search:e.target.value})}/>
-            <Select value={filter.learner} onChange={e=>setFilter({...filter,learner:e.target.value})} options={[{value:'all',label:'Tous les apprenants'},...learners.map(l=>({value:l.id,label:`${l.first_name} ${l.last_name}`}))]}/>
-            <Select value={filter.module} onChange={e=>setFilter({...filter,module:e.target.value})} options={[{value:'all',label:'Tous les modules'},...modules.map(m=>({value:m.id,label:m.title}))]}/>
-            <Select value={filter.course} onChange={e=>setFilter({...filter,course:e.target.value})} options={[{value:'all',label:'Tous les cours'},...courses.map(c=>({value:c.id,label:c.title}))]}/>
-            <Select value={filter.status} onChange={e=>setFilter({...filter,status:e.target.value})} options={[{value:'all',label:'Tous les statuts'},{value:'passed',label:'Réussis'},{value:'completed',label:'Terminés'},{value:'in_progress',label:'En cours'},{value:'failed',label:'Échoués'},{value:'not_started',label:'Non commencés'}]}/>
-          </div>
-        </Card>
-
-        {/* Vue Tableau */}
-        {activeTab==='table'&&(
-          filteredProgress.length===0?<Empty icon="Package" title="Aucune donnée SCORM" desc="Aucun résultat ne correspond à vos filtres"/>:(
-            <Card>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-750"><tr>
-                    <th className="text-left p-4 font-medium text-gray-400">Apprenant</th>
-                    <th className="text-left p-4 font-medium text-gray-400">Module</th>
-                    <th className="text-left p-4 font-medium text-gray-400">Cours</th>
-                    <th className="text-left p-4 font-medium text-gray-400">Statut</th>
-                    <th className="text-left p-4 font-medium text-gray-400">Score</th>
-                    <th className="text-left p-4 font-medium text-gray-400">Date</th>
-                    <th className="text-right p-4"></th>
-                  </tr></thead>
-                  <tbody className="divide-y divide-gray-700">
-                    {filteredProgress.slice(0,100).map(p=>(
-                      <tr key={p.id} className="hover:bg-gray-750/50">
-                        <td className="p-4"><p className="font-medium">{p.profiles?.first_name} {p.profiles?.last_name}</p><p className="text-sm text-gray-400">{p.profiles?.email}</p></td>
-                        <td className="p-4"><div className="flex items-center gap-2"><div className="w-8 h-8 bg-orange-500/20 rounded flex items-center justify-center"><Icon name="Package" size={16} className="text-orange-400"/></div><div><p className="font-medium text-sm">{p.scorm_modules?.title||'Module inconnu'}</p>{p.scorm_modules?.category&&<p className="text-xs text-gray-500">{p.scorm_modules.category}</p>}</div></div></td>
-                        <td className="p-4 text-gray-400 text-sm">{p.enrollments?.playlists?.title||'—'}</td>
-                        <td className="p-4"><ScormStatusBadge status={p.completion_status}/></td>
-                        <td className="p-4"><ScoreBadge score={p.score_scaled} showLabel={false}/></td>
-                        <td className="p-4 text-gray-400 text-sm">{p.updated_at?new Date(p.updated_at).toLocaleDateString('fr-FR'):'-'}</td>
-                        <td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Eye" onClick={()=>openLearnerDetail(p.learner_id,`${p.profiles?.first_name} ${p.profiles?.last_name}`)}>Détails</Button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {filteredProgress.length>100&&<p className="p-4 text-center text-gray-500 text-sm">Affichage limité à 100 résultats. Utilisez les filtres pour affiner.</p>}
-              </div>
-            </Card>
-          )
-        )}
-
-        {/* Vue Graphiques */}
-        {activeTab==='charts'&&(
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card className="p-6">
-              <h3 className="font-semibold mb-4">Répartition par statut</h3>
-              <div className="h-64">
-                <canvas ref={chartRef}></canvas>
-              </div>
-            </Card>
-            <Card className="p-6">
-              <h3 className="font-semibold mb-4">Résumé</h3>
-              <div className="space-y-4">
-                <div className="flex justify-between items-center"><span className="text-gray-400">Taux de complétion</span><span className="text-2xl font-bold text-green-400">{stats.total>0?Math.round((stats.completed/stats.total)*100):0}%</span></div>
-                <ProgressBar percent={stats.total>0?(stats.completed/stats.total)*100:0} color="green" showLabel={false}/>
-                <div className="flex justify-between items-center"><span className="text-gray-400">Taux de réussite</span><span className="text-2xl font-bold text-emerald-400">{stats.completed>0?Math.round((stats.passed/stats.completed)*100):0}%</span></div>
-                <ProgressBar percent={stats.completed>0?(stats.passed/stats.completed)*100:0} color="green" showLabel={false}/>
-                <div className="flex justify-between items-center"><span className="text-gray-400">Score moyen</span><span className="text-2xl font-bold text-indigo-400">{Math.round(stats.avgScore*100)}%</span></div>
-                <ProgressBar percent={stats.avgScore*100} showLabel={false}/>
-              </div>
-            </Card>
-          </div>
-        )}
-
-        {/* Vue Par module */}
-        {activeTab==='modules'&&(
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {moduleStats.length===0?<Empty icon="Package" title="Aucun module"/>:moduleStats.map(m=>(
-              <Card key={m.id} className="p-4">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-12 h-12 bg-orange-500/20 rounded-lg flex items-center justify-center"><Icon name="Package" size={24} className="text-orange-400"/></div>
-                  <div className="flex-1 min-w-0"><h3 className="font-semibold truncate">{m.title}</h3><p className="text-sm text-gray-400">{m.total} session{m.total>1?'s':''}</p></div>
-                </div>
-                <div className="space-y-3">
-                  <div className="flex justify-between text-sm"><span className="text-gray-400">Complétion</span><span className="font-medium">{m.completionRate}%</span></div>
-                  <ProgressBar percent={m.completionRate} size="sm" showLabel={false}/>
-                  <div className="grid grid-cols-3 gap-2 text-center text-sm">
-                    <div className="p-2 bg-green-500/10 rounded"><p className="text-green-400 font-bold">{m.passed}</p><p className="text-xs text-gray-500">Réussis</p></div>
-                    <div className="p-2 bg-red-500/10 rounded"><p className="text-red-400 font-bold">{m.failed}</p><p className="text-xs text-gray-500">Échoués</p></div>
-                    <div className="p-2 bg-indigo-500/10 rounded"><p className="text-indigo-400 font-bold">{Math.round(m.avgScore*100)}%</p><p className="text-xs text-gray-500">Score moy.</p></div>
-                  </div>
-                </div>
-              </Card>
-            ))}
-          </div>
-        )}
-
-        {/* Modal détail apprenant */}
-        <Modal isOpen={!!selectedLearner} onClose={()=>setSelectedLearner(null)} title={`Historique SCORM - ${selectedLearner?.name}`} size="xl">
-          <div className="space-y-4">
-            {learnerHistory.length===0?<p className="text-gray-500 text-center py-4">Aucun historique SCORM</p>:(
-              <div className="space-y-3">
-                {learnerHistory.map(h=>(
-                  <div key={h.id} className="p-4 bg-gray-700/50 rounded-lg">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center"><Icon name="Package" size={20} className="text-orange-400"/></div>
-                        <div><p className="font-semibold">{h.scorm_modules?.title}</p><p className="text-sm text-gray-400">{h.enrollments?.playlists?.title||'Cours inconnu'}</p></div>
-                      </div>
-                      <ScormStatusBadge status={h.completion_status}/>
-                    </div>
-                    <div className="grid grid-cols-3 gap-4 mt-3 pt-3 border-t border-gray-600">
-                      <div><p className="text-xs text-gray-500">Score</p><ScoreBadge score={h.score_scaled}/></div>
-                      <div><p className="text-xs text-gray-500">Succès</p><p className="font-medium">{h.success_status||'—'}</p></div>
-                      <div><p className="text-xs text-gray-500">Mise à jour</p><p className="text-sm">{h.updated_at?new Date(h.updated_at).toLocaleString('fr-FR'):'-'}</p></div>
-                    </div>
-                    {h.cmi_data&&(<details className="mt-3"><summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-300">Voir données CMI</summary><pre className="mt-2 p-2 bg-gray-800 rounded text-xs overflow-auto max-h-32">{JSON.stringify(h.cmi_data,null,2)}</pre></details>)}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </Modal>
-      </div>;
-    }
-
     // Dashboard
     function DashboardPage(){
       const{isSuperAdmin,realIsSuperAdmin,can,profile,center,viewAs}=useAuth();
-      const[stats,setStats]=useState({centers:0,users:0,videos:0,playlists:0,enrollments:0,completions:0,badges:0,quizzes:0,paths:0,scormSessions:0,scormCompleted:0});
+      const[stats,setStats]=useState({centers:0,users:0,videos:0,playlists:0,enrollments:0,completions:0,badges:0,quizzes:0,paths:0});
       const[recentActivity,setRecentActivity]=useState([]);
       const[recentBadges,setRecentBadges]=useState([]);
       const[topLearners,setTopLearners]=useState([]);
-      const[recentScorm,setRecentScorm]=useState([]);
       const[loading,setLoading]=useState(true);
       
       // Déterminer le center_id à utiliser (réel ou simulé)
@@ -812,8 +410,6 @@
           let quizzesQuery=supabase.from('quizzes').select('*',{count:'exact',head:true});
           let pathsQuery=supabase.from('learning_paths').select('*',{count:'exact',head:true});
           let badgesQuery=supabase.from('learner_badges').select('*',{count:'exact',head:true});
-          let scormQuery=supabase.from('scorm_progress').select('*',{count:'exact',head:true});
-          let scormCompletedQuery=supabase.from('scorm_progress').select('*',{count:'exact',head:true}).or('completion_status.eq.completed,completion_status.eq.passed');
           
           // Filtrer par centre si pas global
           if(!isGlobal&&effectiveCenterId){
@@ -823,8 +419,8 @@
             // On va filtrer les enrollments via une sous-requête
           }
           
-          const[{count:users},{count:videos},{count:playlists},{count:enrollments},{count:completions},{count:quizzes},{count:paths},{count:badges},{count:scormSessions},{count:scormCompleted}]=await Promise.all([
-            usersQuery,videosQuery,playlistsQuery,enrollmentsQuery,completionsQuery,quizzesQuery,pathsQuery,badgesQuery,scormQuery,scormCompletedQuery
+          const[{count:users},{count:videos},{count:playlists},{count:enrollments},{count:completions},{count:quizzes},{count:paths},{count:badges}]=await Promise.all([
+            usersQuery,videosQuery,playlistsQuery,enrollmentsQuery,completionsQuery,quizzesQuery,pathsQuery,badgesQuery
           ]);
           
           let centers=1;
@@ -863,9 +459,7 @@
             completions:filteredCompletions,
             quizzes:quizzes||0,
             paths:paths||0,
-            badges:filteredBadges,
-            scormSessions:scormSessions||0,
-            scormCompleted:scormCompleted||0
+            badges:filteredBadges
           });
           
           // Activité récente (filtrée par centre si nécessaire)
@@ -874,10 +468,6 @@
           // Filtrer côté client si pas global
           const filteredRecent=isGlobal?recent:(recent||[]).filter(r=>r.profiles?.center_id===effectiveCenterId);
           setRecentActivity(filteredRecent.slice(0,5));
-          
-          // Activité SCORM récente
-          const{data:scormRecent}=await supabase.from('scorm_progress').select('*,profiles:learner_id(first_name,last_name),scorm_modules:module_id(title)').order('updated_at',{ascending:false}).limit(5);
-          setRecentScorm(scormRecent||[]);
           
           // Badges récemment obtenus (filtrés par centre)
           let badgesRecentQuery=supabase.from('learner_badges').select('*,badges(*),profiles:learner_id(first_name,last_name,center_id)').order('earned_at',{ascending:false}).limit(10);
@@ -914,10 +504,8 @@
       if(can('manage_enrollments')||viewAs)cards.push({label:'Inscriptions',value:stats.enrollments,icon:'UserPlus',color:'text-yellow-400'});
       if(can('manage_enrollments')||viewAs)cards.push({label:'Complétés',value:stats.completions,icon:'CheckCircle',color:'text-emerald-400'});
       if((can('manage_playlists')||viewAs)&&!viewAs)cards.push({label:'Badges délivrés',value:stats.badges,icon:'Award',color:'text-amber-400'});
-      if(can('view_analytics')||viewAs)cards.push({label:'Sessions SCORM',value:stats.scormSessions,icon:'Package',color:'text-orange-400'});
       
       const completionRate=stats.enrollments>0?Math.round((stats.completions/stats.enrollments)*100):0;
-      const scormRate=stats.scormSessions>0?Math.round((stats.scormCompleted/stats.scormSessions)*100):0;
       
       return<div>
         <h1 className="text-2xl font-bold mb-6">Tableau de bord</h1>
@@ -929,25 +517,16 @@
         
         {/* Taux de complétion */}
         {can('view_analytics')&&(
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold">Taux de complétion cours</h2>
-                <span className="text-3xl font-bold text-indigo-400">{completionRate}%</span>
-              </div>
-              <ProgressBar percent={completionRate} showLabel={false}/>
-            </Card>
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold">Taux de réussite SCORM</h2>
-                <span className="text-3xl font-bold text-orange-400">{scormRate}%</span>
-              </div>
-              <ProgressBar percent={scormRate} showLabel={false} color="yellow"/>
-            </Card>
-          </div>
+          <Card className="p-6 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Taux de complétion global</h2>
+              <span className="text-3xl font-bold text-indigo-400">{completionRate}%</span>
+            </div>
+            <ProgressBar percent={completionRate}/>
+          </Card>
         )}
         
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Activité récente */}
           <Card className="p-4">
             <h3 className="font-semibold mb-4 flex items-center gap-2"><Icon name="Activity" size={18}/>Activité récente</h3>
@@ -961,25 +540,6 @@
                     <p className="truncate">{a.profiles?.first_name} {a.profiles?.last_name}</p>
                     <p className="text-gray-500 text-xs truncate">{a.playlists?.title}</p>
                   </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-          
-          {/* Activité SCORM récente - NOUVEAU */}
-          <Card className="p-4">
-            <h3 className="font-semibold mb-4 flex items-center gap-2"><Icon name="Package" size={18} className="text-orange-400"/>SCORM récent</h3>
-            <div className="space-y-3">
-              {recentScorm.length===0?<p className="text-gray-500 text-sm">Aucune activité SCORM</p>:recentScorm.map(s=>(
-                <div key={s.id} className="flex items-center gap-3 text-sm">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${s.completion_status==='passed'||s.completion_status==='completed'?'bg-green-500/20 text-green-400':'bg-orange-500/20 text-orange-400'}`}>
-                    <Icon name={s.completion_status==='passed'||s.completion_status==='completed'?'CheckCircle':'Package'} size={14}/>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="truncate">{s.profiles?.first_name} {s.profiles?.last_name}</p>
-                    <p className="text-gray-500 text-xs truncate">{s.scorm_modules?.title}</p>
-                  </div>
-                  {s.score_scaled!==null&&<span className="text-xs font-medium text-indigo-400">{Math.round(s.score_scaled*100)}%</span>}
                 </div>
               ))}
             </div>
@@ -1315,23 +875,11 @@
       const[centers,setCenters]=useState([]);
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
-      const[createModal,setCreateModal]=useState(false);
       const[importModal,setImportModal]=useState(false);
-      const[deleteModal,setDeleteModal]=useState(null);
-      const[bulkDeleteModal,setBulkDeleteModal]=useState(false);
-      const[deleting,setDeleting]=useState(false);
       const[editing,setEditing]=useState(null);
       const[search,setSearch]=useState('');
-      const[filterRole,setFilterRole]=useState('');
-      const[filterCenter,setFilterCenter]=useState('');
-      const[sortBy,setSortBy]=useState('created_at');
-      const[sortDir,setSortDir]=useState('desc');
-      const[selectedUsers,setSelectedUsers]=useState([]);
       const[form,setForm]=useState({email:'',first_name:'',last_name:'',role:'learner',center_id:''});
-      const[createForm,setCreateForm]=useState({email:'',password:'',first_name:'',last_name:'',role:'learner',center_id:''});
       const[saving,setSaving]=useState(false);
-      const[creating,setCreating]=useState(false);
-      const[createResult,setCreateResult]=useState(null);
       const[importData,setImportData]=useState([]);
       const[importLoading,setImportLoading]=useState(false);
       const[importResult,setImportResult]=useState(null);
@@ -1341,152 +889,17 @@
         let q=supabase.from('profiles').select('*,centers(name)').order('created_at',{ascending:false});
         if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);
         const{data:u}=await q;setUsers(u||[]);
-        const{data:c}=await supabase.from('centers').select('id,name');setCenters(c||[]);
+        if(isSuperAdmin){const{data:c}=await supabase.from('centers').select('id,name');setCenters(c||[]);}
         setLoading(false);
-        setSelectedUsers([]);
       },[isSuperAdmin,center?.id]);
       
       useEffect(()=>{load();},[load]);
-
-      const generatePassword=()=>{
-        const chars='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
-        let pwd='';for(let i=0;i<12;i++)pwd+=chars.charAt(Math.floor(Math.random()*chars.length));
-        return pwd;
-      };
-
-      // Suppression par lot
-      const handleBulkDelete=async()=>{
-        if(!selectedUsers.length)return;
-        setDeleting(true);
-        try{
-          for(const userId of selectedUsers){
-            await supabase.from('enrollments').delete().eq('learner_id',userId);
-            await supabase.from('video_progress').delete().eq('learner_id',userId);
-            await supabase.from('scorm_progress').delete().eq('learner_id',userId);
-            await supabase.from('quiz_attempts').delete().eq('learner_id',userId);
-            await supabase.from('learner_badges').delete().eq('learner_id',userId);
-            await supabase.from('learner_points').delete().eq('learner_id',userId);
-            await supabase.from('learner_notes').delete().eq('learner_id',userId);
-            await supabase.from('notifications').delete().eq('user_id',userId);
-            await supabase.from('certificates').delete().eq('learner_id',userId);
-            await supabase.from('profiles').delete().eq('id',userId);
-          }
-          await load();
-          setBulkDeleteModal(false);
-        }catch(err){
-          console.error('Erreur suppression:',err);
-          alert('Erreur lors de la suppression: '+err.message);
-        }
-        setDeleting(false);
-      };
-
-      // Sélection
-      const toggleSelect=(userId)=>{
-        setSelectedUsers(prev=>prev.includes(userId)?prev.filter(id=>id!==userId):[...prev,userId]);
-      };
-      const toggleSelectAll=(filteredUsers)=>{
-        const selectableUsers=filteredUsers.filter(u=>u.id!==profile?.id&&u.role!=='super_admin');
-        const allSelected=selectableUsers.every(u=>selectedUsers.includes(u.id));
-        if(allSelected){
-          setSelectedUsers([]);
-        }else{
-          setSelectedUsers(selectableUsers.map(u=>u.id));
-        }
-      };
-
-      // Tri
-      const handleSort=(field)=>{
-        if(sortBy===field){
-          setSortDir(prev=>prev==='asc'?'desc':'asc');
-        }else{
-          setSortBy(field);
-          setSortDir('asc');
-        }
-      };
-
-      const handleCreate=async()=>{
-        if(!createForm.email||!createForm.first_name||!createForm.last_name){
-          alert('Veuillez remplir tous les champs obligatoires');return;
-        }
-        // Valider le rôle selon les permissions
-        const allowedRoles=isSuperAdmin?['learner','trainer','center_admin','super_admin']:['learner','trainer'];
-        const finalRole=allowedRoles.includes(createForm.role)?createForm.role:'learner';
-        
-        setCreating(true);setCreateResult(null);
-        try{
-          const password=createForm.password||generatePassword();
-          const targetCenterId=isSuperAdmin?(createForm.center_id||center?.id):center?.id;
-          
-          // Créer l'utilisateur via l'API Supabase Auth
-          const{data:authData,error:authError}=await supabase.auth.signUp({
-            email:createForm.email.toLowerCase().trim(),
-            password:password,
-            options:{data:{first_name:createForm.first_name,last_name:createForm.last_name}}
-          });
-          
-          if(authError)throw authError;
-          if(!authData.user)throw new Error('Erreur lors de la création du compte');
-          
-          // Mettre à jour le profil avec le rôle et le centre
-          const{error:profileError}=await supabase.from('profiles').update({
-            first_name:createForm.first_name,
-            last_name:createForm.last_name,
-            role:finalRole,
-            center_id:targetCenterId||null
-          }).eq('id',authData.user.id);
-          
-          if(profileError)console.error('Erreur profil:',profileError);
-          
-          setCreateResult({success:true,email:createForm.email,password:password});
-          await load();
-        }catch(err){
-          console.error('Erreur création:',err);
-          setCreateResult({success:false,error:err.message});
-        }
-        setCreating(false);
-      };
-
-      const resetCreateForm=()=>{
-        setCreateForm({email:'',password:'',first_name:'',last_name:'',role:'learner',center_id:center?.id||''});
-        setCreateResult(null);
-      };
 
       const handleSave=async()=>{
         if(!editing)return;
         setSaving(true);
         await supabase.from('profiles').update({first_name:form.first_name,last_name:form.last_name,role:form.role,center_id:form.center_id||null}).eq('id',editing.id);
         await load();setModal(false);setEditing(null);setSaving(false);
-      };
-
-      const handleDelete=async()=>{
-        if(!deleteModal)return;
-        setDeleting(true);
-        try{
-          // Supprimer les données liées
-          await supabase.from('enrollments').delete().eq('learner_id',deleteModal.id);
-          await supabase.from('video_progress').delete().eq('learner_id',deleteModal.id);
-          await supabase.from('scorm_progress').delete().eq('learner_id',deleteModal.id);
-          await supabase.from('quiz_attempts').delete().eq('learner_id',deleteModal.id);
-          await supabase.from('learner_badges').delete().eq('learner_id',deleteModal.id);
-          await supabase.from('learner_points').delete().eq('learner_id',deleteModal.id);
-          await supabase.from('learner_notes').delete().eq('learner_id',deleteModal.id);
-          await supabase.from('notifications').delete().eq('user_id',deleteModal.id);
-          await supabase.from('certificates').delete().eq('learner_id',deleteModal.id);
-          
-          // Supprimer le profil
-          await supabase.from('profiles').delete().eq('id',deleteModal.id);
-          
-          // Supprimer l'utilisateur auth (nécessite une fonction Edge ou admin API)
-          // Note: Cela nécessite les droits admin Supabase
-          // Pour l'instant on garde le user auth mais sans profil
-          
-          await load();
-          setDeleteModal(null);
-        }catch(err){
-          console.error('Erreur suppression:',err);
-          alert('Erreur lors de la suppression: '+err.message);
-        }
-        setDeleting(false);
       };
 
       const handleFileSelect=async(e)=>{
@@ -1496,22 +909,18 @@
           const workbook=XLSX.read(data);
           const sheet=workbook.Sheets[workbook.SheetNames[0]];
           const jsonData=XLSX.utils.sheet_to_json(sheet);
-          // Rôles autorisés selon le type d'admin
-          const allowedRoles=isSuperAdmin?['learner','trainer','center_admin','super_admin']:['learner','trainer'];
           const mapped=jsonData.map((row,i)=>{
-            let role=String(row['Rôle']||row['Role']||row['role']||'learner').toLowerCase();
-            // Si le rôle n'est pas autorisé pour cet admin, forcer à 'learner'
-            if(!allowedRoles.includes(role))role='learner';
+            const role=String(row['Rôle']||row['Role']||row['role']||'learner').toLowerCase();
+            const validRoles=['learner','trainer','center_admin'];
             return{
               _index:i+1,
               email:String(row['Email']||row['email']||'').toLowerCase().trim(),
               first_name:row['Prénom']||row['Prenom']||row['first_name']||'',
               last_name:row['Nom']||row['last_name']||'',
-              role:role,
+              role:validRoles.includes(role)?role:'learner',
               password:row['Mot de passe']||row['Password']||row['password']||'',
               center_name:row['Centre']||row['center']||'',
-              _valid:!!(row['Email']||row['email'])&&!!(row['Prénom']||row['Prenom']||row['first_name'])&&!!(row['Nom']||row['last_name']),
-              _roleForced:!allowedRoles.includes(String(row['Rôle']||row['Role']||row['role']||'learner').toLowerCase())
+              _valid:!!(row['Email']||row['email'])&&!!(row['Prénom']||row['Prenom']||row['first_name'])&&!!(row['Nom']||row['last_name'])
             };
           });
           setImportData(mapped);setImportResult(null);
@@ -1572,285 +981,15 @@
         XLSX.writeFile(wb,'resultat_import.xlsx');
       };
 
-      const filtered=useMemo(()=>{
-        let result=[...users];
-        // Recherche
-        if(search){
-          const s=search.toLowerCase();
-          result=result.filter(u=>u.email?.toLowerCase().includes(s)||u.first_name?.toLowerCase().includes(s)||u.last_name?.toLowerCase().includes(s));
-        }
-        // Filtre par rôle
-        if(filterRole){
-          result=result.filter(u=>u.role===filterRole);
-        }
-        // Filtre par centre
-        if(filterCenter){
-          result=result.filter(u=>u.center_id===filterCenter);
-        }
-        // Tri
-        result.sort((a,b)=>{
-          let valA,valB;
-          switch(sortBy){
-            case 'name':valA=`${a.first_name} ${a.last_name}`.toLowerCase();valB=`${b.first_name} ${b.last_name}`.toLowerCase();break;
-            case 'email':valA=a.email?.toLowerCase()||'';valB=b.email?.toLowerCase()||'';break;
-            case 'role':valA=a.role||'';valB=b.role||'';break;
-            case 'center':valA=a.centers?.name?.toLowerCase()||'';valB=b.centers?.name?.toLowerCase()||'';break;
-            default:valA=a.created_at||'';valB=b.created_at||'';
-          }
-          if(valA<valB)return sortDir==='asc'?-1:1;
-          if(valA>valB)return sortDir==='asc'?1:-1;
-          return 0;
-        });
-        return result;
-      },[users,search,filterRole,filterCenter,sortBy,sortDir]);
-
-      const selectableUsers=filtered.filter(u=>u.id!==profile?.id&&u.role!=='super_admin');
-      const allSelected=selectableUsers.length>0&&selectableUsers.every(u=>selectedUsers.includes(u.id));
+      const filtered=users.filter(u=>{if(!search)return true;const s=search.toLowerCase();return u.email?.toLowerCase().includes(s)||u.first_name?.toLowerCase().includes(s)||u.last_name?.toLowerCase().includes(s);});
 
       if(!can('manage_users'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
 
       return<div>
-        <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-          <div>
-            <h1 className="text-2xl font-bold">Utilisateurs</h1>
-            <p className="text-sm text-gray-400">{users.length} utilisateur{users.length>1?'s':''}</p>
-          </div>
-          <div className="flex gap-2">
-            {selectedUsers.length>0&&(
-              <Button variant="secondary" icon="Trash2" className="text-red-400 border-red-500/50 hover:bg-red-500/10" onClick={()=>setBulkDeleteModal(true)}>
-                Supprimer ({selectedUsers.length})
-              </Button>
-            )}
-            <Button icon="UserPlus" onClick={()=>{resetCreateForm();setCreateModal(true);}}>Ajouter</Button>
-            <Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button>
-          </div>
-        </div>
-        
-        {/* Filtres */}
-        <Card className="p-4 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/>
-            <Select value={filterRole} onChange={e=>setFilterRole(e.target.value)} options={[
-              {value:'',label:'Tous les rôles'},
-              {value:'learner',label:'Apprenants'},
-              {value:'trainer',label:'Formateurs'},
-              {value:'center_admin',label:'Admins de centre'},
-              {value:'super_admin',label:'Super Admins'}
-            ]}/>
-            {isSuperAdmin&&<Select value={filterCenter} onChange={e=>setFilterCenter(e.target.value)} options={[
-              {value:'',label:'Tous les centres'},
-              ...centers.map(c=>({value:c.id,label:c.name}))
-            ]}/>}
-            <Select value={`${sortBy}-${sortDir}`} onChange={e=>{const[field,dir]=e.target.value.split('-');setSortBy(field);setSortDir(dir);}} options={[
-              {value:'created_at-desc',label:'Plus récents'},
-              {value:'created_at-asc',label:'Plus anciens'},
-              {value:'name-asc',label:'Nom A-Z'},
-              {value:'name-desc',label:'Nom Z-A'},
-              {value:'email-asc',label:'Email A-Z'},
-              {value:'role-asc',label:'Rôle A-Z'}
-            ]}/>
-          </div>
-        </Card>
-        
-        {/* Tableau */}
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-750">
-                <tr>
-                  <th className="p-4 w-12">
-                    <input type="checkbox" checked={allSelected} onChange={()=>toggleSelectAll(filtered)} className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500"/>
-                  </th>
-                  <th className="text-left p-4 font-medium text-gray-400 cursor-pointer hover:text-white" onClick={()=>handleSort('name')}>
-                    <div className="flex items-center gap-1">Utilisateur {sortBy==='name'&&<Icon name={sortDir==='asc'?'ChevronUp':'ChevronDown'} size={14}/>}</div>
-                  </th>
-                  <th className="text-left p-4 font-medium text-gray-400 cursor-pointer hover:text-white" onClick={()=>handleSort('role')}>
-                    <div className="flex items-center gap-1">Rôle {sortBy==='role'&&<Icon name={sortDir==='asc'?'ChevronUp':'ChevronDown'} size={14}/>}</div>
-                  </th>
-                  {isSuperAdmin&&<th className="text-left p-4 font-medium text-gray-400 cursor-pointer hover:text-white" onClick={()=>handleSort('center')}>
-                    <div className="flex items-center gap-1">Centre {sortBy==='center'&&<Icon name={sortDir==='asc'?'ChevronUp':'ChevronDown'} size={14}/>}</div>
-                  </th>}
-                  <th className="text-left p-4 font-medium text-gray-400 cursor-pointer hover:text-white" onClick={()=>handleSort('created_at')}>
-                    <div className="flex items-center gap-1">Créé le {sortBy==='created_at'&&<Icon name={sortDir==='asc'?'ChevronUp':'ChevronDown'} size={14}/>}</div>
-                  </th>
-                  <th className="text-right p-4"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-700">
-                {filtered.length===0?(
-                  <tr><td colSpan={isSuperAdmin?6:5} className="p-8 text-center text-gray-500">Aucun utilisateur trouvé</td></tr>
-                ):filtered.map(u=>(
-                  <tr key={u.id} className={`hover:bg-gray-750/50 ${selectedUsers.includes(u.id)?'bg-indigo-500/10':''}`}>
-                    <td className="p-4">
-                      {u.id!==profile?.id&&u.role!=='super_admin'?(
-                        <input type="checkbox" checked={selectedUsers.includes(u.id)} onChange={()=>toggleSelect(u.id)} className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500"/>
-                      ):<span className="w-4 h-4 block"></span>}
-                    </td>
-                    <td className="p-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center"><Icon name="User" size={18}/></div>
-                        <div>
-                          <p className="font-medium">{u.first_name} {u.last_name}</p>
-                          <p className="text-sm text-gray-400">{u.email}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="p-4"><RoleBadge role={u.role}/></td>
-                    {isSuperAdmin&&<td className="p-4 text-gray-400">{u.centers?.name||'-'}</td>}
-                    <td className="p-4 text-gray-400 text-sm">{u.created_at?new Date(u.created_at).toLocaleDateString('fr-FR'):'-'}</td>
-                    <td className="p-4 text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(u);setForm({email:u.email,first_name:u.first_name||'',last_name:u.last_name||'',role:u.role,center_id:u.center_id||''});setModal(true);}}/>
-                        {u.id!==profile?.id&&u.role!=='super_admin'&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400 hover:text-red-300 hover:bg-red-500/10" onClick={()=>setDeleteModal(u)}/>}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {filtered.length>0&&<div className="p-4 border-t border-gray-700 text-sm text-gray-400">
-            {selectedUsers.length>0?`${selectedUsers.length} sélectionné${selectedUsers.length>1?'s':''} sur `:''}{filtered.length} utilisateur{filtered.length>1?'s':''}
-          </div>}
-        </Card>
-        
-        {/* Modal de suppression par lot */}
-        <Modal isOpen={bulkDeleteModal} onClose={()=>setBulkDeleteModal(false)} title="Supprimer les utilisateurs sélectionnés">
-          <div className="space-y-4">
-            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-12 h-12 bg-red-500/20 rounded-full flex items-center justify-center">
-                  <Icon name="AlertTriangle" size={24} className="text-red-400"/>
-                </div>
-                <div>
-                  <p className="font-semibold text-red-400">Attention !</p>
-                  <p className="text-sm text-gray-400">Cette action est irréversible.</p>
-                </div>
-              </div>
-              <p className="text-sm text-gray-300">
-                Vous êtes sur le point de supprimer <strong className="text-white">{selectedUsers.length} utilisateur{selectedUsers.length>1?'s':''}</strong>.
-              </p>
-            </div>
-            <div className="bg-gray-700/50 p-3 rounded-lg max-h-48 overflow-y-auto">
-              <p className="font-medium text-gray-300 mb-2">Utilisateurs à supprimer :</p>
-              <ul className="space-y-1 text-sm">
-                {selectedUsers.map(id=>{
-                  const u=users.find(user=>user.id===id);
-                  return u?<li key={id} className="flex items-center gap-2"><Icon name="User" size={14} className="text-gray-500"/>{u.first_name} {u.last_name} <span className="text-gray-500">({u.email})</span></li>:null;
-                })}
-              </ul>
-            </div>
-            <div className="flex justify-end gap-3">
-              <Button variant="secondary" onClick={()=>setBulkDeleteModal(false)}>Annuler</Button>
-              <Button variant="primary" className="bg-red-600 hover:bg-red-700" icon="Trash2" onClick={handleBulkDelete} loading={deleting}>Supprimer {selectedUsers.length} utilisateur{selectedUsers.length>1?'s':''}</Button>
-            </div>
-          </div>
-        </Modal>
-        
-        {/* Modal de création d'utilisateur */}
-        <Modal isOpen={createModal} onClose={()=>{setCreateModal(false);resetCreateForm();}} title="Ajouter un utilisateur">
-          <div className="space-y-4">
-            {!createResult?(
-              <>
-                <Input label="Email *" type="email" icon="Mail" placeholder="email@exemple.com" value={createForm.email} onChange={e=>setCreateForm({...createForm,email:e.target.value})}/>
-                <div className="grid grid-cols-2 gap-4">
-                  <Input label="Prénom *" placeholder="Jean" value={createForm.first_name} onChange={e=>setCreateForm({...createForm,first_name:e.target.value})}/>
-                  <Input label="Nom *" placeholder="Dupont" value={createForm.last_name} onChange={e=>setCreateForm({...createForm,last_name:e.target.value})}/>
-                </div>
-                <div className="relative">
-                  <Input label="Mot de passe" type="text" icon="Lock" placeholder="Laisser vide pour générer" value={createForm.password} onChange={e=>setCreateForm({...createForm,password:e.target.value})}/>
-                  <button type="button" onClick={()=>setCreateForm({...createForm,password:generatePassword()})} className="absolute right-2 top-8 text-xs text-indigo-400 hover:text-indigo-300">Générer</button>
-                </div>
-                <Select label="Rôle *" value={createForm.role} onChange={e=>setCreateForm({...createForm,role:e.target.value})} options={[
-                  {value:'learner',label:'Apprenant'},
-                  {value:'trainer',label:'Formateur'},
-                  ...(isSuperAdmin?[
-                    {value:'center_admin',label:'Admin de centre'},
-                    {value:'super_admin',label:'Super Admin'}
-                  ]:[])
-                ]}/>
-                {isSuperAdmin&&<Select label="Centre" value={createForm.center_id} onChange={e=>setCreateForm({...createForm,center_id:e.target.value})} options={[{value:'',label:'Aucun centre'},...centers.map(c=>({value:c.id,label:c.name}))]}/>}
-                <div className="flex justify-end gap-3 pt-2">
-                  <Button variant="secondary" onClick={()=>{setCreateModal(false);resetCreateForm();}}>Annuler</Button>
-                  <Button icon="UserPlus" onClick={handleCreate} loading={creating}>Créer l'utilisateur</Button>
-                </div>
-              </>
-            ):(
-              <div className="space-y-4">
-                {createResult.success?(
-                  <>
-                    <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-lg text-center">
-                      <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
-                        <Icon name="CheckCircle" size={32} className="text-green-400"/>
-                      </div>
-                      <p className="font-semibold text-green-400 text-lg">Utilisateur créé avec succès !</p>
-                    </div>
-                    <div className="bg-gray-700/50 p-4 rounded-lg space-y-3">
-                      <div><p className="text-xs text-gray-400">Email</p><p className="font-medium">{createResult.email}</p></div>
-                      <div><p className="text-xs text-gray-400">Mot de passe</p><div className="flex items-center gap-2"><code className="bg-gray-800 px-3 py-1 rounded font-mono text-indigo-400">{createResult.password}</code><Button variant="ghost" size="sm" icon="Copy" onClick={()=>{navigator.clipboard.writeText(createResult.password);}}></Button></div></div>
-                    </div>
-                    <Alert type="warning">⚠️ Notez ce mot de passe, il ne sera plus affiché.</Alert>
-                    <div className="flex justify-end gap-3">
-                      <Button variant="secondary" onClick={()=>{setCreateModal(false);resetCreateForm();}}>Fermer</Button>
-                      <Button icon="UserPlus" onClick={()=>{resetCreateForm();}}>Ajouter un autre</Button>
-                    </div>
-                  </>
-                ):(
-                  <>
-                    <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-center">
-                      <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
-                        <Icon name="XCircle" size={32} className="text-red-400"/>
-                      </div>
-                      <p className="font-semibold text-red-400">Erreur lors de la création</p>
-                      <p className="text-sm text-gray-400 mt-2">{createResult.error}</p>
-                    </div>
-                    <div className="flex justify-end gap-3">
-                      <Button variant="secondary" onClick={()=>{setCreateModal(false);resetCreateForm();}}>Fermer</Button>
-                      <Button onClick={()=>setCreateResult(null)}>Réessayer</Button>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        </Modal>
-        
-        {/* Modal de confirmation de suppression */}
-        <Modal isOpen={!!deleteModal} onClose={()=>setDeleteModal(null)} title="Supprimer l'utilisateur">
-          <div className="space-y-4">
-            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-12 h-12 bg-red-500/20 rounded-full flex items-center justify-center">
-                  <Icon name="AlertTriangle" size={24} className="text-red-400"/>
-                </div>
-                <div>
-                  <p className="font-semibold text-red-400">Attention !</p>
-                  <p className="text-sm text-gray-400">Cette action est irréversible.</p>
-                </div>
-              </div>
-              <p className="text-sm text-gray-300">
-                Vous êtes sur le point de supprimer l'utilisateur :
-              </p>
-              <p className="font-medium mt-2">{deleteModal?.first_name} {deleteModal?.last_name}</p>
-              <p className="text-sm text-gray-400">{deleteModal?.email}</p>
-            </div>
-            <div className="bg-gray-700/50 p-3 rounded-lg text-sm text-gray-400">
-              <p className="font-medium text-gray-300 mb-1">Données qui seront supprimées :</p>
-              <ul className="list-disc list-inside space-y-1">
-                <li>Inscriptions aux cours</li>
-                <li>Progression vidéo et SCORM</li>
-                <li>Résultats de quiz</li>
-                <li>Badges et points</li>
-                <li>Notes et certificats</li>
-              </ul>
-            </div>
-            <div className="flex justify-end gap-3">
-              <Button variant="secondary" onClick={()=>setDeleteModal(null)}>Annuler</Button>
-              <Button variant="primary" className="bg-red-600 hover:bg-red-700" icon="Trash2" onClick={handleDelete} loading={deleting}>Supprimer définitivement</Button>
-            </div>
-          </div>
-        </Modal>
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-4"><h1 className="text-2xl font-bold">Utilisateurs</h1><Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button></div>
+        <Card className="p-4 mb-6"><Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/></Card>
+        <Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Utilisateur</th><th className="text-left p-4 font-medium text-gray-400">Rôle</th>{isSuperAdmin&&<th className="text-left p-4 font-medium text-gray-400">Centre</th>}<th className="text-right p-4"></th></tr></thead><tbody className="divide-y divide-gray-700">{filtered.map(u=><tr key={u.id} className="hover:bg-gray-750/50"><td className="p-4"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center"><Icon name="User" size={18}/></div><div><p className="font-medium">{u.first_name} {u.last_name}</p><p className="text-sm text-gray-400">{u.email}</p></div></div></td><td className="p-4"><RoleBadge role={u.role}/></td>{isSuperAdmin&&<td className="p-4 text-gray-400">{u.centers?.name||'-'}</td>}<td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(u);setForm({email:u.email,first_name:u.first_name||'',last_name:u.last_name||'',role:u.role,center_id:u.center_id||''});setModal(true);}}/></td></tr>)}</tbody></table></div></Card>
         
         <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title="Modifier"><div className="space-y-4"><Input label="Email" value={form.email} disabled/><div className="grid grid-cols-2 gap-4"><Input label="Prénom" value={form.first_name} onChange={e=>setForm({...form,first_name:e.target.value})}/><Input label="Nom" value={form.last_name} onChange={e=>setForm({...form,last_name:e.target.value})}/></div><Select label="Rôle" value={form.role} onChange={e=>setForm({...form,role:e.target.value})} options={Object.entries(ROLE_LABELS).filter(([r])=>isSuperAdmin||r!=='super_admin').map(([v,l])=>({value:v,label:l}))}/>{isSuperAdmin&&<Select label="Centre" value={form.center_id} onChange={e=>setForm({...form,center_id:e.target.value})} options={[{value:'',label:'Aucun'},...centers.map(c=>({value:c.id,label:c.name}))]}/>}<div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
 
@@ -3021,10 +2160,9 @@
       const iframeRef=useRef(null);
       const[loading,setLoading]=useState(true);
       const[error,setError]=useState(null);
+      const[cmiData,setCmiData]=useState({});
       const[status,setStatus]=useState('not attempted');
       const[score,setScore]=useState(null);
-      const[initialDataLoaded,setInitialDataLoaded]=useState(false);
-      const[savedCmiData,setSavedCmiData]=useState(null);
       
       // Exposer lms_origin sur window pour que layer2.js puisse le trouver
       useEffect(() => {
@@ -3038,39 +2176,18 @@
         };
       }, []);
       
-      // Charger les données existantes AVANT d'initialiser l'API
+      // Initialiser l'API SCORM
       useEffect(()=>{
+        // Charger les données existantes
         const loadProgress=async()=>{
-          console.log('SCORM: Loading existing progress for module', module.id);
-          const{data,error}=await supabase.from('scorm_progress')
-            .select('*')
-            .eq('enrollment_id',enrollmentId)
-            .eq('module_id',module.id)
-            .maybeSingle();
-          
-          if(error){
-            console.error('SCORM: Error loading progress', error);
-          }
-          
+          const{data}=await supabase.from('scorm_progress').select('*').eq('enrollment_id',enrollmentId).eq('scorm_module_id',module.id).single();
           if(data){
-            console.log('SCORM: Found existing progress', data);
-            setSavedCmiData(data.cmi_data||{});
+            setCmiData(data.cmi_data||{});
             setStatus(data.completion_status||'not attempted');
             setScore(data.score_scaled);
-          }else{
-            console.log('SCORM: No existing progress found');
-            setSavedCmiData({});
           }
-          setInitialDataLoaded(true);
         };
         loadProgress();
-      },[enrollmentId,module.id]);
-      
-      // Initialiser l'API SCORM seulement après le chargement des données
-      useEffect(()=>{
-        if(!initialDataLoaded)return;
-        
-        console.log('SCORM: Initializing API with saved data', savedCmiData);
         
         // Créer l'API SCORM 1.2
         const SCORM12_API={
@@ -3080,16 +2197,15 @@
           _data:{
             'cmi.core.student_id':user.id,
             'cmi.core.student_name':user.email||'Apprenant',
-            'cmi.core.lesson_status':savedCmiData?.['cmi.core.lesson_status']||'not attempted',
-            'cmi.core.lesson_location':savedCmiData?.['cmi.core.lesson_location']||'',
-            'cmi.core.score.raw':savedCmiData?.['cmi.core.score.raw']||'',
-            'cmi.core.score.min':savedCmiData?.['cmi.core.score.min']||'0',
-            'cmi.core.score.max':savedCmiData?.['cmi.core.score.max']||'100',
-            'cmi.suspend_data':savedCmiData?.['cmi.suspend_data']||'',
+            'cmi.core.lesson_status':'not attempted',
+            'cmi.core.lesson_location':'',
+            'cmi.core.score.raw':'',
+            'cmi.core.score.min':'0',
+            'cmi.core.score.max':'100',
+            'cmi.suspend_data':'',
             'cmi.core.session_time':'00:00:00',
-            'cmi.core.total_time':savedCmiData?.['cmi.core.total_time']||'00:00:00',
-            'cmi.core.entry':savedCmiData?.['cmi.suspend_data']?'resume':'',
-            ...savedCmiData
+            'cmi.core.total_time':'00:00:00',
+            ...cmiData
           },
           
           LMSInitialize:function(param){
@@ -3205,18 +2321,17 @@
           _data:{
             'cmi.learner_id':user.id,
             'cmi.learner_name':user.email||'Apprenant',
-            'cmi.completion_status':savedCmiData?.['cmi.completion_status']||'not attempted',
-            'cmi.success_status':savedCmiData?.['cmi.success_status']||'unknown',
-            'cmi.location':savedCmiData?.['cmi.location']||'',
-            'cmi.score.scaled':savedCmiData?.['cmi.score.scaled']||'',
-            'cmi.score.raw':savedCmiData?.['cmi.score.raw']||'',
-            'cmi.score.min':savedCmiData?.['cmi.score.min']||'0',
-            'cmi.score.max':savedCmiData?.['cmi.score.max']||'100',
-            'cmi.suspend_data':savedCmiData?.['cmi.suspend_data']||'',
+            'cmi.completion_status':'not attempted',
+            'cmi.success_status':'unknown',
+            'cmi.location':'',
+            'cmi.score.scaled':'',
+            'cmi.score.raw':'',
+            'cmi.score.min':'0',
+            'cmi.score.max':'100',
+            'cmi.suspend_data':'',
             'cmi.session_time':'PT0H0M0S',
-            'cmi.total_time':savedCmiData?.['cmi.total_time']||'PT0H0M0S',
-            'cmi.entry':savedCmiData?.['cmi.suspend_data']?'resume':'ab-initio',
-            ...savedCmiData
+            'cmi.total_time':'PT0H0M0S',
+            ...cmiData
           },
           
           Initialize:function(param){
@@ -3327,7 +2442,7 @@
           delete window.API;
           delete window.API_1484_11;
         };
-      },[module.id,enrollmentId,user.id,initialDataLoaded,savedCmiData,onComplete]);
+      },[module.id,enrollmentId,user.id,cmiData,onComplete]);
       
       // L'URL du module SCORM via le loader hébergé sur GitHub Pages
       const scormUrl = useMemo(() => {
@@ -3408,80 +2523,12 @@
       const[quizMode,setQuizMode]=useState(false);
       const[quizResult,setQuizResult]=useState(null);
       const[quizAttempts,setQuizAttempts]=useState([]);
-      const[myScormStats,setMyScormStats]=useState({total:0,completed:0,passed:0,avgScore:0});
-      const[allMyScorm,setAllMyScorm]=useState([]);
       const playerRef=useRef(null);
       const playerInstanceRef=useRef(null);
-      
-      // Suivi du temps passé sur le cours
-      const courseSessionRef=useRef({startTime:null,sessionId:null});
-      
-      // Démarrer le suivi quand on ouvre un cours
-      useEffect(()=>{
-        if(selectedCourse){
-          // Démarrer une nouvelle session
-          const startTime=new Date();
-          const sessionId=`session_${Date.now()}`;
-          courseSessionRef.current={startTime,sessionId,enrollmentId:selectedCourse.id};
-          console.log('⏱️ Course session started:', sessionId);
-          
-          // Créer la session en base
-          supabase.from('course_sessions').insert({
-            enrollment_id:selectedCourse.id,
-            learner_id:user.id,
-            started_at:startTime.toISOString()
-          }).select().single().then(({data})=>{
-            if(data)courseSessionRef.current.dbSessionId=data.id;
-          });
-          
-          // Sauvegarder périodiquement (toutes les 30 secondes)
-          const interval=setInterval(()=>{
-            const elapsed=Math.floor((Date.now()-courseSessionRef.current.startTime)/1000);
-            console.log('⏱️ Course time elapsed:', elapsed, 'seconds');
-          },30000);
-          
-          return()=>{
-            clearInterval(interval);
-            // Fin de session
-            const endTime=new Date();
-            const duration=Math.floor((endTime-courseSessionRef.current.startTime)/1000);
-            console.log('⏱️ Course session ended, duration:', duration, 'seconds');
-            
-            // Mettre à jour la session en base
-            if(courseSessionRef.current.dbSessionId){
-              supabase.from('course_sessions').update({
-                ended_at:endTime.toISOString(),
-                duration_seconds:duration
-              }).eq('id',courseSessionRef.current.dbSessionId);
-            }
-            
-            // Mettre à jour le temps total sur l'enrollment
-            if(courseSessionRef.current.enrollmentId&&duration>0){
-              supabase.from('enrollments').select('time_spent_seconds').eq('id',courseSessionRef.current.enrollmentId).single().then(({data})=>{
-                const currentTime=data?.time_spent_seconds||0;
-                supabase.from('enrollments').update({time_spent_seconds:currentTime+duration}).eq('id',courseSessionRef.current.enrollmentId);
-              });
-            }
-          };
-        }
-      },[selectedCourse?.id,user.id]);
 
       const load=useCallback(async()=>{
         const{data}=await supabase.from('enrollments').select('*,playlists:playlist_id(*)').eq('learner_id',user.id);
         setEnrollments(data||[]);
-        
-        // Charger toutes les progressions SCORM de l'apprenant
-        const{data:scorm}=await supabase.from('scorm_progress').select('*,scorm_modules:module_id(title,category),enrollments:enrollment_id(playlists:playlist_id(title))').eq('learner_id',user.id).order('updated_at',{ascending:false});
-        setAllMyScorm(scorm||[]);
-        
-        // Calculer les stats SCORM personnelles
-        const total=(scorm||[]).length;
-        const completed=(scorm||[]).filter(s=>s.completion_status==='completed'||s.completion_status==='passed').length;
-        const passed=(scorm||[]).filter(s=>s.completion_status==='passed'||s.success_status==='passed').length;
-        const withScore=(scorm||[]).filter(s=>s.score_scaled!==null);
-        const avgScore=withScore.length>0?withScore.reduce((a,s)=>a+(s.score_scaled||0),0)/withScore.length:0;
-        setMyScormStats({total,completed,passed,avgScore});
-        
         setLoading(false);
       },[user.id]);
       
@@ -3500,19 +2547,13 @@
           // Charger la progression SCORM
           const{data:sp}=await supabase.from('scorm_progress').select('*').eq('enrollment_id',enrollment.id);
           const spMap={};
-          (sp||[]).forEach(p=>{spMap[p.module_id]=p;});
+          (sp||[]).forEach(p=>{spMap[p.scorm_module_id]=p;});
           setScormProgress(spMap);
         } catch(e) { console.log('SCORM tables not available'); setCourseScorm([]); }
         
-        const{data:progress,error:progressError}=await supabase.from('video_progress').select('*').eq('enrollment_id',enrollment.id);
-        console.log('📊 Loaded video progress:', {enrollmentId: enrollment.id, count: progress?.length, progress, error: progressError});
+        const{data:progress}=await supabase.from('video_progress').select('*').eq('enrollment_id',enrollment.id);
         const progressMap={};
-        (progress||[]).forEach(p=>{
-          // Utiliser playlist_video_id en priorité, sinon course_video_id
-          const videoKey = p.playlist_video_id || p.course_video_id;
-          if(videoKey) progressMap[videoKey]=p;
-        });
-        console.log('📊 Progress map:', progressMap);
+        (progress||[]).forEach(p=>{progressMap[p.playlist_video_id]=p;});
         setVideoProgress(progressMap);
         
         // Charger le quiz du cours
@@ -3674,33 +2715,15 @@
         loadResources();
       },[currentVideo?.id,selectedCourse?.id]);
 
-      // Ref pour accéder à videoProgress sans causer de re-render du player
-      const videoProgressRef=useRef(videoProgress);
-      useEffect(()=>{videoProgressRef.current=videoProgress;},[videoProgress]);
-      
-      // Ref pour selectedCourse
-      const selectedCourseRef=useRef(selectedCourse);
-      useEffect(()=>{selectedCourseRef.current=selectedCourse;},[selectedCourse]);
-      
-      // Ref pour scormProgress
-      const scormProgressRef=useRef(scormProgress);
-      useEffect(()=>{scormProgressRef.current=scormProgress;},[scormProgress]);
-
       // Initialiser le lecteur Vimeo
       useEffect(()=>{
-        if(!currentVideo||!playerRef.current||!selectedCourse)return;
+        if(!currentVideo||!playerRef.current)return;
         
         if(playerInstanceRef.current){
           playerInstanceRef.current.destroy();
         }
         
-        const progressData=videoProgressRef.current[currentVideo.id];
-        const startTime=progressData?.last_position_seconds||0;
-        console.log('🎬 Initializing video player:', {
-          videoId: currentVideo.id,
-          vimeoId: currentVideo.videos?.vimeo_id,
-          startTime
-        });
+        const startTime=videoProgress[currentVideo.id]?.last_position_seconds||0;
         playerRef.current.innerHTML='';
         
         const player=new Vimeo.Player(playerRef.current,{
@@ -3709,191 +2732,78 @@
           autoplay:false
         });
         
-        player.ready().then(()=>{
-          console.log('🎬 Player ready');
-          if(startTime>0){
-            console.log('⏩ Seeking to:', startTime);
-            player.setCurrentTime(startTime).catch(e=>console.error('Seek error:',e));
-          }
-        });
+        if(startTime>0){
+          player.setCurrentTime(startTime).catch(()=>{});
+        }
         
         playerInstanceRef.current=player;
         
-        // Variables locales pour la closure
-        const videoId=currentVideo.id;
-        const visitorId=user.id;
-        const enrollmentId=selectedCourse.id;
-        let lastSaveTime=0;
-        
-        // Fonction de sauvegarde locale
-        const saveProgress=async(positionSeconds,completed)=>{
-          const existing=videoProgressRef.current[videoId];
-          const progressData={
-            enrollment_id:enrollmentId,
-            playlist_video_id:videoId,
-            learner_id:visitorId,
-            last_position_seconds:Math.floor(positionSeconds),
-            is_completed:completed||existing?.is_completed||false,
-            watch_time_seconds:(existing?.watch_time_seconds||0)+10
-          };
-          
-          if(completed)progressData.completed_at=new Date().toISOString();
-          
-          console.log('💾 Saving video progress:', {videoId, positionSeconds, completed, existing: !!existing?.id});
-          
-          try{
-            if(existing?.id){
-              const{data:updated,error}=await supabase.from('video_progress').update({
-                last_position_seconds:progressData.last_position_seconds,
-                is_completed:progressData.is_completed,
-                watch_time_seconds:progressData.watch_time_seconds,
-                ...(completed?{completed_at:progressData.completed_at}:{})
-              }).eq('id',existing.id).select().single();
-              
-              if(error){
-                console.error('❌ Error updating video progress:', error);
-              }else{
-                console.log('✅ Updated video progress:', updated);
-                setVideoProgress(prev=>({...prev,[videoId]:updated||{...prev[videoId],...progressData}}));
-              }
-            }else{
-              const{data:inserted,error}=await supabase.from('video_progress').insert(progressData).select().single();
-              if(error){
-                console.error('❌ Error inserting video progress:', error);
-              }else if(inserted){
-                console.log('✅ Inserted video progress:', inserted);
-                setVideoProgress(prev=>({...prev,[videoId]:inserted}));
-              }
-            }
-          }catch(err){
-            console.error('❌ Exception saving video progress:', err);
-          }
-        };
-        
-        player.on('timeupdate',(data)=>{
+        let lastSave=0;
+        player.on('timeupdate',async(data)=>{
           const now=Date.now();
-          if(now-lastSaveTime>10000){ // Sauvegarder toutes les 10 secondes
-            lastSaveTime=now;
-            saveProgress(data.seconds,false);
+          if(now-lastSave>10000){
+            lastSave=now;
+            await saveProgress(Math.floor(data.seconds),false);
           }
         });
         
         player.on('ended',async()=>{
-          console.log('🏁 Video ended');
           await saveProgress(0,true);
-          // Attendre un peu que l'état soit mis à jour puis recalculer
-          setTimeout(async()=>{
-            // Recalculer la progression du cours
-            const totalVids=courseVideos.length;
-            const completedVids=Object.values(videoProgressRef.current).filter(p=>p.is_completed).length;
-            const totalScorms=courseScorm.length;
-            const completedScorms=Object.values(scormProgressRef.current||{}).filter(p=>p.completion_status==='completed'||p.completion_status==='passed').length;
-            const totalItems=totalVids+totalScorms;
-            const completedItems=completedVids+completedScorms;
-            const pct=totalItems>0?Math.round((completedItems/totalItems)*100):0;
-            console.log('📈 Course progress after video ended:', {totalVids, completedVids, totalScorms, completedScorms, pct});
-            
-            await supabase.from('enrollments').update({progress_percent:pct,status:pct===100?'completed':'in_progress'}).eq('id',enrollmentId);
-            setSelectedCourse(prev=>prev?{...prev,progress_percent:pct,status:pct===100?'completed':'in_progress'}:prev);
-            
-            // Si le cours est terminé à 100%, appeler updateCourseProgress pour générer certificat et badges
-            if(pct===100){
-              console.log('🎉 Course completed! Generating certificate and badges...');
-              updateCourseProgress();
-            }
-          },500);
-        });
-        
-        // Sauvegarder aussi quand on pause
-        player.on('pause',(data)=>{
-          console.log('⏸️ Video paused at:', data.seconds);
-          saveProgress(data.seconds,false);
+          await updateCourseProgress();
         });
         
         return()=>{
           if(playerInstanceRef.current){
             playerInstanceRef.current.off('timeupdate');
             playerInstanceRef.current.off('ended');
-            playerInstanceRef.current.off('pause');
           }
         };
-      },[currentVideo?.id,currentVideo?.videos?.vimeo_id,selectedCourse?.id,user.id,courseVideos.length,courseScorm.length]);
+      },[currentVideo?.id]);
 
-      const updateCourseProgress=useCallback(async()=>{
+      const saveProgress=async(positionSeconds,completed)=>{
+        if(!selectedCourse||!currentVideo)return;
+        
+        const existing=videoProgress[currentVideo.id];
+        const data={
+          enrollment_id:selectedCourse.id,
+          playlist_video_id:currentVideo.id,
+          last_position_seconds:positionSeconds,
+          is_completed:completed||existing?.is_completed||false,
+          watch_time_seconds:(existing?.watch_time_seconds||0)+10
+        };
+        
+        if(completed)data.completed_at=new Date().toISOString();
+        
+        if(existing){
+          await supabase.from('video_progress').update(data).eq('id',existing.id);
+        }else{
+          const{data:inserted}=await supabase.from('video_progress').insert(data).select().single();
+          if(inserted)setVideoProgress(prev=>({...prev,[currentVideo.id]:inserted}));
+        }
+        
+        if(completed){
+          setVideoProgress(prev=>({...prev,[currentVideo.id]:{...prev[currentVideo.id],...data,is_completed:true}}));
+        }
+      };
+
+      const updateCourseProgress=async()=>{
         if(!selectedCourse)return;
-        
-        // Compter les vidéos complétées
         const totalVideos=courseVideos.length;
-        const completedVideos=Object.values(videoProgressRef.current).filter(p=>p.is_completed).length;
-        
-        // Compter les SCORM complétés
-        const totalScorm=courseScorm.length;
-        const completedScorm=Object.values(scormProgress).filter(p=>p.completion_status==='completed'||p.completion_status==='passed').length;
-        
-        // Calculer le pourcentage total
-        const totalItems=totalVideos+totalScorm;
-        const completedItems=completedVideos+completedScorm;
-        const percent=totalItems>0?Math.round((completedItems/totalItems)*100):0;
-        
-        console.log('📈 Updating course progress:', {totalVideos, completedVideos, totalScorm, completedScorm, percent});
+        const completedVideos=Object.values(videoProgress).filter(p=>p.is_completed).length+(videoProgress[currentVideo?.id]?.is_completed?0:1);
+        const percent=totalVideos>0?Math.round((completedVideos/totalVideos)*100):0;
         
         const wasCompleted=selectedCourse.status==='completed';
         await supabase.from('enrollments').update({progress_percent:percent,status:percent===100?'completed':percent>0?'in_progress':'not_started'}).eq('id',selectedCourse.id);
         
-        // Mettre à jour l'état local
-        setSelectedCourse(prev=>({...prev,progress_percent:percent,status:percent===100?'completed':percent>0?'in_progress':'not_started'}));
-        setEnrollments(prev=>prev.map(e=>e.id===selectedCourse.id?{...e,progress_percent:percent,status:percent===100?'completed':percent>0?'in_progress':'not_started'}:e));
-        
         // Cours complété à 100%
         if(percent===100&&!wasCompleted){
-          console.log('🎉 Cours complété à 100% ! Génération certificat...');
-          
-          // Calculer la note moyenne (SCORM + Quiz)
-          let totalScore=0;
-          let scoreCount=0;
-          
-          // Scores SCORM
-          Object.values(scormProgressRef.current||{}).forEach(sp=>{
-            if(sp.score_scaled!==null&&sp.score_scaled!==undefined){
-              totalScore+=sp.score_scaled*100;
-              scoreCount++;
-            }
-          });
-          
-          // Scores Quiz (si disponibles)
-          const{data:quizAttempts}=await supabase.from('quiz_attempts').select('score_percent').eq('enrollment_id',selectedCourse.id).eq('passed',true);
-          (quizAttempts||[]).forEach(qa=>{
-            if(qa.score_percent!==null){
-              totalScore+=qa.score_percent;
-              scoreCount++;
-            }
-          });
-          
-          const avgScore=scoreCount>0?Math.round(totalScore/scoreCount):null;
-          
-          // Calculer la durée de réalisation (temps entre inscription et maintenant)
-          const enrollmentDate=new Date(selectedCourse.created_at);
-          const completionDate=new Date();
-          const durationSeconds=Math.floor((completionDate-enrollmentDate)/1000);
-          
-          // Calculer aussi le temps total de visionnage
-          let totalWatchTime=0;
-          Object.values(videoProgressRef.current||{}).forEach(vp=>{
-            totalWatchTime+=(vp.watch_time_seconds||0);
-          });
-          
-          console.log('📊 Certificat stats:', {avgScore, durationSeconds, totalWatchTime});
-          
-          // 1. Générer certificat avec note et durée
+          // 1. Générer certificat
           const certNumber='CERT-'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'-'+Math.random().toString(36).substring(2,8).toUpperCase();
           const{data:cert}=await supabase.from('certificates').insert({
             enrollment_id:selectedCourse.id,
             learner_id:user.id,
             playlist_id:selectedCourse.playlist_id,
-            certificate_number:certNumber,
-            score:avgScore,
-            duration_seconds:totalWatchTime>0?totalWatchTime:durationSeconds,
-            completed_at:completionDate.toISOString()
+            certificate_number:certNumber
           }).select().single();
           
           // 2. Ajouter des points (50 points par cours complété)
@@ -3939,19 +2849,21 @@
             await supabase.from('notifications').insert({
               user_id:user.id,
               title:'🎉 Félicitations !',
-              message:`Vous avez obtenu votre certificat pour "${selectedCourse.playlists?.title}"${avgScore?' avec une note de '+avgScore+'%':''}`,
+              message:`Vous avez obtenu votre certificat pour "${selectedCourse.playlists?.title}"`,
               type:'certificate',
               link:'my-certificates'
             });
           }
         }
-      },[selectedCourse,courseVideos.length,courseScorm.length,scormProgress,user.id]);
+        
+        setEnrollments(prev=>prev.map(e=>e.id===selectedCourse.id?{...e,progress_percent:percent}:e));
+        setSelectedCourse(prev=>({...prev,progress_percent:percent,status:percent===100?'completed':percent>0?'in_progress':'not_started'}));
+      };
 
       const markAsComplete=async(pv)=>{
         await supabase.from('video_progress').upsert({
           enrollment_id:selectedCourse.id,
           playlist_video_id:pv.id,
-          learner_id:user.id,
           is_completed:true,
           completed_at:new Date().toISOString(),
           last_position_seconds:0,
@@ -4175,23 +3087,16 @@
                 <div className="space-y-2 max-h-[60vh] overflow-y-auto">
                   {/* Vidéos */}
                   {courseVideos.map((pv,i)=>{
-                    const progress=videoProgress[pv.id];
-                    const isCompleted=progress?.is_completed;
+                    const isCompleted=videoProgress[pv.id]?.is_completed;
                     const isCurrent=currentVideo?.id===pv.id;
-                    const hasProgress=progress?.last_position_seconds>0&&!isCompleted;
-                    const progressPercent=hasProgress&&pv.videos?.duration?Math.min(100,Math.round((progress.last_position_seconds/parseDuration(pv.videos.duration))*100)):0;
                     return(
                       <div key={pv.id} onClick={()=>selectVideo(pv)} className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition ${isCurrent?'bg-indigo-600':'hover:bg-gray-700'}`}>
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${isCompleted?'bg-green-500':hasProgress?'bg-yellow-500':isCurrent?'bg-white text-indigo-600':'bg-gray-700'}`}>
-                          {isCompleted?<Icon name="Check" size={16}/>:hasProgress?<Icon name="Play" size={14}/>:i+1}
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${isCompleted?'bg-green-500':isCurrent?'bg-white text-indigo-600':'bg-gray-700'}`}>
+                          {isCompleted?<Icon name="Check" size={16}/>:i+1}
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="font-medium truncate text-sm">{pv.videos?.title}</p>
-                          <div className="flex items-center gap-2 text-xs text-gray-400">
-                            <span>{pv.videos?.duration||'--:--'}</span>
-                            {isCompleted&&<span className="text-green-400">✓ Terminée</span>}
-                            {hasProgress&&<span className="text-yellow-400">• {progressPercent}% vu</span>}
-                          </div>
+                          <p className="text-xs text-gray-400">{pv.videos?.duration||'--:--'}</p>
                         </div>
                         {!isCompleted&&!isCurrent&&(
                           <button onClick={(e)=>{e.stopPropagation();markAsComplete(pv);}} className="p-1 hover:bg-gray-600 rounded" title="Marquer comme vu">
@@ -4209,13 +3114,9 @@
                         <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Modules interactifs</p>
                       </div>
                       {courseScorm.map((ps,i)=>{
-                        // ps.scorm_modules.id est l'ID du module SCORM
-                        // scormProgress est indexé par module_id
-                        const moduleId=ps.scorm_modules?.id;
-                        const sp=scormProgress[moduleId];
+                        const sp=scormProgress[ps.scorm_module_id];
                         const isCompleted=sp?.completion_status==='completed'||sp?.completion_status==='passed';
-                        const inProgress=sp?.completion_status==='incomplete'||sp?.completion_status==='browsed';
-                        const hasScore=sp?.score_scaled!==null&&sp?.score_scaled!==undefined;
+                        const inProgress=sp?.completion_status==='incomplete';
                         return(
                           <div key={ps.id} onClick={()=>setActiveScorm(ps.scorm_modules)} className="flex items-center gap-3 p-3 rounded-lg cursor-pointer transition hover:bg-orange-500/20 border border-orange-500/30">
                             <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isCompleted?'bg-green-500':inProgress?'bg-orange-500':'bg-orange-500/30'}`}>
@@ -4223,13 +3124,12 @@
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="font-medium truncate text-sm">{ps.scorm_modules?.title}</p>
-                              <div className="flex items-center gap-2 text-xs">
-                                {isCompleted&&<span className="text-green-400">✓ Terminé</span>}
-                                {inProgress&&<span className="text-orange-400">En cours</span>}
-                                {!isCompleted&&!inProgress&&<span className="text-gray-500">Non commencé</span>}
-                                {hasScore&&<span className="text-gray-400">• {Math.round(sp.score_scaled*100)}%</span>}
-                              </div>
+                              <p className="text-xs text-gray-400">
+                                {isCompleted?'✓ Terminé':inProgress?'En cours':'Module SCORM'}
+                                {sp?.score_scaled!=null&&` • ${Math.round(sp.score_scaled*100)}%`}
+                              </p>
                             </div>
+                            <Icon name="ExternalLink" size={16} className="text-orange-400"/>
                           </div>
                         );
                       })}
@@ -4249,26 +3149,8 @@
                 // Recharger la progression SCORM
                 const{data:sp}=await supabase.from('scorm_progress').select('*').eq('enrollment_id',selectedCourse.id);
                 const spMap={};
-                (sp||[]).forEach(p=>{spMap[p.module_id]=p;});
+                (sp||[]).forEach(p=>{spMap[p.scorm_module_id]=p;});
                 setScormProgress(spMap);
-                
-                // Recalculer et mettre à jour la progression du cours
-                const totalVids=courseVideos.length;
-                const completedVids=Object.values(videoProgressRef.current).filter(p=>p.is_completed).length;
-                const totalScorms=courseScorm.length;
-                const completedScorms=Object.values(spMap).filter(p=>p.completion_status==='completed'||p.completion_status==='passed').length;
-                const totalItems=totalVids+totalScorms;
-                const completedItems=completedVids+completedScorms;
-                const pct=totalItems>0?Math.round((completedItems/totalItems)*100):0;
-                console.log('📈 Course progress after SCORM:', {totalVids, completedVids, totalScorms, completedScorms, pct});
-                await supabase.from('enrollments').update({progress_percent:pct,status:pct===100?'completed':'in_progress'}).eq('id',selectedCourse.id);
-                setSelectedCourse(prev=>prev?{...prev,progress_percent:pct,status:pct===100?'completed':'in_progress'}:prev);
-                
-                // Si le cours est terminé à 100%, générer certificat et badges
-                if(pct===100){
-                  console.log('🎉 Course completed via SCORM! Generating certificate and badges...');
-                  updateCourseProgress();
-                }
               }}
               onClose={()=>setActiveScorm(null)}
             />
@@ -4279,50 +3161,6 @@
       // Vue liste des cours
       return<div>
         <h1 className="text-2xl font-bold mb-6">Mes cours</h1>
-        
-        {/* Récapitulatif SCORM personnel */}
-        {myScormStats.total>0&&(
-          <Card className="p-4 mb-6 bg-gradient-to-r from-orange-500/10 to-yellow-500/10 border-orange-500/30">
-            <div className="flex items-center gap-4 flex-wrap">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-orange-500/20 rounded-lg flex items-center justify-center">
-                  <Icon name="Package" size={24} className="text-orange-400"/>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-400">Mes modules SCORM</p>
-                  <p className="text-xl font-bold">{myScormStats.completed}/{myScormStats.total} terminés</p>
-                </div>
-              </div>
-              <div className="flex-1"/>
-              <div className="flex gap-6 text-center">
-                <div><p className="text-2xl font-bold text-green-400">{myScormStats.passed}</p><p className="text-xs text-gray-400">Réussis</p></div>
-                <div><p className="text-2xl font-bold text-indigo-400">{Math.round(myScormStats.avgScore*100)}%</p><p className="text-xs text-gray-400">Score moy.</p></div>
-              </div>
-            </div>
-            
-            {/* Derniers résultats SCORM */}
-            {allMyScorm.length>0&&(
-              <div className="mt-4 pt-4 border-t border-orange-500/20">
-                <p className="text-sm text-gray-400 mb-3">Derniers résultats</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                  {allMyScorm.slice(0,3).map(s=>(
-                    <div key={s.id} className="flex items-center gap-3 p-2 bg-gray-800/50 rounded-lg">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${s.completion_status==='passed'?'bg-green-500':s.completion_status==='completed'?'bg-blue-500':s.completion_status==='failed'?'bg-red-500':'bg-gray-600'}`}>
-                        <Icon name={s.completion_status==='passed'||s.completion_status==='completed'?'Check':s.completion_status==='failed'?'X':'Clock'} size={14}/>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{s.scorm_modules?.title}</p>
-                        <p className="text-xs text-gray-500">{s.enrollments?.playlists?.title}</p>
-                      </div>
-                      {s.score_scaled!==null&&<span className={`text-sm font-bold ${s.score_scaled>=0.7?'text-green-400':s.score_scaled>=0.5?'text-yellow-400':'text-red-400'}`}>{Math.round(s.score_scaled*100)}%</span>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </Card>
-        )}
-        
         {enrollments.length===0?<Empty icon="GraduationCap" title="Aucun cours" desc="Vous n'êtes inscrit à aucun cours"/>:(
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {enrollments.map(e=>(
@@ -4611,15 +3449,6 @@
           const{jsPDF}=window.jspdf;
           const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
           
-          // Fonction pour formater la durée
-          const formatDuration=(seconds)=>{
-            if(!seconds)return null;
-            const hours=Math.floor(seconds/3600);
-            const mins=Math.floor((seconds%3600)/60);
-            if(hours>0)return `${hours}h ${mins}min`;
-            return `${mins} minutes`;
-          };
-          
           // Fond
           doc.setFillColor(31,41,55);
           doc.rect(0,0,297,210,'F');
@@ -4635,88 +3464,70 @@
           doc.setTextColor(255,255,255);
           doc.setFontSize(40);
           doc.setFont('helvetica','bold');
-          doc.text('CERTIFICAT DE RÉUSSITE',148.5,45,{align:'center'});
+          doc.text('CERTIFICAT DE REUSSITE',148.5,50,{align:'center'});
           
           // Ligne décorative
           doc.setDrawColor(99,102,241);
           doc.setLineWidth(2);
-          doc.line(80,53,217,53);
+          doc.line(80,58,217,58);
           
           // Texte
           doc.setFontSize(16);
           doc.setFont('helvetica','normal');
           doc.setTextColor(156,163,175);
-          doc.text('Ce certificat est décerné à',148.5,70,{align:'center'});
+          doc.text('Ce certificat est decerne a',148.5,80,{align:'center'});
           
           // Nom
           doc.setFontSize(32);
           doc.setFont('helvetica','bold');
           doc.setTextColor(255,255,255);
-          doc.text(`${cert.profiles?.first_name||''} ${cert.profiles?.last_name||''}`.trim()||'Apprenant',148.5,88,{align:'center'});
+          const firstName=cert.profiles?.first_name||'';
+          const lastName=cert.profiles?.last_name||'';
+          doc.text(`${firstName} ${lastName}`,148.5,100,{align:'center'});
           
           // Texte suite
           doc.setFontSize(16);
           doc.setFont('helvetica','normal');
           doc.setTextColor(156,163,175);
-          doc.text('pour avoir complété avec succès la formation',148.5,105,{align:'center'});
+          doc.text('pour avoir complete avec succes la formation',148.5,120,{align:'center'});
           
           // Titre du cours
           doc.setFontSize(24);
           doc.setFont('helvetica','bold');
           doc.setTextColor(99,102,241);
-          doc.text(cert.playlists?.title||'Formation',148.5,122,{align:'center'});
-          
-          // Note et Durée (si disponibles)
-          let yPos=140;
-          if(cert.score!==null||cert.duration_seconds){
-            doc.setFontSize(14);
-            doc.setFont('helvetica','normal');
-            
-            const infos=[];
-            if(cert.score!==null){
-              infos.push(`Note obtenue: ${Math.round(cert.score)}%`);
-            }
-            if(cert.duration_seconds){
-              infos.push(`Durée de formation: ${formatDuration(cert.duration_seconds)}`);
-            }
-            
-            if(infos.length>0){
-              // Cadre pour les infos
-              const boxWidth=180;
-              const boxHeight=infos.length*12+10;
-              doc.setFillColor(55,65,81);
-              doc.roundedRect(148.5-boxWidth/2,yPos-5,boxWidth,boxHeight,3,3,'F');
-              
-              doc.setTextColor(255,255,255);
-              infos.forEach((info,i)=>{
-                doc.text(info,148.5,yPos+8+i*12,{align:'center'});
-              });
-              
-              yPos+=boxHeight+10;
-            }
-          }
+          doc.text(cert.playlists?.title||'Formation',148.5,140,{align:'center'});
           
           // Date et numéro
           doc.setFontSize(12);
           doc.setFont('helvetica','normal');
           doc.setTextColor(156,163,175);
-          doc.text(`Date d'émission: ${new Date(cert.issued_at||cert.completed_at).toLocaleDateString('fr-FR')}`,148.5,yPos+5,{align:'center'});
-          doc.text(`N° ${cert.certificate_number}`,148.5,yPos+15,{align:'center'});
+          const dateStr=new Date(cert.issued_at).toLocaleDateString('fr-FR');
+          doc.text(`Date d'emission: ${dateStr}`,148.5,165,{align:'center'});
+          doc.text(`N° ${cert.certificate_number}`,148.5,175,{align:'center'});
           
           // Logo/Badge
           doc.setFillColor(99,102,241);
           doc.circle(148.5,190,8,'F');
           doc.setTextColor(255,255,255);
           doc.setFontSize(10);
-          doc.text('✓',148.5,192,{align:'center'});
+          doc.text('V',148.5,193,{align:'center'});
           
-          // Télécharger
-          doc.save(`certificat_${cert.certificate_number}.pdf`);
+          // Télécharger avec blob pour éviter problème de navigation
+          const pdfBlob=doc.output('blob');
+          const url=URL.createObjectURL(pdfBlob);
+          const link=document.createElement('a');
+          link.href=url;
+          link.download=`certificat_${cert.certificate_number}.pdf`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          setTimeout(()=>URL.revokeObjectURL(url),100);
         }catch(err){
           console.error('Erreur PDF:',err);
-          alert('Erreur lors de la génération du PDF');
+          alert('Erreur lors de la generation du PDF');
+        }finally{
+          setGenerating(null);
         }
-        setGenerating(null);
       };
 
       if(loading)return<Loading/>;
@@ -4728,494 +3539,21 @@
           <Empty icon="Award" title="Aucun certificat" desc="Complétez des cours pour obtenir vos certificats"/>
         ):(
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {certificates.map(cert=>{
-              const formatDur=(s)=>{if(!s)return null;const h=Math.floor(s/3600);const m=Math.floor((s%3600)/60);return h>0?`${h}h ${m}min`:`${m}min`;};
-              return(
+            {certificates.map(cert=>(
               <Card key={cert.id} className="overflow-hidden">
-                <div className="h-32 bg-gradient-to-br from-indigo-600 to-purple-700 flex items-center justify-center relative">
+                <div className="h-32 bg-gradient-to-br from-indigo-600 to-purple-700 flex items-center justify-center">
                   <Icon name="Award" size={64} className="text-white/80"/>
-                  {cert.score!==null&&(
-                    <div className="absolute top-2 right-2 bg-white/20 backdrop-blur rounded-lg px-2 py-1">
-                      <span className="text-white font-bold">{Math.round(cert.score)}%</span>
-                    </div>
-                  )}
                 </div>
                 <div className="p-4">
                   <h3 className="font-semibold mb-1">{cert.playlists?.title}</h3>
-                  <p className="text-sm text-gray-400 mb-2">Obtenu le {new Date(cert.issued_at||cert.completed_at).toLocaleDateString('fr-FR')}</p>
-                  <div className="flex flex-wrap gap-2 mb-3">
-                    {cert.score!==null&&(
-                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">
-                        <Icon name="Star" size={12}/> Note: {Math.round(cert.score)}%
-                      </span>
-                    )}
-                    {cert.duration_seconds&&(
-                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs">
-                        <Icon name="Clock" size={12}/> {formatDur(cert.duration_seconds)}
-                      </span>
-                    )}
-                  </div>
+                  <p className="text-sm text-gray-400 mb-3">Obtenu le {new Date(cert.issued_at).toLocaleDateString('fr-FR')}</p>
                   <p className="text-xs text-gray-500 mb-3">N° {cert.certificate_number}</p>
                   <Button icon="Download" size="sm" onClick={()=>generatePDF(cert)} loading={generating===cert.id}>
                     Télécharger PDF
                   </Button>
                 </div>
               </Card>
-            );})}
-          </div>
-        )}
-      </div>;
-    }
-
-    // ============================================================
-    // PAGE: Mon Suivi (MyProgressPage) - Tableau de bord apprenant complet
-    // ============================================================
-    function MyProgressPage(){
-      const{user,profile}=useAuth();
-      const[loading,setLoading]=useState(true);
-      const[activeTab,setActiveTab]=useState('overview');
-      
-      // Données globales
-      const[enrollments,setEnrollments]=useState([]);
-      const[videoProgress,setVideoProgress]=useState([]);
-      const[scormProgress,setScormProgress]=useState([]);
-      const[quizAttempts,setQuizAttempts]=useState([]);
-      const[sessions,setSessions]=useState([]);
-      
-      // Stats calculées
-      const[stats,setStats]=useState({
-        totalCourses:0,completedCourses:0,
-        totalVideos:0,watchedVideos:0,totalWatchTime:0,
-        totalScorm:0,completedScorm:0,passedScorm:0,avgScormScore:0,
-        totalQuizzes:0,passedQuizzes:0,avgQuizScore:0,
-        totalSessionTime:0,sessionsCount:0,lastActivity:null
-      });
-      
-      // Graphiques
-      const activityChartRef=useRef(null);
-      const progressChartRef=useRef(null);
-      const chartsRef=useRef({});
-
-      // Enregistrer la session actuelle
-      useEffect(()=>{
-        const sessionStart=new Date();
-        const sessionId=`session_${Date.now()}`;
-        
-        // Enregistrer le début de session dans localStorage
-        const existingSessions=JSON.parse(localStorage.getItem(`lms_sessions_${user.id}`)||'[]');
-        existingSessions.push({id:sessionId,start:sessionStart.toISOString(),end:null});
-        localStorage.setItem(`lms_sessions_${user.id}`,JSON.stringify(existingSessions.slice(-50))); // Garder les 50 dernières
-        
-        // À la fermeture, mettre à jour la fin de session
-        const handleUnload=()=>{
-          const sessions=JSON.parse(localStorage.getItem(`lms_sessions_${user.id}`)||'[]');
-          const idx=sessions.findIndex(s=>s.id===sessionId);
-          if(idx!==-1){
-            sessions[idx].end=new Date().toISOString();
-            sessions[idx].duration=Math.round((new Date()-sessionStart)/1000);
-            localStorage.setItem(`lms_sessions_${user.id}`,JSON.stringify(sessions));
-          }
-        };
-        
-        window.addEventListener('beforeunload',handleUnload);
-        return()=>{
-          handleUnload();
-          window.removeEventListener('beforeunload',handleUnload);
-        };
-      },[user.id]);
-
-      const load=useCallback(async()=>{
-        // Charger les inscriptions
-        const{data:enr}=await supabase.from('enrollments').select('*,playlists:playlist_id(id,title)').eq('learner_id',user.id);
-        setEnrollments(enr||[]);
-        
-        // Charger la progression vidéo - essayer aussi avec enrollment_id
-        const{data:vp,error:vpError}=await supabase.from('video_progress').select('*,playlist_videos:playlist_video_id(videos:video_id(title,duration))').eq('learner_id',user.id);
-        console.log('📊 MyProgressPage - video_progress by learner_id:', {count: vp?.length, data: vp, error: vpError});
-        
-        // Si pas de résultats par learner_id, essayer par enrollment_id
-        let videoProgressData = vp || [];
-        if(videoProgressData.length === 0 && enr?.length > 0) {
-          const enrollmentIds = enr.map(e => e.id);
-          const{data:vpByEnrollment} = await supabase.from('video_progress').select('*,playlist_videos:playlist_video_id(videos:video_id(title,duration))').in('enrollment_id', enrollmentIds);
-          console.log('📊 MyProgressPage - video_progress by enrollment_id:', {count: vpByEnrollment?.length, data: vpByEnrollment});
-          videoProgressData = vpByEnrollment || [];
-        }
-        setVideoProgress(videoProgressData);
-        
-        // Charger la progression SCORM
-        const{data:sp}=await supabase.from('scorm_progress').select('*,scorm_modules:module_id(title,category),enrollments:enrollment_id(playlists:playlist_id(title))').eq('learner_id',user.id);
-        setScormProgress(sp||[]);
-        
-        // Charger les tentatives de quiz
-        const{data:qa}=await supabase.from('quiz_attempts').select('*,quizzes:quiz_id(title,passing_score)').eq('learner_id',user.id);
-        setQuizAttempts(qa||[]);
-        
-        // Charger les sessions depuis localStorage
-        const localSessions=JSON.parse(localStorage.getItem(`lms_sessions_${user.id}`)||'[]');
-        setSessions(localSessions);
-        
-        // Charger les sessions de cours depuis la base de données
-        const{data:courseSessions}=await supabase.from('course_sessions').select('*').eq('learner_id',user.id);
-        
-        // Calculer les stats
-        const totalCourses=(enr||[]).length;
-        const completedCourses=(enr||[]).filter(e=>e.status==='completed').length;
-        const inProgressCourses=(enr||[]).filter(e=>e.status==='in_progress').length;
-        
-        // Temps passé sur les cours (depuis enrollments.time_spent_seconds)
-        const totalCourseTime=(enr||[]).reduce((a,e)=>a+(e.time_spent_seconds||0),0);
-        
-        const totalVideos=(vp||[]).length;
-        const watchedVideos=(vp||[]).filter(v=>v.is_completed).length;
-        const inProgressVideos=(vp||[]).filter(v=>!v.is_completed&&v.last_position_seconds>0).length;
-        const totalWatchTime=(vp||[]).reduce((a,v)=>a+(v.watch_time_seconds||0),0);
-        
-        const totalScorm=(sp||[]).length;
-        const completedScorm=(sp||[]).filter(s=>s.completion_status==='completed'||s.completion_status==='passed').length;
-        const inProgressScorm=(sp||[]).filter(s=>s.completion_status==='incomplete'||s.completion_status==='browsed').length;
-        const passedScorm=(sp||[]).filter(s=>s.completion_status==='passed'||s.success_status==='passed').length;
-        const scormWithScore=(sp||[]).filter(s=>s.score_scaled!==null);
-        const avgScormScore=scormWithScore.length>0?scormWithScore.reduce((a,s)=>a+(s.score_scaled||0),0)/scormWithScore.length:0;
-        
-        const quizzesTaken=[...new Set((qa||[]).map(q=>q.quiz_id))].length;
-        const passedQuizzes=(qa||[]).filter(q=>q.passed).length;
-        const avgQuizScore=(qa||[]).length>0?(qa||[]).reduce((a,q)=>a+(q.score_percent||0),0)/(qa||[]).length:0;
-        
-        // Temps total LMS = temps sur les cours (prioritaire) + sessions localStorage (fallback)
-        const sessionsWithDuration=localSessions.filter(s=>s.duration);
-        const localSessionTime=sessionsWithDuration.reduce((a,s)=>a+(s.duration||0),0);
-        const dbSessionTime=(courseSessions||[]).reduce((a,s)=>a+(s.duration_seconds||0),0);
-        const totalSessionTime=totalCourseTime>0?totalCourseTime:(dbSessionTime>0?dbSessionTime:localSessionTime);
-        const sessionsCount=(courseSessions||[]).length||localSessions.length;
-        
-        // Dernière activité
-        const dates=[
-          ...(enr||[]).map(e=>e.updated_at),
-          ...(vp||[]).map(v=>v.updated_at),
-          ...(sp||[]).map(s=>s.updated_at),
-          ...(qa||[]).map(q=>q.created_at)
-        ].filter(Boolean).sort((a,b)=>new Date(b)-new Date(a));
-        const lastActivity=dates[0]||null;
-        
-        setStats({
-          totalCourses,completedCourses,inProgressCourses,
-          totalVideos,watchedVideos,inProgressVideos,totalWatchTime,
-          totalScorm,completedScorm,inProgressScorm,passedScorm,avgScormScore,
-          totalQuizzes:quizzesTaken,passedQuizzes,avgQuizScore,
-          totalSessionTime,sessionsCount,lastActivity
-        });
-        
-        setLoading(false);
-      },[user.id]);
-
-      useEffect(()=>{load();},[load]);
-
-      // Créer les graphiques
-      useEffect(()=>{
-        if(loading||activeTab!=='overview')return;
-        
-        // Détruire les anciens graphiques
-        Object.values(chartsRef.current).forEach(c=>c?.destroy());
-        chartsRef.current={};
-        
-        // Graphique d'activité par jour (7 derniers jours)
-        if(activityChartRef.current){
-          const last7Days=[];
-          for(let i=6;i>=0;i--){
-            const d=new Date();
-            d.setDate(d.getDate()-i);
-            last7Days.push(d.toISOString().slice(0,10));
-          }
-          
-          const activityByDay=last7Days.map(day=>{
-            const dayVideos=videoProgress.filter(v=>v.updated_at?.slice(0,10)===day).length;
-            const dayScorm=scormProgress.filter(s=>s.updated_at?.slice(0,10)===day).length;
-            const dayQuiz=quizAttempts.filter(q=>q.created_at?.slice(0,10)===day).length;
-            return dayVideos+dayScorm+dayQuiz;
-          });
-          
-          chartsRef.current.activity=new Chart(activityChartRef.current,{
-            type:'bar',
-            data:{
-              labels:last7Days.map(d=>{const date=new Date(d);return date.toLocaleDateString('fr-FR',{weekday:'short',day:'numeric'});}),
-              datasets:[{
-                label:'Activités',
-                data:activityByDay,
-                backgroundColor:'#6366f1'
-              }]
-            },
-            options:{
-              responsive:true,
-              maintainAspectRatio:false,
-              scales:{
-                x:{ticks:{color:'#9ca3af'},grid:{display:false}},
-                y:{ticks:{color:'#9ca3af'},grid:{color:'#374151'},beginAtZero:true}
-              },
-              plugins:{legend:{display:false}}
-            }
-          });
-        }
-        
-        // Graphique de progression
-        if(progressChartRef.current){
-          chartsRef.current.progress=new Chart(progressChartRef.current,{
-            type:'doughnut',
-            data:{
-              labels:['Cours terminés','Cours en cours','Vidéos vues','SCORM réussis'],
-              datasets:[{
-                data:[stats.completedCourses,stats.totalCourses-stats.completedCourses,stats.watchedVideos,stats.passedScorm],
-                backgroundColor:['#22c55e','#eab308','#3b82f6','#f97316']
-              }]
-            },
-            options:{
-              responsive:true,
-              maintainAspectRatio:false,
-              plugins:{legend:{position:'bottom',labels:{color:'#9ca3af'}}}
-            }
-          });
-        }
-        
-        return()=>{
-          Object.values(chartsRef.current).forEach(c=>c?.destroy());
-        };
-      },[loading,activeTab,videoProgress,scormProgress,quizAttempts,stats]);
-
-      // Formatage du temps
-      const formatDuration=(seconds)=>{
-        if(!seconds||seconds<60)return `${seconds||0}s`;
-        const h=Math.floor(seconds/3600);
-        const m=Math.floor((seconds%3600)/60);
-        const s=seconds%60;
-        if(h>0)return `${h}h ${m}m`;
-        return `${m}m ${s}s`;
-      };
-
-      if(loading)return<Loading/>;
-
-      return<div>
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold">Mon suivi</h1>
-            <p className="text-gray-400 text-sm">Tableau de bord de votre progression</p>
-          </div>
-          {stats.lastActivity&&<p className="text-sm text-gray-500">Dernière activité: {new Date(stats.lastActivity).toLocaleDateString('fr-FR')}</p>}
-        </div>
-
-        {/* Stats principales */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
-          <Card className="p-4 text-center">
-            <Icon name="BookOpen" size={24} className="mx-auto text-indigo-400 mb-2"/>
-            <p className="text-2xl font-bold">{stats.completedCourses}<span className="text-base text-gray-500">/{stats.totalCourses}</span></p>
-            <p className="text-xs text-gray-400">Cours terminés</p>
-            {stats.inProgressCourses>0&&<p className="text-xs text-yellow-400 mt-1">{stats.inProgressCourses} en cours</p>}
-          </Card>
-          <Card className="p-4 text-center">
-            <Icon name="Play" size={24} className="mx-auto text-blue-400 mb-2"/>
-            <p className="text-2xl font-bold">{stats.watchedVideos}<span className="text-base text-gray-500">/{stats.totalVideos}</span></p>
-            <p className="text-xs text-gray-400">Vidéos terminées</p>
-            {stats.inProgressVideos>0&&<p className="text-xs text-yellow-400 mt-1">{stats.inProgressVideos} en cours</p>}
-          </Card>
-          <Card className="p-4 text-center">
-            <Icon name="Clock" size={24} className="mx-auto text-purple-400 mb-2"/>
-            <p className="text-2xl font-bold">{formatDuration(stats.totalWatchTime)}</p>
-            <p className="text-xs text-gray-400">Temps vidéo</p>
-          </Card>
-          <Card className="p-4 text-center">
-            <Icon name="Package" size={24} className="mx-auto text-orange-400 mb-2"/>
-            <p className="text-2xl font-bold">{stats.passedScorm}<span className="text-base text-gray-500">/{stats.totalScorm}</span></p>
-            <p className="text-xs text-gray-400">SCORM réussis</p>
-            {stats.inProgressScorm>0&&<p className="text-xs text-yellow-400 mt-1">{stats.inProgressScorm} en cours</p>}
-          </Card>
-          <Card className="p-4 text-center">
-            <Icon name="HelpCircle" size={24} className="mx-auto text-green-400 mb-2"/>
-            <p className="text-2xl font-bold">{Math.round(stats.avgQuizScore)}%</p>
-            <p className="text-xs text-gray-400">Score quiz moy.</p>
-          </Card>
-          <Card className="p-4 text-center">
-            <Icon name="Activity" size={24} className="mx-auto text-cyan-400 mb-2"/>
-            <p className="text-2xl font-bold">{formatDuration(stats.totalSessionTime)}</p>
-            <p className="text-xs text-gray-400">Temps total LMS</p>
-          </Card>
-        </div>
-
-        {/* Onglets */}
-        <Tabs tabs={[
-          {id:'overview',label:'Vue d\'ensemble',icon:'LayoutDashboard'},
-          {id:'courses',label:'Mes cours',icon:'BookOpen'},
-          {id:'videos',label:'Vidéos',icon:'Film'},
-          {id:'scorm',label:'Modules SCORM',icon:'Package'},
-          {id:'sessions',label:'Connexions',icon:'Clock'}
-        ]} active={activeTab} onChange={setActiveTab}/>
-
-        {/* Vue d'ensemble */}
-        {activeTab==='overview'&&(
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card className="p-6">
-              <h3 className="font-semibold mb-4">Activité des 7 derniers jours</h3>
-              <div className="h-48"><canvas ref={activityChartRef}></canvas></div>
-            </Card>
-            <Card className="p-6">
-              <h3 className="font-semibold mb-4">Répartition de la progression</h3>
-              <div className="h-48"><canvas ref={progressChartRef}></canvas></div>
-            </Card>
-            
-            {/* Résumé rapide */}
-            <Card className="p-6 lg:col-span-2">
-              <h3 className="font-semibold mb-4">Résumé</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div>
-                  <p className="text-sm text-gray-400 mb-2">Progression cours</p>
-                  <ProgressBar percent={stats.totalCourses>0?(stats.completedCourses/stats.totalCourses)*100:0} color="indigo"/>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-400 mb-2">Score SCORM moyen</p>
-                  <ProgressBar percent={stats.avgScormScore*100} color={stats.avgScormScore>=0.7?'green':stats.avgScormScore>=0.5?'yellow':'red'}/>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-400 mb-2">Score Quiz moyen</p>
-                  <ProgressBar percent={stats.avgQuizScore} color={stats.avgQuizScore>=70?'green':stats.avgQuizScore>=50?'yellow':'red'}/>
-                </div>
-              </div>
-            </Card>
-          </div>
-        )}
-
-        {/* Détail des cours */}
-        {activeTab==='courses'&&(
-          <Card>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-750"><tr>
-                  <th className="text-left p-4 font-medium text-gray-400">Cours</th>
-                  <th className="text-left p-4 font-medium text-gray-400">Statut</th>
-                  <th className="text-left p-4 font-medium text-gray-400">Progression</th>
-                  <th className="text-left p-4 font-medium text-gray-400">Temps passé</th>
-                  <th className="text-left p-4 font-medium text-gray-400">Inscrit le</th>
-                </tr></thead>
-                <tbody className="divide-y divide-gray-700">
-                  {enrollments.length===0?<tr><td colSpan="5" className="p-8 text-center text-gray-500">Aucun cours</td></tr>:enrollments.map(e=>(
-                    <tr key={e.id} className="hover:bg-gray-750/50">
-                      <td className="p-4"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-indigo-500/20 rounded-lg flex items-center justify-center"><Icon name="BookOpen" size={18} className="text-indigo-400"/></div><span className="font-medium">{e.playlists?.title}</span></div></td>
-                      <td className="p-4">
-                        {e.status==='completed'?<span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">✓ Terminé</span>:
-                         e.status==='in_progress'?<span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded text-xs">En cours</span>:
-                         <span className="px-2 py-1 bg-gray-500/20 text-gray-400 rounded text-xs">Non commencé</span>}
-                      </td>
-                      <td className="p-4"><div className="flex items-center gap-2"><div className="w-24"><ProgressBar percent={e.progress_percent||0} size="sm" showLabel={false}/></div><span className="text-sm font-medium">{e.progress_percent||0}%</span></div></td>
-                      <td className="p-4 text-gray-400">{e.time_spent_seconds?formatDuration(e.time_spent_seconds):'-'}</td>
-                      <td className="p-4 text-gray-400 text-sm">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )}
-
-        {/* Détail des vidéos */}
-        {activeTab==='videos'&&(
-          <Card>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-750"><tr>
-                  <th className="text-left p-4 font-medium text-gray-400">Vidéo</th>
-                  <th className="text-left p-4 font-medium text-gray-400">Statut</th>
-                  <th className="text-left p-4 font-medium text-gray-400">Progression</th>
-                  <th className="text-left p-4 font-medium text-gray-400">Temps visionné</th>
-                  <th className="text-left p-4 font-medium text-gray-400">Dernière vue</th>
-                </tr></thead>
-                <tbody className="divide-y divide-gray-700">
-                  {videoProgress.length===0?<tr><td colSpan="5" className="p-8 text-center text-gray-500">Aucune vidéo visionnée</td></tr>:videoProgress.slice(0,50).map(v=>{
-                    const duration=v.playlist_videos?.videos?.duration;
-                    const durationSec=parseDuration(duration);
-                    const progressPercent=durationSec>0&&v.last_position_seconds?Math.min(100,Math.round((v.last_position_seconds/durationSec)*100)):0;
-                    return(
-                    <tr key={v.id}>
-                      <td className="p-4"><div className="flex items-center gap-3"><Icon name="Film" size={16} className="text-blue-400"/><div><span className="font-medium">{v.playlist_videos?.videos?.title||'Vidéo'}</span><p className="text-xs text-gray-500">{duration||'--:--'}</p></div></div></td>
-                      <td className="p-4">{v.is_completed?<span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">✓ Terminée</span>:<span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded text-xs">En cours</span>}</td>
-                      <td className="p-4">{v.is_completed?<span className="text-green-400">100%</span>:<div className="flex items-center gap-2"><div className="w-20 h-2 bg-gray-700 rounded-full overflow-hidden"><div className="h-full bg-yellow-500" style={{width:`${progressPercent}%`}}/></div><span className="text-xs text-gray-400">{progressPercent}%</span></div>}</td>
-                      <td className="p-4 text-gray-400">{formatDuration(v.watch_time_seconds)}</td>
-                      <td className="p-4 text-gray-400 text-sm">{v.updated_at?new Date(v.updated_at).toLocaleDateString('fr-FR'):'-'}</td>
-                    </tr>
-                  );})}
-                </tbody>
-              </table>
-              {videoProgress.length>50&&<p className="p-4 text-center text-gray-500 text-sm">Affichage des 50 dernières vidéos</p>}
-            </div>
-          </Card>
-        )}
-
-        {/* Détail SCORM */}
-        {activeTab==='scorm'&&(
-          <Card>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-750"><tr>
-                  <th className="text-left p-4 font-medium text-gray-400">Module</th>
-                  <th className="text-left p-4 font-medium text-gray-400">Cours</th>
-                  <th className="text-left p-4 font-medium text-gray-400">Statut</th>
-                  <th className="text-left p-4 font-medium text-gray-400">Score</th>
-                  <th className="text-left p-4 font-medium text-gray-400">Date</th>
-                </tr></thead>
-                <tbody className="divide-y divide-gray-700">
-                  {scormProgress.length===0?<tr><td colSpan="5" className="p-8 text-center text-gray-500">Aucun module SCORM</td></tr>:scormProgress.map(s=>(
-                    <tr key={s.id}>
-                      <td className="p-4"><div className="flex items-center gap-3"><div className="w-8 h-8 bg-orange-500/20 rounded flex items-center justify-center"><Icon name="Package" size={16} className="text-orange-400"/></div><div><p className="font-medium">{s.scorm_modules?.title}</p>{s.scorm_modules?.category&&<p className="text-xs text-gray-500">{s.scorm_modules.category}</p>}</div></div></td>
-                      <td className="p-4 text-gray-400 text-sm">{s.enrollments?.playlists?.title||'-'}</td>
-                      <td className="p-4"><ScormStatusBadge status={s.completion_status}/></td>
-                      <td className="p-4"><ScoreBadge score={s.score_scaled}/></td>
-                      <td className="p-4 text-gray-400 text-sm">{s.updated_at?new Date(s.updated_at).toLocaleDateString('fr-FR'):'-'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )}
-
-        {/* Historique des connexions */}
-        {activeTab==='sessions'&&(
-          <div className="space-y-6">
-            <Card className="p-6">
-              <h3 className="font-semibold mb-4">Statistiques de connexion</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="text-center p-4 bg-gray-700/50 rounded-lg">
-                  <p className="text-3xl font-bold text-cyan-400">{stats.sessionsCount}</p>
-                  <p className="text-sm text-gray-400">Sessions totales</p>
-                </div>
-                <div className="text-center p-4 bg-gray-700/50 rounded-lg">
-                  <p className="text-3xl font-bold text-purple-400">{formatDuration(stats.totalSessionTime)}</p>
-                  <p className="text-sm text-gray-400">Temps total</p>
-                </div>
-                <div className="text-center p-4 bg-gray-700/50 rounded-lg">
-                  <p className="text-3xl font-bold text-green-400">{stats.sessionsCount>0?formatDuration(Math.round(stats.totalSessionTime/stats.sessionsCount)):'-'}</p>
-                  <p className="text-sm text-gray-400">Durée moyenne</p>
-                </div>
-              </div>
-            </Card>
-            
-            <Card>
-              <div className="p-4 border-b border-gray-700">
-                <h3 className="font-semibold">Historique des connexions</h3>
-              </div>
-              <div className="divide-y divide-gray-700 max-h-96 overflow-y-auto">
-                {sessions.length===0?<p className="p-8 text-center text-gray-500">Aucune session enregistrée</p>:sessions.slice().reverse().map((s,i)=>(
-                  <div key={s.id||i} className="p-4 flex items-center gap-4">
-                    <div className="w-10 h-10 bg-cyan-500/20 rounded-full flex items-center justify-center">
-                      <Icon name="LogIn" size={18} className="text-cyan-400"/>
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-medium">{new Date(s.start).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'})}</p>
-                      <p className="text-sm text-gray-400">{new Date(s.start).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})} - {s.end?new Date(s.end).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}):'En cours'}</p>
-                    </div>
-                    <div className="text-right">
-                      {s.duration?<p className="font-medium text-cyan-400">{formatDuration(s.duration)}</p>:<span className="px-2 py-1 bg-green-500 rounded text-xs">Actif</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
+            ))}
           </div>
         )}
       </div>;
@@ -5435,13 +3773,7 @@
     // App
     function App(){
       const{isAuth,loading}=useAuth();
-      
-      // Masquer l'écran de chargement quand React est prêt
-      useEffect(()=>{
-        if(!loading)hideLoadingScreen();
-      },[loading]);
-      
-      if(loading)return null; // L'écran de chargement HTML est déjà visible
+      if(loading)return<div className="min-h-screen bg-gray-900 flex items-center justify-center"><Loading text="Chargement..."/></div>;
       if(!isAuth)return<LoginPage/>;
       return<AppLayout/>;
     }
