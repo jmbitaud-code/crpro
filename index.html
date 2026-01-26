@@ -44,7 +44,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.8.0';
+    const APP_VERSION = '6.8.2';
     // =======================================
 
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
@@ -1283,11 +1283,17 @@
       const[centers,setCenters]=useState([]);
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
+      const[createModal,setCreateModal]=useState(false);
       const[importModal,setImportModal]=useState(false);
+      const[deleteModal,setDeleteModal]=useState(null);
+      const[deleting,setDeleting]=useState(false);
       const[editing,setEditing]=useState(null);
       const[search,setSearch]=useState('');
       const[form,setForm]=useState({email:'',first_name:'',last_name:'',role:'learner',center_id:''});
+      const[createForm,setCreateForm]=useState({email:'',password:'',first_name:'',last_name:'',role:'learner',center_id:''});
       const[saving,setSaving]=useState(false);
+      const[creating,setCreating]=useState(false);
+      const[createResult,setCreateResult]=useState(null);
       const[importData,setImportData]=useState([]);
       const[importLoading,setImportLoading]=useState(false);
       const[importResult,setImportResult]=useState(null);
@@ -1297,17 +1303,97 @@
         let q=supabase.from('profiles').select('*,centers(name)').order('created_at',{ascending:false});
         if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);
         const{data:u}=await q;setUsers(u||[]);
-        if(isSuperAdmin){const{data:c}=await supabase.from('centers').select('id,name');setCenters(c||[]);}
+        const{data:c}=await supabase.from('centers').select('id,name');setCenters(c||[]);
         setLoading(false);
       },[isSuperAdmin,center?.id]);
       
       useEffect(()=>{load();},[load]);
+
+      const generatePassword=()=>{
+        const chars='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
+        let pwd='';for(let i=0;i<12;i++)pwd+=chars.charAt(Math.floor(Math.random()*chars.length));
+        return pwd;
+      };
+
+      const handleCreate=async()=>{
+        if(!createForm.email||!createForm.first_name||!createForm.last_name){
+          alert('Veuillez remplir tous les champs obligatoires');return;
+        }
+        setCreating(true);setCreateResult(null);
+        try{
+          const password=createForm.password||generatePassword();
+          const targetCenterId=isSuperAdmin?(createForm.center_id||center?.id):center?.id;
+          
+          // Créer l'utilisateur via l'API Supabase Auth
+          const{data:authData,error:authError}=await supabase.auth.signUp({
+            email:createForm.email.toLowerCase().trim(),
+            password:password,
+            options:{data:{first_name:createForm.first_name,last_name:createForm.last_name}}
+          });
+          
+          if(authError)throw authError;
+          if(!authData.user)throw new Error('Erreur lors de la création du compte');
+          
+          // Mettre à jour le profil avec le rôle et le centre
+          const{error:profileError}=await supabase.from('profiles').update({
+            first_name:createForm.first_name,
+            last_name:createForm.last_name,
+            role:createForm.role,
+            center_id:targetCenterId||null
+          }).eq('id',authData.user.id);
+          
+          if(profileError)console.error('Erreur profil:',profileError);
+          
+          setCreateResult({success:true,email:createForm.email,password:password});
+          await load();
+        }catch(err){
+          console.error('Erreur création:',err);
+          setCreateResult({success:false,error:err.message});
+        }
+        setCreating(false);
+      };
+
+      const resetCreateForm=()=>{
+        setCreateForm({email:'',password:'',first_name:'',last_name:'',role:'learner',center_id:center?.id||''});
+        setCreateResult(null);
+      };
 
       const handleSave=async()=>{
         if(!editing)return;
         setSaving(true);
         await supabase.from('profiles').update({first_name:form.first_name,last_name:form.last_name,role:form.role,center_id:form.center_id||null}).eq('id',editing.id);
         await load();setModal(false);setEditing(null);setSaving(false);
+      };
+
+      const handleDelete=async()=>{
+        if(!deleteModal)return;
+        setDeleting(true);
+        try{
+          // Supprimer les données liées
+          await supabase.from('enrollments').delete().eq('learner_id',deleteModal.id);
+          await supabase.from('video_progress').delete().eq('learner_id',deleteModal.id);
+          await supabase.from('scorm_progress').delete().eq('learner_id',deleteModal.id);
+          await supabase.from('quiz_attempts').delete().eq('learner_id',deleteModal.id);
+          await supabase.from('learner_badges').delete().eq('learner_id',deleteModal.id);
+          await supabase.from('learner_points').delete().eq('learner_id',deleteModal.id);
+          await supabase.from('learner_notes').delete().eq('learner_id',deleteModal.id);
+          await supabase.from('notifications').delete().eq('user_id',deleteModal.id);
+          await supabase.from('certificates').delete().eq('learner_id',deleteModal.id);
+          
+          // Supprimer le profil
+          await supabase.from('profiles').delete().eq('id',deleteModal.id);
+          
+          // Supprimer l'utilisateur auth (nécessite une fonction Edge ou admin API)
+          // Note: Cela nécessite les droits admin Supabase
+          // Pour l'instant on garde le user auth mais sans profil
+          
+          await load();
+          setDeleteModal(null);
+        }catch(err){
+          console.error('Erreur suppression:',err);
+          alert('Erreur lors de la suppression: '+err.message);
+        }
+        setDeleting(false);
       };
 
       const handleFileSelect=async(e)=>{
@@ -1395,9 +1481,117 @@
       if(loading)return<Loading/>;
 
       return<div>
-        <div className="flex items-center justify-between mb-6 flex-wrap gap-4"><h1 className="text-2xl font-bold">Utilisateurs</h1><Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button></div>
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
+          <h1 className="text-2xl font-bold">Utilisateurs</h1>
+          <div className="flex gap-2">
+            <Button icon="UserPlus" onClick={()=>{resetCreateForm();setCreateModal(true);}}>Ajouter</Button>
+            <Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button>
+          </div>
+        </div>
         <Card className="p-4 mb-6"><Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/></Card>
-        <Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Utilisateur</th><th className="text-left p-4 font-medium text-gray-400">Rôle</th>{isSuperAdmin&&<th className="text-left p-4 font-medium text-gray-400">Centre</th>}<th className="text-right p-4"></th></tr></thead><tbody className="divide-y divide-gray-700">{filtered.map(u=><tr key={u.id} className="hover:bg-gray-750/50"><td className="p-4"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center"><Icon name="User" size={18}/></div><div><p className="font-medium">{u.first_name} {u.last_name}</p><p className="text-sm text-gray-400">{u.email}</p></div></div></td><td className="p-4"><RoleBadge role={u.role}/></td>{isSuperAdmin&&<td className="p-4 text-gray-400">{u.centers?.name||'-'}</td>}<td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(u);setForm({email:u.email,first_name:u.first_name||'',last_name:u.last_name||'',role:u.role,center_id:u.center_id||''});setModal(true);}}/></td></tr>)}</tbody></table></div></Card>
+        <Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Utilisateur</th><th className="text-left p-4 font-medium text-gray-400">Rôle</th>{isSuperAdmin&&<th className="text-left p-4 font-medium text-gray-400">Centre</th>}<th className="text-right p-4"></th></tr></thead><tbody className="divide-y divide-gray-700">{filtered.length===0?<tr><td colSpan={isSuperAdmin?4:3} className="p-8 text-center text-gray-500">Aucun utilisateur trouvé</td></tr>:filtered.map(u=><tr key={u.id} className="hover:bg-gray-750/50"><td className="p-4"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center"><Icon name="User" size={18}/></div><div><p className="font-medium">{u.first_name} {u.last_name}</p><p className="text-sm text-gray-400">{u.email}</p></div></div></td><td className="p-4"><RoleBadge role={u.role}/></td>{isSuperAdmin&&<td className="p-4 text-gray-400">{u.centers?.name||'-'}</td>}<td className="p-4 text-right"><div className="flex justify-end gap-1"><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(u);setForm({email:u.email,first_name:u.first_name||'',last_name:u.last_name||'',role:u.role,center_id:u.center_id||''});setModal(true);}}/>{u.id!==profile?.id&&u.role!=='super_admin'&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400 hover:text-red-300 hover:bg-red-500/10" onClick={()=>setDeleteModal(u)}/>}</div></td></tr>)}</tbody></table></div></Card>
+        
+        {/* Modal de création d'utilisateur */}
+        <Modal isOpen={createModal} onClose={()=>{setCreateModal(false);resetCreateForm();}} title="Ajouter un utilisateur">
+          <div className="space-y-4">
+            {!createResult?(
+              <>
+                <Input label="Email *" type="email" icon="Mail" placeholder="email@exemple.com" value={createForm.email} onChange={e=>setCreateForm({...createForm,email:e.target.value})}/>
+                <div className="grid grid-cols-2 gap-4">
+                  <Input label="Prénom *" placeholder="Jean" value={createForm.first_name} onChange={e=>setCreateForm({...createForm,first_name:e.target.value})}/>
+                  <Input label="Nom *" placeholder="Dupont" value={createForm.last_name} onChange={e=>setCreateForm({...createForm,last_name:e.target.value})}/>
+                </div>
+                <div className="relative">
+                  <Input label="Mot de passe" type="text" icon="Lock" placeholder="Laisser vide pour générer" value={createForm.password} onChange={e=>setCreateForm({...createForm,password:e.target.value})}/>
+                  <button type="button" onClick={()=>setCreateForm({...createForm,password:generatePassword()})} className="absolute right-2 top-8 text-xs text-indigo-400 hover:text-indigo-300">Générer</button>
+                </div>
+                <Select label="Rôle *" value={createForm.role} onChange={e=>setCreateForm({...createForm,role:e.target.value})} options={[
+                  {value:'learner',label:'Apprenant'},
+                  {value:'trainer',label:'Formateur'},
+                  {value:'center_admin',label:'Admin de centre'},
+                  ...(isSuperAdmin?[{value:'super_admin',label:'Super Admin'}]:[])
+                ]}/>
+                {isSuperAdmin&&<Select label="Centre" value={createForm.center_id} onChange={e=>setCreateForm({...createForm,center_id:e.target.value})} options={[{value:'',label:'Aucun centre'},...centers.map(c=>({value:c.id,label:c.name}))]}/>}
+                <div className="flex justify-end gap-3 pt-2">
+                  <Button variant="secondary" onClick={()=>{setCreateModal(false);resetCreateForm();}}>Annuler</Button>
+                  <Button icon="UserPlus" onClick={handleCreate} loading={creating}>Créer l'utilisateur</Button>
+                </div>
+              </>
+            ):(
+              <div className="space-y-4">
+                {createResult.success?(
+                  <>
+                    <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-lg text-center">
+                      <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <Icon name="CheckCircle" size={32} className="text-green-400"/>
+                      </div>
+                      <p className="font-semibold text-green-400 text-lg">Utilisateur créé avec succès !</p>
+                    </div>
+                    <div className="bg-gray-700/50 p-4 rounded-lg space-y-3">
+                      <div><p className="text-xs text-gray-400">Email</p><p className="font-medium">{createResult.email}</p></div>
+                      <div><p className="text-xs text-gray-400">Mot de passe</p><div className="flex items-center gap-2"><code className="bg-gray-800 px-3 py-1 rounded font-mono text-indigo-400">{createResult.password}</code><Button variant="ghost" size="sm" icon="Copy" onClick={()=>{navigator.clipboard.writeText(createResult.password);}}></Button></div></div>
+                    </div>
+                    <Alert type="warning">⚠️ Notez ce mot de passe, il ne sera plus affiché.</Alert>
+                    <div className="flex justify-end gap-3">
+                      <Button variant="secondary" onClick={()=>{setCreateModal(false);resetCreateForm();}}>Fermer</Button>
+                      <Button icon="UserPlus" onClick={()=>{resetCreateForm();}}>Ajouter un autre</Button>
+                    </div>
+                  </>
+                ):(
+                  <>
+                    <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-center">
+                      <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <Icon name="XCircle" size={32} className="text-red-400"/>
+                      </div>
+                      <p className="font-semibold text-red-400">Erreur lors de la création</p>
+                      <p className="text-sm text-gray-400 mt-2">{createResult.error}</p>
+                    </div>
+                    <div className="flex justify-end gap-3">
+                      <Button variant="secondary" onClick={()=>{setCreateModal(false);resetCreateForm();}}>Fermer</Button>
+                      <Button onClick={()=>setCreateResult(null)}>Réessayer</Button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </Modal>
+        
+        {/* Modal de confirmation de suppression */}
+        <Modal isOpen={!!deleteModal} onClose={()=>setDeleteModal(null)} title="Supprimer l'utilisateur">
+          <div className="space-y-4">
+            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-12 h-12 bg-red-500/20 rounded-full flex items-center justify-center">
+                  <Icon name="AlertTriangle" size={24} className="text-red-400"/>
+                </div>
+                <div>
+                  <p className="font-semibold text-red-400">Attention !</p>
+                  <p className="text-sm text-gray-400">Cette action est irréversible.</p>
+                </div>
+              </div>
+              <p className="text-sm text-gray-300">
+                Vous êtes sur le point de supprimer l'utilisateur :
+              </p>
+              <p className="font-medium mt-2">{deleteModal?.first_name} {deleteModal?.last_name}</p>
+              <p className="text-sm text-gray-400">{deleteModal?.email}</p>
+            </div>
+            <div className="bg-gray-700/50 p-3 rounded-lg text-sm text-gray-400">
+              <p className="font-medium text-gray-300 mb-1">Données qui seront supprimées :</p>
+              <ul className="list-disc list-inside space-y-1">
+                <li>Inscriptions aux cours</li>
+                <li>Progression vidéo et SCORM</li>
+                <li>Résultats de quiz</li>
+                <li>Badges et points</li>
+                <li>Notes et certificats</li>
+              </ul>
+            </div>
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={()=>setDeleteModal(null)}>Annuler</Button>
+              <Button variant="primary" className="bg-red-600 hover:bg-red-700" icon="Trash2" onClick={handleDelete} loading={deleting}>Supprimer définitivement</Button>
+            </div>
+          </div>
+        </Modal>
         
         <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title="Modifier"><div className="space-y-4"><Input label="Email" value={form.email} disabled/><div className="grid grid-cols-2 gap-4"><Input label="Prénom" value={form.first_name} onChange={e=>setForm({...form,first_name:e.target.value})}/><Input label="Nom" value={form.last_name} onChange={e=>setForm({...form,last_name:e.target.value})}/></div><Select label="Rôle" value={form.role} onChange={e=>setForm({...form,role:e.target.value})} options={Object.entries(ROLE_LABELS).filter(([r])=>isSuperAdmin||r!=='super_admin').map(([v,l])=>({value:v,label:l}))}/>{isSuperAdmin&&<Select label="Centre" value={form.center_id} onChange={e=>setForm({...form,center_id:e.target.value})} options={[{value:'',label:'Aucun'},...centers.map(c=>({value:c.id,label:c.name}))]}/>}<div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
 
