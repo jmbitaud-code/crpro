@@ -2797,6 +2797,13 @@
         
         // Cours complété à 100%
         if(percent===100&&!wasCompleted){
+          // Vérifier si un certificat existe déjà pour cette inscription
+          const{data:existingCert}=await supabase.from('certificates').select('id').eq('enrollment_id',selectedCourse.id).single();
+          if(existingCert){
+            console.log('Certificat déjà existant pour cette inscription');
+            return;
+          }
+          
           // 1. Générer certificat
           const certNumber='CERT-'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'-'+Math.random().toString(36).substring(2,8).toUpperCase();
           const{data:cert}=await supabase.from('certificates').insert({
