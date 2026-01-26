@@ -2261,13 +2261,13 @@
                 
                 const{data,error}=await supabase.from('scorm_progress').upsert({
                   enrollment_id:enrollmentId,
-                  scorm_module_id:module.id,
+                  module_id:module.id,
                   learner_id:user.id,
                   completion_status:lessonStatus,
                   success_status:lessonStatus==='passed'?'passed':lessonStatus==='failed'?'failed':null,
                   score_scaled:scoreScaled,
                   cmi_data:SCORM12_API._data
-                },{onConflict:'enrollment_id,scorm_module_id'});
+                },{onConflict:'enrollment_id,module_id'});
                 
                 if(error){
                   console.error('SCORM Save Error:', error);
@@ -2362,13 +2362,13 @@
                 
                 const{data,error}=await supabase.from('scorm_progress').upsert({
                   enrollment_id:enrollmentId,
-                  scorm_module_id:module.id,
+                  module_id:module.id,
                   learner_id:user.id,
                   completion_status:completionStatus,
                   success_status:successStatus!=='unknown'?successStatus:null,
                   score_scaled:scoreScaled,
                   cmi_data:SCORM2004_API._data
-                },{onConflict:'enrollment_id,scorm_module_id'});
+                },{onConflict:'enrollment_id,module_id'});
                 
                 if(error){
                   console.error('SCORM 2004 Save Error:', error);
