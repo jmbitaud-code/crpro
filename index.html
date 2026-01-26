@@ -61,7 +61,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.8.16';
+    const APP_VERSION = '6.8.17';
     // =======================================
 
     // Masquer l'écran de chargement une fois React prêt
@@ -3412,6 +3412,59 @@
       const[allMyScorm,setAllMyScorm]=useState([]);
       const playerRef=useRef(null);
       const playerInstanceRef=useRef(null);
+      
+      // Suivi du temps passé sur le cours
+      const courseSessionRef=useRef({startTime:null,sessionId:null});
+      
+      // Démarrer le suivi quand on ouvre un cours
+      useEffect(()=>{
+        if(selectedCourse){
+          // Démarrer une nouvelle session
+          const startTime=new Date();
+          const sessionId=`session_${Date.now()}`;
+          courseSessionRef.current={startTime,sessionId,enrollmentId:selectedCourse.id};
+          console.log('⏱️ Course session started:', sessionId);
+          
+          // Créer la session en base
+          supabase.from('course_sessions').insert({
+            enrollment_id:selectedCourse.id,
+            learner_id:user.id,
+            started_at:startTime.toISOString()
+          }).select().single().then(({data})=>{
+            if(data)courseSessionRef.current.dbSessionId=data.id;
+          });
+          
+          // Sauvegarder périodiquement (toutes les 30 secondes)
+          const interval=setInterval(()=>{
+            const elapsed=Math.floor((Date.now()-courseSessionRef.current.startTime)/1000);
+            console.log('⏱️ Course time elapsed:', elapsed, 'seconds');
+          },30000);
+          
+          return()=>{
+            clearInterval(interval);
+            // Fin de session
+            const endTime=new Date();
+            const duration=Math.floor((endTime-courseSessionRef.current.startTime)/1000);
+            console.log('⏱️ Course session ended, duration:', duration, 'seconds');
+            
+            // Mettre à jour la session en base
+            if(courseSessionRef.current.dbSessionId){
+              supabase.from('course_sessions').update({
+                ended_at:endTime.toISOString(),
+                duration_seconds:duration
+              }).eq('id',courseSessionRef.current.dbSessionId);
+            }
+            
+            // Mettre à jour le temps total sur l'enrollment
+            if(courseSessionRef.current.enrollmentId&&duration>0){
+              supabase.from('enrollments').select('time_spent_seconds').eq('id',courseSessionRef.current.enrollmentId).single().then(({data})=>{
+                const currentTime=data?.time_spent_seconds||0;
+                supabase.from('enrollments').update({time_spent_seconds:currentTime+duration}).eq('id',courseSessionRef.current.enrollmentId);
+              });
+            }
+          };
+        }
+      },[selectedCourse?.id,user.id]);
 
       const load=useCallback(async()=>{
         const{data}=await supabase.from('enrollments').select('*,playlists:playlist_id(*)').eq('learner_id',user.id);
@@ -3729,7 +3782,7 @@
           console.log('🏁 Video ended');
           await saveProgress(0,true);
           // Attendre un peu que l'état soit mis à jour puis recalculer
-          setTimeout(()=>{
+          setTimeout(async()=>{
             // Recalculer la progression du cours
             const totalVids=courseVideos.length;
             const completedVids=Object.values(videoProgressRef.current).filter(p=>p.is_completed).length;
@@ -3739,8 +3792,15 @@
             const completedItems=completedVids+completedScorms;
             const pct=totalItems>0?Math.round((completedItems/totalItems)*100):0;
             console.log('📈 Course progress after video ended:', {totalVids, completedVids, totalScorms, completedScorms, pct});
-            supabase.from('enrollments').update({progress_percent:pct,status:pct===100?'completed':'in_progress'}).eq('id',enrollmentId);
+            
+            await supabase.from('enrollments').update({progress_percent:pct,status:pct===100?'completed':'in_progress'}).eq('id',enrollmentId);
             setSelectedCourse(prev=>prev?{...prev,progress_percent:pct,status:pct===100?'completed':'in_progress'}:prev);
+            
+            // Si le cours est terminé à 100%, appeler updateCourseProgress pour générer certificat et badges
+            if(pct===100){
+              console.log('🎉 Course completed! Generating certificate and badges...');
+              updateCourseProgress();
+            }
           },500);
         });
         
@@ -4203,6 +4263,12 @@
                 console.log('📈 Course progress after SCORM:', {totalVids, completedVids, totalScorms, completedScorms, pct});
                 await supabase.from('enrollments').update({progress_percent:pct,status:pct===100?'completed':'in_progress'}).eq('id',selectedCourse.id);
                 setSelectedCourse(prev=>prev?{...prev,progress_percent:pct,status:pct===100?'completed':'in_progress'}:prev);
+                
+                // Si le cours est terminé à 100%, générer certificat et badges
+                if(pct===100){
+                  console.log('🎉 Course completed via SCORM! Generating certificate and badges...');
+                  updateCourseProgress();
+                }
               }}
               onClose={()=>setActiveScorm(null)}
             />
@@ -4789,10 +4855,16 @@
         const localSessions=JSON.parse(localStorage.getItem(`lms_sessions_${user.id}`)||'[]');
         setSessions(localSessions);
         
+        // Charger les sessions de cours depuis la base de données
+        const{data:courseSessions}=await supabase.from('course_sessions').select('*').eq('learner_id',user.id);
+        
         // Calculer les stats
         const totalCourses=(enr||[]).length;
         const completedCourses=(enr||[]).filter(e=>e.status==='completed').length;
         const inProgressCourses=(enr||[]).filter(e=>e.status==='in_progress').length;
+        
+        // Temps passé sur les cours (depuis enrollments.time_spent_seconds)
+        const totalCourseTime=(enr||[]).reduce((a,e)=>a+(e.time_spent_seconds||0),0);
         
         const totalVideos=(vp||[]).length;
         const watchedVideos=(vp||[]).filter(v=>v.is_completed).length;
@@ -4810,9 +4882,12 @@
         const passedQuizzes=(qa||[]).filter(q=>q.passed).length;
         const avgQuizScore=(qa||[]).length>0?(qa||[]).reduce((a,q)=>a+(q.score_percent||0),0)/(qa||[]).length:0;
         
+        // Temps total LMS = temps sur les cours (prioritaire) + sessions localStorage (fallback)
         const sessionsWithDuration=localSessions.filter(s=>s.duration);
-        const totalSessionTime=sessionsWithDuration.reduce((a,s)=>a+(s.duration||0),0);
-        const sessionsCount=localSessions.length;
+        const localSessionTime=sessionsWithDuration.reduce((a,s)=>a+(s.duration||0),0);
+        const dbSessionTime=(courseSessions||[]).reduce((a,s)=>a+(s.duration_seconds||0),0);
+        const totalSessionTime=totalCourseTime>0?totalCourseTime:(dbSessionTime>0?dbSessionTime:localSessionTime);
+        const sessionsCount=(courseSessions||[]).length||localSessions.length;
         
         // Dernière activité
         const dates=[
@@ -5015,8 +5090,8 @@
                   <th className="text-left p-4 font-medium text-gray-400">Cours</th>
                   <th className="text-left p-4 font-medium text-gray-400">Statut</th>
                   <th className="text-left p-4 font-medium text-gray-400">Progression</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Temps passé</th>
                   <th className="text-left p-4 font-medium text-gray-400">Inscrit le</th>
-                  <th className="text-left p-4 font-medium text-gray-400">Dernière activité</th>
                 </tr></thead>
                 <tbody className="divide-y divide-gray-700">
                   {enrollments.length===0?<tr><td colSpan="5" className="p-8 text-center text-gray-500">Aucun cours</td></tr>:enrollments.map(e=>(
@@ -5028,8 +5103,8 @@
                          <span className="px-2 py-1 bg-gray-500/20 text-gray-400 rounded text-xs">Non commencé</span>}
                       </td>
                       <td className="p-4"><div className="flex items-center gap-2"><div className="w-24"><ProgressBar percent={e.progress_percent||0} size="sm" showLabel={false}/></div><span className="text-sm font-medium">{e.progress_percent||0}%</span></div></td>
+                      <td className="p-4 text-gray-400">{e.time_spent_seconds?formatDuration(e.time_spent_seconds):'-'}</td>
                       <td className="p-4 text-gray-400 text-sm">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td>
-                      <td className="p-4 text-gray-400 text-sm">{e.updated_at?new Date(e.updated_at).toLocaleDateString('fr-FR'):'-'}</td>
                     </tr>
                   ))}
                 </tbody>
