@@ -5115,25 +5115,82 @@
         // Charger les inscriptions aux parcours
         const{data:pathEnr}=await supabase.from('path_enrollments').select('*,learning_paths(id,title,description)').eq('learner_id',user.id);
         
-        // Charger la progression vidéo - essayer aussi avec enrollment_id
-        const{data:vp,error:vpError}=await supabase.from('video_progress').select('*,playlist_videos:playlist_video_id(videos:video_id(title,duration))').eq('learner_id',user.id);
+        // Charger la progression vidéo
+        const{data:vp}=await supabase.from('video_progress').select('*').eq('learner_id',user.id);
         
         // Si pas de résultats par learner_id, essayer par enrollment_id
         let videoProgressData = vp || [];
         if(videoProgressData.length === 0 && enr?.length > 0) {
           const enrollmentIds = enr.map(e => e.id);
-          const{data:vpByEnrollment} = await supabase.from('video_progress').select('*,playlist_videos:playlist_video_id(videos:video_id(title,duration))').in('enrollment_id', enrollmentIds);
+          const{data:vpByEnrollment} = await supabase.from('video_progress').select('*').in('enrollment_id', enrollmentIds);
           videoProgressData = vpByEnrollment || [];
+        }
+        
+        // Charger les infos des vidéos si on a des progressions
+        if(videoProgressData.length > 0) {
+          const playlistVideoIds = [...new Set(videoProgressData.map(v => v.playlist_video_id).filter(Boolean))];
+          if(playlistVideoIds.length > 0) {
+            const{data:pvData} = await supabase.from('playlist_videos').select('id,video_id,videos(title,duration)').in('id', playlistVideoIds);
+            const pvMap = {};
+            (pvData||[]).forEach(pv => { pvMap[pv.id] = pv; });
+            videoProgressData = videoProgressData.map(v => ({
+              ...v,
+              playlist_videos: pvMap[v.playlist_video_id] || null
+            }));
+          }
         }
         setVideoProgress(videoProgressData);
         
         // Charger la progression SCORM
         const{data:sp}=await supabase.from('scorm_progress').select('*').eq('learner_id',user.id);
-        setScormProgress(sp||[]);
+        
+        // Charger les infos des modules SCORM si on a des progressions
+        let scormProgressData = sp || [];
+        if(scormProgressData.length > 0) {
+          const moduleIds = [...new Set(scormProgressData.map(s => s.module_id).filter(Boolean))];
+          const enrollmentIds = [...new Set(scormProgressData.map(s => s.enrollment_id).filter(Boolean))];
+          
+          // Charger les modules SCORM
+          let modulesMap = {};
+          if(moduleIds.length > 0) {
+            const{data:modules} = await supabase.from('scorm_modules').select('id,title,category').in('id', moduleIds);
+            (modules||[]).forEach(m => { modulesMap[m.id] = m; });
+          }
+          
+          // Charger les enrollments pour avoir les titres des cours
+          let enrollmentsMap = {};
+          if(enrollmentIds.length > 0) {
+            const{data:enrollmentsData} = await supabase.from('enrollments').select('id,playlists:playlist_id(title)').in('id', enrollmentIds);
+            (enrollmentsData||[]).forEach(e => { enrollmentsMap[e.id] = e; });
+          }
+          
+          // Associer les données
+          scormProgressData = scormProgressData.map(s => ({
+            ...s,
+            scorm_modules: modulesMap[s.module_id] || null,
+            enrollments: enrollmentsMap[s.enrollment_id] || null
+          }));
+        }
+        setScormProgress(scormProgressData);
         
         // Charger les tentatives de quiz
         const{data:qa}=await supabase.from('quiz_attempts').select('*').eq('learner_id',user.id);
-        setQuizAttempts(qa||[]);
+        
+        // Charger les infos des quiz si on a des tentatives
+        let quizAttemptsData = qa || [];
+        if(quizAttemptsData.length > 0) {
+          const quizIds = [...new Set(quizAttemptsData.map(q => q.quiz_id).filter(Boolean))];
+          if(quizIds.length > 0) {
+            const{data:quizzes} = await supabase.from('quizzes').select('id,title,passing_score').in('id', quizIds);
+            const quizzesMap = {};
+            (quizzes||[]).forEach(q => { quizzesMap[q.id] = q; });
+            quizAttemptsData = quizAttemptsData.map(q => ({
+              ...q,
+              quizzes: quizzesMap[q.quiz_id] || null
+            }));
+          }
+        }
+        setQuizAttempts(quizAttemptsData);
         
         // Charger les sessions depuis localStorage
         const localSessions=JSON.parse(localStorage.getItem(`lms_sessions_${user.id}`)||'[]');
@@ -5158,21 +5215,21 @@
         // Temps passé sur les cours (depuis enrollments.time_spent_seconds)
         const totalCourseTime=(enr||[]).reduce((a,e)=>a+(e.time_spent_seconds||0),0);
         
-        const totalVideos=(vp||[]).length;
-        const watchedVideos=(vp||[]).filter(v=>v.is_completed).length;
-        const inProgressVideos=(vp||[]).filter(v=>!v.is_completed&&v.last_position_seconds>0).length;
-        const totalWatchTime=(vp||[]).reduce((a,v)=>a+(v.watch_time_seconds||0),0);
+        const totalVideos=videoProgressData.length;
+        const watchedVideos=videoProgressData.filter(v=>v.is_completed).length;
+        const inProgressVideos=videoProgressData.filter(v=>!v.is_completed&&v.last_position_seconds>0).length;
+        const totalWatchTime=videoProgressData.reduce((a,v)=>a+(v.watch_time_seconds||0),0);
         
-        const totalScorm=(sp||[]).length;
-        const completedScorm=(sp||[]).filter(s=>s.completion_status==='completed'||s.completion_status==='passed').length;
-        const inProgressScorm=(sp||[]).filter(s=>s.completion_status==='incomplete'||s.completion_status==='browsed').length;
-        const passedScorm=(sp||[]).filter(s=>s.completion_status==='passed'||s.success_status==='passed').length;
-        const scormWithScore=(sp||[]).filter(s=>s.score_scaled!==null);
+        const totalScorm=scormProgressData.length;
+        const completedScorm=scormProgressData.filter(s=>s.completion_status==='completed'||s.completion_status==='passed').length;
+        const inProgressScorm=scormProgressData.filter(s=>s.completion_status==='incomplete'||s.completion_status==='browsed').length;
+        const passedScorm=scormProgressData.filter(s=>s.completion_status==='passed'||s.success_status==='passed').length;
+        const scormWithScore=scormProgressData.filter(s=>s.score_scaled!==null);
         const avgScormScore=scormWithScore.length>0?scormWithScore.reduce((a,s)=>a+(s.score_scaled||0),0)/scormWithScore.length:0;
         
-        const quizzesTaken=[...new Set((qa||[]).map(q=>q.quiz_id))].length;
-        const passedQuizzes=(qa||[]).filter(q=>q.passed).length;
-        const avgQuizScore=(qa||[]).length>0?(qa||[]).reduce((a,q)=>a+(q.score_percent||0),0)/(qa||[]).length:0;
+        const quizzesTaken=[...new Set(quizAttemptsData.map(q=>q.quiz_id))].length;
+        const passedQuizzes=quizAttemptsData.filter(q=>q.passed).length;
+        const avgQuizScore=quizAttemptsData.length>0?quizAttemptsData.reduce((a,q)=>a+(q.score_percent||0),0)/quizAttemptsData.length:0;
         
         // Temps total LMS = temps sur les cours (prioritaire) + sessions localStorage (fallback)
         const sessionsWithDuration=localSessions.filter(s=>s.duration);
@@ -5181,13 +5238,13 @@
         const totalSessionTime=totalCourseTime>0?totalCourseTime:(dbSessionTime>0?dbSessionTime:localSessionTime);
         const sessionsCount=(courseSessions||[]).length||localSessions.length;
         
-        // Dernière activité
+        // Dernière activité - utiliser last_accessed_at pour scorm_progress
         const dates=[
           ...(enr||[]).map(e=>e.updated_at),
           ...(pathEnr||[]).map(p=>p.updated_at),
-          ...(vp||[]).map(v=>v.updated_at),
-          ...(sp||[]).map(s=>s.updated_at),
-          ...(qa||[]).map(q=>q.created_at)
+          ...videoProgressData.map(v=>v.updated_at),
+          ...scormProgressData.map(s=>s.last_accessed_at),
+          ...quizAttemptsData.map(q=>q.created_at)
         ].filter(Boolean).sort((a,b)=>new Date(b)-new Date(a));
         const lastActivity=dates[0]||null;
         
@@ -5227,7 +5284,7 @@
           
           const activityByDay=last7Days.map(day=>{
             const dayVideos=videoProgress.filter(v=>v.updated_at?.slice(0,10)===day).length;
-            const dayScorm=scormProgress.filter(s=>s.updated_at?.slice(0,10)===day).length;
+            const dayScorm=scormProgress.filter(s=>s.last_accessed_at?.slice(0,10)===day).length;
             const dayQuiz=quizAttempts.filter(q=>q.created_at?.slice(0,10)===day).length;
             return dayVideos+dayScorm+dayQuiz;
           });
@@ -5355,7 +5412,8 @@
           {id:'paths',label:'Mes parcours',icon:'Route'},
           {id:'videos',label:'Vidéos',icon:'Film'},
           {id:'scorm',label:'Modules SCORM',icon:'Package'},
-          {id:'sessions',label:'Connexions',icon:'Clock'}
+          {id:'sessions',label:'Connexions',icon:'Clock'},
+          {id:'mydata',label:'Mes données',icon:'Download'}
         ]} active={activeTab} onChange={setActiveTab}/>
 
         {/* Vue d'ensemble */}
@@ -5513,18 +5571,46 @@
                   <th className="text-left p-4 font-medium text-gray-400">Cours</th>
                   <th className="text-left p-4 font-medium text-gray-400">Statut</th>
                   <th className="text-left p-4 font-medium text-gray-400">Score</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Temps passé</th>
                   <th className="text-left p-4 font-medium text-gray-400">Date</th>
                 </tr></thead>
                 <tbody className="divide-y divide-gray-700">
-                  {scormProgress.length===0?<tr><td colSpan="5" className="p-8 text-center text-gray-500">Aucun module SCORM</td></tr>:scormProgress.map(s=>(
+                  {scormProgress.length===0?<tr><td colSpan="6" className="p-8 text-center text-gray-500">Aucun module SCORM</td></tr>:scormProgress.map(s=>{
+                    // Calculer le temps depuis total_time SCORM (format HH:MM:SS ou PTXHXMXS)
+                    const parseScormTime=(timeStr)=>{
+                      if(!timeStr)return 0;
+                      // Format SCORM 1.2: HH:MM:SS ou HHHH:MM:SS.SS
+                      if(timeStr.includes(':')){
+                        const parts=timeStr.split(':');
+                        const h=parseInt(parts[0])||0;
+                        const m=parseInt(parts[1])||0;
+                        const s=parseFloat(parts[2])||0;
+                        return h*3600+m*60+Math.round(s);
+                      }
+                      // Format SCORM 2004: PT1H30M45S
+                      if(timeStr.startsWith('PT')){
+                        let seconds=0;
+                        const hMatch=timeStr.match(/(\d+)H/);
+                        const mMatch=timeStr.match(/(\d+)M/);
+                        const sMatch=timeStr.match(/(\d+(?:\.\d+)?)S/);
+                        if(hMatch)seconds+=parseInt(hMatch[1])*3600;
+                        if(mMatch)seconds+=parseInt(mMatch[1])*60;
+                        if(sMatch)seconds+=Math.round(parseFloat(sMatch[1]));
+                        return seconds;
+                      }
+                      return 0;
+                    };
+                    const timeSeconds=parseScormTime(s.total_time);
+                    return(
                     <tr key={s.id}>
-                      <td className="p-4"><div className="flex items-center gap-3"><div className="w-8 h-8 bg-orange-500/20 rounded flex items-center justify-center"><Icon name="Package" size={16} className="text-orange-400"/></div><div><p className="font-medium">{s.scorm_modules?.title}</p>{s.scorm_modules?.category&&<p className="text-xs text-gray-500">{s.scorm_modules.category}</p>}</div></div></td>
+                      <td className="p-4"><div className="flex items-center gap-3"><div className="w-8 h-8 bg-orange-500/20 rounded flex items-center justify-center"><Icon name="Package" size={16} className="text-orange-400"/></div><div><p className="font-medium">{s.scorm_modules?.title||'Module SCORM'}</p>{s.scorm_modules?.category&&<p className="text-xs text-gray-500">{s.scorm_modules.category}</p>}</div></div></td>
                       <td className="p-4 text-gray-400 text-sm">{s.enrollments?.playlists?.title||'-'}</td>
                       <td className="p-4"><ScormStatusBadge status={s.completion_status}/></td>
                       <td className="p-4"><ScoreBadge score={s.score_scaled}/></td>
-                      <td className="p-4 text-gray-400 text-sm">{s.updated_at?new Date(s.updated_at).toLocaleDateString('fr-FR'):'-'}</td>
+                      <td className="p-4 text-blue-400">{timeSeconds>0?formatDuration(timeSeconds):(s.session_time?formatDuration(parseScormTime(s.session_time)):'-')}</td>
+                      <td className="p-4 text-gray-400 text-sm">{s.last_accessed_at?new Date(s.last_accessed_at).toLocaleDateString('fr-FR'):'-'}</td>
                     </tr>
-                  ))}
+                  );})}
                 </tbody>
               </table>
             </div>
@@ -5572,6 +5658,295 @@
                   </div>
                 ))}
               </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Mes données - Export RGPD */}
+        {activeTab==='mydata'&&(
+          <div className="space-y-6">
+            <Card className="p-6">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 bg-blue-500/20 rounded-lg flex items-center justify-center">
+                  <Icon name="Shield" size={24} className="text-blue-400"/>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-lg">Vos données personnelles</h3>
+                  <p className="text-gray-400 text-sm mt-1">
+                    Conformément au RGPD, vous pouvez télécharger l'ensemble de vos données personnelles stockées sur la plateforme.
+                  </p>
+                </div>
+              </div>
+            </Card>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {/* Résumé des données */}
+              <Card className="p-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <Icon name="User" size={20} className="text-indigo-400"/>
+                  <h4 className="font-medium">Profil</h4>
+                </div>
+                <p className="text-sm text-gray-400">Informations de compte, email, préférences</p>
+                <p className="text-2xl font-bold text-indigo-400 mt-2">1 fichier</p>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <Icon name="BookOpen" size={20} className="text-green-400"/>
+                  <h4 className="font-medium">Inscriptions</h4>
+                </div>
+                <p className="text-sm text-gray-400">Cours et parcours suivis</p>
+                <p className="text-2xl font-bold text-green-400 mt-2">{enrollments.length + pathEnrollments.length} entrées</p>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <Icon name="Play" size={20} className="text-cyan-400"/>
+                  <h4 className="font-medium">Progression vidéo</h4>
+                </div>
+                <p className="text-sm text-gray-400">Vidéos visionnées et temps</p>
+                <p className="text-2xl font-bold text-cyan-400 mt-2">{videoProgress.length} vidéos</p>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <Icon name="Package" size={20} className="text-orange-400"/>
+                  <h4 className="font-medium">Modules SCORM</h4>
+                </div>
+                <p className="text-sm text-gray-400">Progression et scores</p>
+                <p className="text-2xl font-bold text-orange-400 mt-2">{scormProgress.length} modules</p>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <Icon name="HelpCircle" size={20} className="text-purple-400"/>
+                  <h4 className="font-medium">Quiz</h4>
+                </div>
+                <p className="text-sm text-gray-400">Tentatives et résultats</p>
+                <p className="text-2xl font-bold text-purple-400 mt-2">{quizAttempts.length} tentatives</p>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <Icon name="Clock" size={20} className="text-yellow-400"/>
+                  <h4 className="font-medium">Sessions</h4>
+                </div>
+                <p className="text-sm text-gray-400">Historique de connexion</p>
+                <p className="text-2xl font-bold text-yellow-400 mt-2">{sessions.length} sessions</p>
+              </Card>
+            </div>
+
+            {/* Boutons d'export */}
+            <Card className="p-6">
+              <h4 className="font-semibold mb-4">Télécharger vos données</h4>
+              <div className="flex flex-wrap gap-4">
+                <Button
+                  icon="FileJson"
+                  onClick={()=>{
+                    const data={
+                      exported_at:new Date().toISOString(),
+                      user:{
+                        id:user.id,
+                        email:user.email,
+                        profile:profile
+                      },
+                      enrollments:enrollments.map(e=>({
+                        course:e.playlists?.title,
+                        status:e.status,
+                        progress:e.progress_percent,
+                        time_spent_seconds:e.time_spent_seconds,
+                        enrolled_at:e.created_at
+                      })),
+                      path_enrollments:pathEnrollments.map(p=>({
+                        path:p.learning_paths?.title,
+                        progress:p.progress_percent,
+                        time_spent_seconds:p.time_spent_seconds,
+                        started_at:p.started_at
+                      })),
+                      video_progress:videoProgress.map(v=>({
+                        video:v.playlist_videos?.videos?.title,
+                        completed:v.is_completed,
+                        watch_time_seconds:v.watch_time_seconds,
+                        last_position:v.last_position_seconds,
+                        updated_at:v.updated_at
+                      })),
+                      scorm_progress:scormProgress.map(s=>({
+                        module:s.scorm_modules?.title,
+                        course:s.enrollments?.playlists?.title,
+                        status:s.completion_status,
+                        success:s.success_status,
+                        score:s.score_scaled?Math.round(s.score_scaled*100)+'%':null,
+                        total_time:s.total_time,
+                        last_accessed:s.last_accessed_at
+                      })),
+                      quiz_attempts:quizAttempts.map(q=>({
+                        quiz:q.quizzes?.title,
+                        score:q.score_percent,
+                        passed:q.passed,
+                        attempted_at:q.created_at
+                      })),
+                      sessions:sessions.map(s=>({
+                        start:s.start,
+                        end:s.end,
+                        duration_seconds:s.duration
+                      }))
+                    };
+                    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+                    const url=URL.createObjectURL(blob);
+                    const a=document.createElement('a');
+                    a.href=url;
+                    a.download=`mes-donnees-${user.email}-${new Date().toISOString().slice(0,10)}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                >
+                  Exporter en JSON
+                </Button>
+
+                <Button
+                  icon="FileSpreadsheet"
+                  variant="secondary"
+                  onClick={()=>{
+                    // Export CSV multi-feuilles
+                    const formatDate=(d)=>d?new Date(d).toLocaleDateString('fr-FR'):'';
+                    
+                    // Feuille Cours
+                    let csv='=== MES COURS ===\n';
+                    csv+='Cours;Statut;Progression;Temps passé;Date inscription\n';
+                    enrollments.forEach(e=>{
+                      const time=e.time_spent_seconds?Math.round(e.time_spent_seconds/60)+' min':'';
+                      csv+=`"${e.playlists?.title||''}";${e.status};${e.progress_percent||0}%;${time};${formatDate(e.created_at)}\n`;
+                    });
+                    
+                    // Feuille Parcours
+                    csv+='\n=== MES PARCOURS ===\n';
+                    csv+='Parcours;Progression;Temps passé;Date démarrage\n';
+                    pathEnrollments.forEach(p=>{
+                      const time=p.time_spent_seconds?Math.round(p.time_spent_seconds/60)+' min':'';
+                      csv+=`"${p.learning_paths?.title||''}";${p.progress_percent||0}%;${time};${formatDate(p.started_at)}\n`;
+                    });
+                    
+                    // Feuille Vidéos
+                    csv+='\n=== MES VIDEOS ===\n';
+                    csv+='Vidéo;Terminée;Temps visionné;Dernière vue\n';
+                    videoProgress.forEach(v=>{
+                      const time=v.watch_time_seconds?Math.round(v.watch_time_seconds/60)+' min':'';
+                      csv+=`"${v.playlist_videos?.videos?.title||''}";${v.is_completed?'Oui':'Non'};${time};${formatDate(v.updated_at)}\n`;
+                    });
+                    
+                    // Feuille SCORM
+                    csv+='\n=== MES MODULES SCORM ===\n';
+                    csv+='Module;Cours;Statut;Score;Temps;Date\n';
+                    scormProgress.forEach(s=>{
+                      const score=s.score_scaled?Math.round(s.score_scaled*100)+'%':'';
+                      csv+=`"${s.scorm_modules?.title||''}";${s.enrollments?.playlists?.title||''};${s.completion_status||''};${score};${s.total_time||''};${formatDate(s.last_accessed_at)}\n`;
+                    });
+                    
+                    // Feuille Quiz
+                    csv+='\n=== MES QUIZ ===\n';
+                    csv+='Quiz;Score;Réussi;Date\n';
+                    quizAttempts.forEach(q=>{
+                      csv+=`"${q.quizzes?.title||''}";${q.score_percent||0}%;${q.passed?'Oui':'Non'};${formatDate(q.created_at)}\n`;
+                    });
+                    
+                    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+                    const url=URL.createObjectURL(blob);
+                    const a=document.createElement('a');
+                    a.href=url;
+                    a.download=`mes-donnees-${user.email}-${new Date().toISOString().slice(0,10)}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                >
+                  Exporter en CSV
+                </Button>
+
+                <Button
+                  icon="Printer"
+                  variant="secondary"
+                  onClick={()=>{
+                    // Génération d'un rapport imprimable
+                    const formatDate=(d)=>d?new Date(d).toLocaleDateString('fr-FR'):'';
+                    const formatTime=(s)=>{
+                      if(!s)return '-';
+                      const h=Math.floor(s/3600);
+                      const m=Math.floor((s%3600)/60);
+                      return h>0?`${h}h ${m}min`:`${m}min`;
+                    };
+                    
+                    const html=`
+                      <!DOCTYPE html>
+                      <html>
+                      <head>
+                        <title>Mes données - ${profile?.first_name} ${profile?.last_name}</title>
+                        <style>
+                          body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;}
+                          h1{color:#4f46e5;border-bottom:2px solid #4f46e5;padding-bottom:10px;}
+                          h2{color:#6366f1;margin-top:30px;}
+                          table{width:100%;border-collapse:collapse;margin:15px 0;}
+                          th,td{border:1px solid #ddd;padding:8px;text-align:left;}
+                          th{background:#f3f4f6;}
+                          .stats{display:flex;gap:20px;flex-wrap:wrap;}
+                          .stat{background:#f9fafb;padding:15px;border-radius:8px;min-width:150px;}
+                          .stat-value{font-size:24px;font-weight:bold;color:#4f46e5;}
+                          .footer{margin-top:40px;text-align:center;color:#666;font-size:12px;}
+                          @media print{body{padding:20px;}}
+                        </style>
+                      </head>
+                      <body>
+                        <h1>📊 Rapport de progression</h1>
+                        <p><strong>Apprenant:</strong> ${profile?.first_name} ${profile?.last_name} (${user.email})</p>
+                        <p><strong>Date du rapport:</strong> ${new Date().toLocaleDateString('fr-FR')}</p>
+                        
+                        <h2>📈 Statistiques globales</h2>
+                        <div class="stats">
+                          <div class="stat"><div class="stat-value">${formatTime(stats.totalSessionTime)}</div>Temps total</div>
+                          <div class="stat"><div class="stat-value">${stats.completedCourses}/${stats.totalCourses}</div>Cours terminés</div>
+                          <div class="stat"><div class="stat-value">${stats.passedScorm}/${stats.totalScorm}</div>SCORM réussis</div>
+                          <div class="stat"><div class="stat-value">${Math.round(stats.avgScormScore*100)}%</div>Score SCORM moyen</div>
+                        </div>
+                        
+                        <h2>📚 Mes cours (${enrollments.length})</h2>
+                        <table>
+                          <tr><th>Cours</th><th>Statut</th><th>Progression</th><th>Temps</th></tr>
+                          ${enrollments.map(e=>`<tr><td>${e.playlists?.title||''}</td><td>${e.status}</td><td>${e.progress_percent||0}%</td><td>${formatTime(e.time_spent_seconds)}</td></tr>`).join('')}
+                        </table>
+                        
+                        ${pathEnrollments.length>0?`
+                        <h2>🛤️ Mes parcours (${pathEnrollments.length})</h2>
+                        <table>
+                          <tr><th>Parcours</th><th>Progression</th><th>Temps</th></tr>
+                          ${pathEnrollments.map(p=>`<tr><td>${p.learning_paths?.title||''}</td><td>${p.progress_percent||0}%</td><td>${formatTime(p.time_spent_seconds)}</td></tr>`).join('')}
+                        </table>
+                        `:''}
+                        
+                        <h2>📦 Modules SCORM (${scormProgress.length})</h2>
+                        <table>
+                          <tr><th>Module</th><th>Statut</th><th>Score</th><th>Temps</th></tr>
+                          ${scormProgress.map(s=>`<tr><td>${s.scorm_modules?.title||''}</td><td>${s.completion_status||''}</td><td>${s.score_scaled?Math.round(s.score_scaled*100)+'%':'-'}</td><td>${s.total_time||'-'}</td></tr>`).join('')}
+                        </table>
+                        
+                        <div class="footer">
+                          <p>Généré depuis CRPro LMS - ${window.location.origin}</p>
+                        </div>
+                      </body>
+                      </html>
+                    `;
+                    
+                    const win=window.open('','_blank');
+                    win.document.write(html);
+                    win.document.close();
+                    setTimeout(()=>win.print(),500);
+                  }}
+                >
+                  Imprimer le rapport
+                </Button>
+              </div>
+              
+              <p className="text-xs text-gray-500 mt-4">
+                <Icon name="Info" size={12} className="inline mr-1"/>
+                Les données exportées contiennent uniquement vos informations personnelles et votre progression d'apprentissage.
+              </p>
             </Card>
           </div>
         )}
