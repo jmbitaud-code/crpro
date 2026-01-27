@@ -3098,7 +3098,7 @@
       </div>;
     }
 
-    // Quiz Management
+    // Quiz Management avec types de questions variés
     function QuizzesPage(){
       const{center,isSuperAdmin,can,profile}=useAuth();
       const[quizzes,setQuizzes]=useState([]);
@@ -3110,41 +3110,58 @@
       const[saving,setSaving]=useState(false);
       const[questionsModal,setQuestionsModal]=useState(null);
       const[questions,setQuestions]=useState([]);
-      const[newQuestion,setNewQuestion]=useState({question_text:'',question_type:'single',answers:[{text:'',is_correct:false},{text:'',is_correct:false}]});
+      
+      // Types de questions disponibles
+      const QUESTION_TYPES={
+        single:{label:'Choix unique',icon:'CircleDot',desc:'Une seule bonne réponse'},
+        multiple:{label:'Choix multiple',icon:'CheckSquare',desc:'Plusieurs bonnes réponses possibles'},
+        true_false:{label:'Vrai / Faux',icon:'ToggleLeft',desc:'Question binaire'},
+        text:{label:'Texte libre',icon:'Type',desc:'Réponse courte avec mots-clés'},
+        matching:{label:'Correspondance',icon:'GitMerge',desc:'Associer des paires'},
+        ordering:{label:'Ordonnancement',icon:'ListOrdered',desc:'Remettre dans le bon ordre'}
+      };
+      
+      // État initial pour nouvelle question selon le type
+      const getEmptyQuestion=(type='single')=>{
+        switch(type){
+          case 'true_false':
+            return{question_text:'',question_type:'true_false',answers:[{text:'Vrai',is_correct:true},{text:'Faux',is_correct:false}],keywords:[],pairs:[],items:[]};
+          case 'text':
+            return{question_text:'',question_type:'text',answers:[{text:'',is_correct:true}],keywords:[],pairs:[],items:[]};
+          case 'matching':
+            return{question_text:'',question_type:'matching',answers:[],keywords:[],pairs:[{left:'',right:''},{left:'',right:''}],items:[]};
+          case 'ordering':
+            return{question_text:'',question_type:'ordering',answers:[],keywords:[],pairs:[],items:['','']};
+          case 'multiple':
+            return{question_text:'',question_type:'multiple',answers:[{text:'',is_correct:false},{text:'',is_correct:false}],keywords:[],pairs:[],items:[]};
+          default:
+            return{question_text:'',question_type:'single',answers:[{text:'',is_correct:false},{text:'',is_correct:false}],keywords:[],pairs:[],items:[]};
+        }
+      };
+      
+      const[newQuestion,setNewQuestion]=useState(getEmptyQuestion());
 
       const load=useCallback(async()=>{
-        // Charger les quiz avec une requête simple
-        const{data:qz,error:qzErr}=await supabase.from('quizzes').select('*').order('created_at',{ascending:false});
-        if(qzErr)console.error('Erreur quiz:',qzErr);
-        
-        // Charger les infos des playlists séparément
+        const{data:qz}=await supabase.from('quizzes').select('*').order('created_at',{ascending:false});
         const playlistIds=(qz||[]).filter(q=>q.playlist_id).map(q=>q.playlist_id);
         let playlistsInfo={};
         if(playlistIds.length>0){
           const{data:pInfo}=await supabase.from('playlists').select('id,title').in('id',playlistIds);
           (pInfo||[]).forEach(p=>playlistsInfo[p.id]=p);
         }
-        
-        // Charger le nombre de questions par quiz
         const quizIds=(qz||[]).map(q=>q.id);
         let questionsCount={};
         if(quizIds.length>0){
           const{data:qCount}=await supabase.from('quiz_questions').select('quiz_id').in('quiz_id',quizIds);
           (qCount||[]).forEach(q=>{questionsCount[q.quiz_id]=(questionsCount[q.quiz_id]||0)+1;});
         }
-        
-        // Combiner les données
         const enrichedQuizzes=(qz||[]).map(q=>({
           ...q,
           playlists:playlistsInfo[q.playlist_id]||null,
           questions_count:questionsCount[q.id]||0
         }));
-        
         setQuizzes(enrichedQuizzes);
-        
-        // Charger TOUS les cours
-        const{data:pl,error:plErr}=await supabase.from('playlists').select('id,title').order('title');
-        if(plErr)console.error('Erreur playlists:',plErr);
+        const{data:pl}=await supabase.from('playlists').select('id,title').order('title');
         setPlaylists(pl||[]);
         setLoading(false);
       },[]);
@@ -3153,98 +3170,130 @@
 
       const handleSave=async()=>{
         setSaving(true);
-        const payload={
-          title:form.title,
-          description:form.description||null,
-          playlist_id:form.playlist_id||null,
-          passing_score:parseInt(form.passing_score)||70,
-          is_required:form.is_required
-        };
-        if(editing){
-          await supabase.from('quizzes').update(payload).eq('id',editing.id);
-        }else{
-          await supabase.from('quizzes').insert(payload);
-        }
-        await load();
-        setModal(false);
-        setForm({title:'',description:'',playlist_id:'',passing_score:70,is_required:false});
-        setEditing(null);
-        setSaving(false);
+        const payload={title:form.title,description:form.description||null,playlist_id:form.playlist_id||null,passing_score:parseInt(form.passing_score)||70,is_required:form.is_required};
+        if(editing)await supabase.from('quizzes').update(payload).eq('id',editing.id);
+        else await supabase.from('quizzes').insert(payload);
+        await load();setModal(false);setForm({title:'',description:'',playlist_id:'',passing_score:70,is_required:false});setEditing(null);setSaving(false);
       };
 
-      const handleDelete=async(id)=>{
-        if(!confirm('Supprimer ce quiz et toutes ses questions ?'))return;
-        await supabase.from('quizzes').delete().eq('id',id);
-        load();
-      };
+      const handleDelete=async(id)=>{if(!confirm('Supprimer ce quiz et toutes ses questions ?'))return;await supabase.from('quizzes').delete().eq('id',id);load();};
 
       const openQuestions=async(quiz)=>{
         setQuestionsModal(quiz);
         const{data}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('quiz_id',quiz.id).order('sort_order');
-        setQuestions(data||[]);
-        setNewQuestion({question_text:'',question_type:'single',answers:[{text:'',is_correct:false},{text:'',is_correct:false}]});
+        setQuestions(data||[]);setNewQuestion(getEmptyQuestion());
       };
 
-      const addQuestion=async()=>{
-        if(!newQuestion.question_text.trim()){alert('Veuillez entrer une question');return;}
-        if(newQuestion.answers.filter(a=>a.text.trim()).length<2){alert('Veuillez entrer au moins 2 réponses');return;}
-        if(!newQuestion.answers.some(a=>a.is_correct&&a.text.trim())){alert('Veuillez cocher au moins une bonne réponse');return;}
-        
-        try{
-          const{data:q,error:qError}=await supabase.from('quiz_questions').insert({
-            quiz_id:questionsModal.id,
-            question_text:newQuestion.question_text.trim(),
-            question_type:newQuestion.question_type,
-            sort_order:questions.length
-          }).select().single();
-          
-          if(qError)throw qError;
-          
-          if(q){
-            const answersToInsert=newQuestion.answers.filter(a=>a.text.trim()).map((a,i)=>({
-              question_id:q.id,
-              answer_text:a.text.trim(),
-              is_correct:a.is_correct,
-              sort_order:i
-            }));
-            const{error:aError}=await supabase.from('quiz_answers').insert(answersToInsert);
-            if(aError)throw aError;
-            
-            const{data:fullQ}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('id',q.id).single();
-            setQuestions(prev=>[...prev,fullQ]);
-          }
-          setNewQuestion({question_text:'',question_type:'single',answers:[{text:'',is_correct:false},{text:'',is_correct:false}]});
-        }catch(err){
-          console.error('Erreur ajout question:',err);
-          alert('Erreur: '+err.message);
-        }
-      };
-
-      const deleteQuestion=async(id)=>{
-        await supabase.from('quiz_questions').delete().eq('id',id);
-        setQuestions(questions.filter(q=>q.id!==id));
-      };
+      const changeQuestionType=(type)=>{setNewQuestion(getEmptyQuestion(type));};
 
       const updateAnswer=(index,field,value)=>{
         setNewQuestion(prev=>{
-          const newAnswers=prev.answers.map((a,i)=>{
-            if(i===index){
-              if(field==='is_correct'&&prev.question_type==='single'){
-                return {...a,is_correct:true};
-              }
-              return {...a,[field]:value};
-            }else if(field==='is_correct'&&prev.question_type==='single'){
-              return {...a,is_correct:false};
-            }
-            return {...a};
-          });
-          return {...prev,answers:newAnswers};
+          const newAnswers=[...prev.answers];
+          if(field==='is_correct'&&prev.question_type==='single'){
+            newAnswers.forEach((a,i)=>a.is_correct=(i===index));
+          }else if(field==='is_correct'&&prev.question_type==='true_false'){
+            newAnswers[0].is_correct=(index===0);newAnswers[1].is_correct=(index===1);
+          }else{
+            newAnswers[index]={...newAnswers[index],[field]:value};
+          }
+          return{...prev,answers:newAnswers};
         });
       };
 
-      const addAnswerOption=()=>{
-        if(newQuestion.answers.length<6){
-          setNewQuestion({...newQuestion,answers:[...newQuestion.answers,{text:'',is_correct:false}]});
+      const addAnswerOption=()=>{if(newQuestion.answers.length<8)setNewQuestion({...newQuestion,answers:[...newQuestion.answers,{text:'',is_correct:false}]});};
+      const removeAnswerOption=(index)=>{if(newQuestion.answers.length>2)setNewQuestion({...newQuestion,answers:newQuestion.answers.filter((_,i)=>i!==index)});};
+
+      const updatePair=(index,side,value)=>{const newPairs=[...newQuestion.pairs];newPairs[index]={...newPairs[index],[side]:value};setNewQuestion({...newQuestion,pairs:newPairs});};
+      const addPair=()=>{if(newQuestion.pairs.length<8)setNewQuestion({...newQuestion,pairs:[...newQuestion.pairs,{left:'',right:''}]});};
+      const removePair=(index)=>{if(newQuestion.pairs.length>2)setNewQuestion({...newQuestion,pairs:newQuestion.pairs.filter((_,i)=>i!==index)});};
+
+      const updateItem=(index,value)=>{const newItems=[...newQuestion.items];newItems[index]=value;setNewQuestion({...newQuestion,items:newItems});};
+      const addItem=()=>{if(newQuestion.items.length<10)setNewQuestion({...newQuestion,items:[...newQuestion.items,'']});};
+      const removeItem=(index)=>{if(newQuestion.items.length>2)setNewQuestion({...newQuestion,items:newQuestion.items.filter((_,i)=>i!==index)});};
+
+      const addKeyword=()=>{
+        const kw=newQuestion.answers[0]?.text?.trim();
+        if(kw&&!(newQuestion.keywords||[]).includes(kw)){
+          setNewQuestion({...newQuestion,keywords:[...(newQuestion.keywords||[]),kw],answers:[{text:'',is_correct:true}]});
+        }
+      };
+      const removeKeyword=(kw)=>{setNewQuestion({...newQuestion,keywords:(newQuestion.keywords||[]).filter(k=>k!==kw)});};
+
+      const validateQuestion=()=>{
+        if(!newQuestion.question_text.trim()){alert('Veuillez entrer une question');return false;}
+        switch(newQuestion.question_type){
+          case 'single':case 'multiple':
+            if(newQuestion.answers.filter(a=>a.text.trim()).length<2){alert('Veuillez entrer au moins 2 réponses');return false;}
+            if(!newQuestion.answers.some(a=>a.is_correct&&a.text.trim())){alert('Veuillez cocher au moins une bonne réponse');return false;}
+            break;
+          case 'text':
+            if(!(newQuestion.keywords||[]).length){alert('Veuillez ajouter au moins un mot-clé attendu');return false;}
+            break;
+          case 'matching':
+            if((newQuestion.pairs||[]).filter(p=>p.left.trim()&&p.right.trim()).length<2){alert('Veuillez entrer au moins 2 paires complètes');return false;}
+            break;
+          case 'ordering':
+            if((newQuestion.items||[]).filter(i=>i.trim()).length<2){alert('Veuillez entrer au moins 2 éléments');return false;}
+            break;
+        }
+        return true;
+      };
+
+      const prepareAnswersData=(questionId)=>{
+        switch(newQuestion.question_type){
+          case 'single':case 'multiple':
+            return newQuestion.answers.filter(a=>a.text.trim()).map((a,i)=>({question_id:questionId,answer_text:a.text.trim(),is_correct:a.is_correct,sort_order:i}));
+          case 'true_false':
+            return newQuestion.answers.map((a,i)=>({question_id:questionId,answer_text:a.text,is_correct:a.is_correct,sort_order:i}));
+          case 'text':
+            return(newQuestion.keywords||[]).map((kw,i)=>({question_id:questionId,answer_text:kw,is_correct:true,sort_order:i}));
+          case 'matching':
+            return(newQuestion.pairs||[]).filter(p=>p.left.trim()&&p.right.trim()).map((p,i)=>({question_id:questionId,answer_text:JSON.stringify({left:p.left.trim(),right:p.right.trim()}),is_correct:true,sort_order:i}));
+          case 'ordering':
+            return(newQuestion.items||[]).filter(i=>i.trim()).map((item,i)=>({question_id:questionId,answer_text:item.trim(),is_correct:true,sort_order:i}));
+          default:return[];
+        }
+      };
+
+      const addQuestion=async()=>{
+        if(!validateQuestion())return;
+        try{
+          const{data:q,error:qError}=await supabase.from('quiz_questions').insert({quiz_id:questionsModal.id,question_text:newQuestion.question_text.trim(),question_type:newQuestion.question_type,sort_order:questions.length}).select().single();
+          if(qError)throw qError;
+          if(q){
+            const answersToInsert=prepareAnswersData(q.id);
+            if(answersToInsert.length>0){const{error:aError}=await supabase.from('quiz_answers').insert(answersToInsert);if(aError)throw aError;}
+            const{data:fullQ}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('id',q.id).single();
+            setQuestions(prev=>[...prev,fullQ]);
+          }
+          setNewQuestion(getEmptyQuestion());
+        }catch(err){console.error('Erreur ajout question:',err);alert('Erreur: '+err.message);}
+      };
+
+      const deleteQuestion=async(id)=>{if(!confirm('Supprimer cette question ?'))return;await supabase.from('quiz_questions').delete().eq('id',id);setQuestions(questions.filter(q=>q.id!==id));};
+
+      const duplicateQuestion=async(q)=>{
+        try{
+          const{data:newQ}=await supabase.from('quiz_questions').insert({quiz_id:questionsModal.id,question_text:q.question_text+' (copie)',question_type:q.question_type,sort_order:questions.length}).select().single();
+          if(newQ&&q.quiz_answers?.length>0){
+            const answers=q.quiz_answers.map((a,i)=>({question_id:newQ.id,answer_text:a.answer_text,is_correct:a.is_correct,sort_order:i}));
+            await supabase.from('quiz_answers').insert(answers);
+          }
+          const{data:fullQ}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('id',newQ.id).single();
+          setQuestions(prev=>[...prev,fullQ]);
+        }catch(err){alert('Erreur: '+err.message);}
+      };
+
+      const renderQuestionAnswers=(q)=>{
+        switch(q.question_type){
+          case 'matching':
+            return q.quiz_answers?.map((a,i)=>{try{const pair=JSON.parse(a.answer_text);return<p key={a.id} className="text-sm text-gray-400">{i+1}. {pair.left} ↔ {pair.right}</p>;}catch{return null;}});
+          case 'ordering':
+            return<div className="flex flex-wrap gap-1">{q.quiz_answers?.sort((a,b)=>a.sort_order-b.sort_order).map((a,i)=>(<span key={a.id} className="text-sm bg-gray-600 px-2 py-1 rounded">{i+1}. {a.answer_text}</span>))}</div>;
+          case 'text':
+            return<p className="text-sm text-gray-400">Mots-clés: {q.quiz_answers?.map(a=>a.answer_text).join(', ')}</p>;
+          default:
+            return q.quiz_answers?.map(a=>(<p key={a.id} className={`text-sm ${a.is_correct?'text-green-400':'text-gray-400'}`}>{a.is_correct?'✓':'○'} {a.answer_text}</p>));
         }
       };
 
@@ -3262,10 +3311,7 @@
             {quizzes.map(q=>(
               <Card key={q.id} className="p-4">
                 <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <h3 className="font-semibold">{q.title}</h3>
-                    <p className="text-sm text-gray-400">{q.playlists?.title||'Quiz indépendant'}</p>
-                  </div>
+                  <div><h3 className="font-semibold">{q.title}</h3><p className="text-sm text-gray-400">{q.playlists?.title||'Quiz indépendant'}</p></div>
                   {q.is_required&&<span className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs">Obligatoire</span>}
                 </div>
                 <div className="flex items-center gap-4 text-sm text-gray-400 mb-3">
@@ -3286,18 +3332,11 @@
         <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier le quiz':'Créer un quiz'}>
           <div className="space-y-4">
             <Input label="Titre du quiz *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
-            {playlists.length===0?(
-              <Alert type="warning">Aucun cours disponible. Créez d'abord un cours dans le menu "Cours".</Alert>
-            ):(
-              <Select label={`Cours associé * (${playlists.length} disponible${playlists.length>1?'s':''})`} value={form.playlist_id} onChange={e=>setForm({...form,playlist_id:e.target.value})} options={[{value:'',label:'-- Sélectionner un cours --'},...playlists.map(p=>({value:p.id,label:p.title}))]}/>
-            )}
+            {playlists.length===0?(<Alert type="warning">Aucun cours disponible.</Alert>):(<Select label="Cours associé *" value={form.playlist_id} onChange={e=>setForm({...form,playlist_id:e.target.value})} options={[{value:'',label:'-- Sélectionner --'},...playlists.map(p=>({value:p.id,label:p.title}))]}/>)}
             <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div>
-            <Input label="Score minimum pour réussir (%)" type="number" value={form.passing_score} onChange={e=>setForm({...form,passing_score:e.target.value})} min="0" max="100"/>
+            <Input label="Score minimum (%)" type="number" value={form.passing_score} onChange={e=>setForm({...form,passing_score:e.target.value})} min="0" max="100"/>
             <Checkbox label="Quiz obligatoire pour compléter le cours" checked={form.is_required} onChange={v=>setForm({...form,is_required:v})}/>
-            <div className="flex justify-end gap-3">
-              <Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button>
-              <Button onClick={handleSave} loading={saving} disabled={!form.title||!form.playlist_id}>Enregistrer</Button>
-            </div>
+            <div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving} disabled={!form.title||!form.playlist_id}>Enregistrer</Button></div>
           </div>
         </Modal>
 
@@ -3307,21 +3346,22 @@
             {/* Liste des questions existantes */}
             <div>
               <h4 className="font-medium mb-3">Questions ({questions.length})</h4>
-              <div className="space-y-3 max-h-64 overflow-y-auto">
+              <div className="space-y-3 max-h-72 overflow-y-auto">
                 {questions.map((q,i)=>(
                   <div key={q.id} className="p-4 bg-gray-700 rounded-lg">
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
-                        <p className="font-medium"><span className="text-indigo-400 mr-2">Q{i+1}.</span>{q.question_text}</p>
-                        <div className="mt-2 space-y-1">
-                          {q.quiz_answers?.map(a=>(
-                            <p key={a.id} className={`text-sm ${a.is_correct?'text-green-400':'text-gray-400'}`}>
-                              {a.is_correct?'✓':'○'} {a.answer_text}
-                            </p>
-                          ))}
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-indigo-400 font-medium">Q{i+1}.</span>
+                          <span className="px-2 py-0.5 bg-gray-600 rounded text-xs">{QUESTION_TYPES[q.question_type]?.label||q.question_type}</span>
                         </div>
+                        <p className="font-medium mb-2">{q.question_text}</p>
+                        <div className="space-y-1">{renderQuestionAnswers(q)}</div>
                       </div>
-                      <button onClick={()=>deleteQuestion(q.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="Trash2" size={16}/></button>
+                      <div className="flex gap-1 ml-2">
+                        <button onClick={()=>duplicateQuestion(q)} className="p-1.5 hover:bg-gray-600 rounded" title="Dupliquer"><Icon name="Copy" size={14}/></button>
+                        <button onClick={()=>deleteQuestion(q.id)} className="p-1.5 hover:bg-red-600 rounded" title="Supprimer"><Icon name="Trash2" size={14}/></button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -3332,21 +3372,114 @@
             {/* Formulaire nouvelle question */}
             <div className="p-4 bg-gray-700/50 rounded-lg space-y-4">
               <h4 className="font-medium">Ajouter une question</h4>
-              <div><label className="block text-sm font-medium text-gray-300 mb-1">Question *</label><textarea value={newQuestion.question_text} onChange={e=>setNewQuestion({...newQuestion,question_text:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Entrez votre question..."/></div>
-              <Select label="Type" value={newQuestion.question_type} onChange={e=>setNewQuestion({...newQuestion,question_type:e.target.value})} options={[{value:'single',label:'Choix unique'},{value:'multiple',label:'Choix multiple'}]}/>
+              
+              {/* Sélection du type */}
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Réponses (cochez la/les bonne(s))</label>
-                <div className="space-y-2">
-                  {newQuestion.answers.map((a,i)=>(
-                    <div key={i} className="flex items-center gap-2">
-                      <input type={newQuestion.question_type==='single'?'radio':'checkbox'} checked={a.is_correct} onChange={()=>updateAnswer(i,'is_correct',!a.is_correct)} className="w-5 h-5"/>
-                      <Input className="flex-1" placeholder={`Réponse ${i+1}`} value={a.text} onChange={e=>updateAnswer(i,'text',e.target.value)}/>
-                    </div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Type de question</label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  {Object.entries(QUESTION_TYPES).map(([type,info])=>(
+                    <button key={type} onClick={()=>changeQuestionType(type)} className={`p-3 rounded-lg border text-left transition-all ${newQuestion.question_type===type?'border-indigo-500 bg-indigo-500/20':'border-gray-600 hover:border-gray-500'}`}>
+                      <div className="flex items-center gap-2">
+                        <Icon name={info.icon} size={18} className={newQuestion.question_type===type?'text-indigo-400':'text-gray-400'}/>
+                        <span className="font-medium text-sm">{info.label}</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">{info.desc}</p>
+                    </button>
                   ))}
                 </div>
-                {newQuestion.answers.length<6&&<Button variant="ghost" size="sm" icon="Plus" onClick={addAnswerOption} className="mt-2">Ajouter une option</Button>}
               </div>
-              <Button icon="Plus" onClick={addQuestion} disabled={!newQuestion.question_text.trim()||newQuestion.answers.filter(a=>a.text.trim()).length<2}>Ajouter la question</Button>
+              
+              {/* Texte de la question */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Question *</label>
+                <textarea value={newQuestion.question_text} onChange={e=>setNewQuestion({...newQuestion,question_text:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Entrez votre question..."/>
+              </div>
+              
+              {/* Choix unique / multiple */}
+              {(newQuestion.question_type==='single'||newQuestion.question_type==='multiple')&&(
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Réponses {newQuestion.question_type==='single'?'(cochez la bonne)':'(cochez les bonnes)'}</label>
+                  <div className="space-y-2">
+                    {newQuestion.answers.map((a,i)=>(
+                      <div key={i} className="flex items-center gap-2">
+                        <input type={newQuestion.question_type==='single'?'radio':'checkbox'} name="correct" checked={a.is_correct} onChange={()=>updateAnswer(i,'is_correct',!a.is_correct)} className="w-5 h-5 accent-indigo-500"/>
+                        <Input className="flex-1" placeholder={`Réponse ${i+1}`} value={a.text} onChange={e=>updateAnswer(i,'text',e.target.value)}/>
+                        {newQuestion.answers.length>2&&<button onClick={()=>removeAnswerOption(i)} className="p-2 hover:bg-red-500/20 rounded"><Icon name="X" size={16} className="text-red-400"/></button>}
+                      </div>
+                    ))}
+                  </div>
+                  {newQuestion.answers.length<8&&<Button variant="ghost" size="sm" icon="Plus" onClick={addAnswerOption} className="mt-2">Ajouter une option</Button>}
+                </div>
+              )}
+              
+              {/* Vrai/Faux */}
+              {newQuestion.question_type==='true_false'&&(
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">La bonne réponse est :</label>
+                  <div className="flex gap-4">
+                    <label className={`flex-1 p-4 rounded-lg border cursor-pointer transition-all ${newQuestion.answers[0]?.is_correct?'border-green-500 bg-green-500/20':'border-gray-600 hover:border-gray-500'}`}>
+                      <input type="radio" name="tf" checked={newQuestion.answers[0]?.is_correct} onChange={()=>updateAnswer(0,'is_correct',true)} className="hidden"/>
+                      <div className="text-center"><Icon name="Check" size={24} className={`mx-auto ${newQuestion.answers[0]?.is_correct?'text-green-400':'text-gray-500'}`}/><span className="font-medium">Vrai</span></div>
+                    </label>
+                    <label className={`flex-1 p-4 rounded-lg border cursor-pointer transition-all ${newQuestion.answers[1]?.is_correct?'border-red-500 bg-red-500/20':'border-gray-600 hover:border-gray-500'}`}>
+                      <input type="radio" name="tf" checked={newQuestion.answers[1]?.is_correct} onChange={()=>updateAnswer(1,'is_correct',true)} className="hidden"/>
+                      <div className="text-center"><Icon name="X" size={24} className={`mx-auto ${newQuestion.answers[1]?.is_correct?'text-red-400':'text-gray-500'}`}/><span className="font-medium">Faux</span></div>
+                    </label>
+                  </div>
+                </div>
+              )}
+              
+              {/* Texte libre */}
+              {newQuestion.question_type==='text'&&(
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Mots-clés acceptés</label>
+                  <div className="flex gap-2 mb-2">
+                    <Input className="flex-1" placeholder="Ajouter un mot-clé..." value={newQuestion.answers[0]?.text||''} onChange={e=>updateAnswer(0,'text',e.target.value)} onKeyDown={e=>e.key==='Enter'&&(e.preventDefault(),addKeyword())}/>
+                    <Button icon="Plus" onClick={addKeyword}>Ajouter</Button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {(newQuestion.keywords||[]).map(kw=>(<span key={kw} className="px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-full flex items-center gap-2">{kw}<button onClick={()=>removeKeyword(kw)} className="hover:text-red-400"><Icon name="X" size={14}/></button></span>))}
+                    {!(newQuestion.keywords||[]).length&&<span className="text-gray-500 text-sm">Aucun mot-clé</span>}
+                  </div>
+                </div>
+              )}
+              
+              {/* Correspondance */}
+              {newQuestion.question_type==='matching'&&(
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Paires à associer</label>
+                  <div className="space-y-2">
+                    {(newQuestion.pairs||[]).map((p,i)=>(
+                      <div key={i} className="flex items-center gap-2">
+                        <Input className="flex-1" placeholder={`Élément ${i+1}`} value={p.left} onChange={e=>updatePair(i,'left',e.target.value)}/>
+                        <Icon name="ArrowLeftRight" size={20} className="text-gray-500 shrink-0"/>
+                        <Input className="flex-1" placeholder={`Correspondance ${i+1}`} value={p.right} onChange={e=>updatePair(i,'right',e.target.value)}/>
+                        {(newQuestion.pairs||[]).length>2&&<button onClick={()=>removePair(i)} className="p-2 hover:bg-red-500/20 rounded"><Icon name="X" size={16} className="text-red-400"/></button>}
+                      </div>
+                    ))}
+                  </div>
+                  {(newQuestion.pairs||[]).length<8&&<Button variant="ghost" size="sm" icon="Plus" onClick={addPair} className="mt-2">Ajouter une paire</Button>}
+                </div>
+              )}
+              
+              {/* Ordonnancement */}
+              {newQuestion.question_type==='ordering'&&(
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Éléments dans l'ordre correct</label>
+                  <div className="space-y-2">
+                    {(newQuestion.items||[]).map((item,i)=>(
+                      <div key={i} className="flex items-center gap-2">
+                        <span className="w-8 h-8 bg-indigo-500/20 rounded flex items-center justify-center text-indigo-400 font-medium shrink-0">{i+1}</span>
+                        <Input className="flex-1" placeholder={`Étape ${i+1}`} value={item} onChange={e=>updateItem(i,e.target.value)}/>
+                        {(newQuestion.items||[]).length>2&&<button onClick={()=>removeItem(i)} className="p-2 hover:bg-red-500/20 rounded"><Icon name="X" size={16} className="text-red-400"/></button>}
+                      </div>
+                    ))}
+                  </div>
+                  {(newQuestion.items||[]).length<10&&<Button variant="ghost" size="sm" icon="Plus" onClick={addItem} className="mt-2">Ajouter un élément</Button>}
+                </div>
+              )}
+              
+              <Button icon="Plus" onClick={addQuestion} disabled={!newQuestion.question_text.trim()}>Ajouter la question</Button>
             </div>
           </div>
         </Modal>
