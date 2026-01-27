@@ -4975,6 +4975,7 @@
       
       // Données globales
       const[enrollments,setEnrollments]=useState([]);
+      const[pathEnrollments,setPathEnrollments]=useState([]);
       const[videoProgress,setVideoProgress]=useState([]);
       const[scormProgress,setScormProgress]=useState([]);
       const[quizAttempts,setQuizAttempts]=useState([]);
@@ -4983,6 +4984,7 @@
       // Stats calculées
       const[stats,setStats]=useState({
         totalCourses:0,completedCourses:0,
+        totalPaths:0,completedPaths:0,
         totalVideos:0,watchedVideos:0,totalWatchTime:0,
         totalScorm:0,completedScorm:0,passedScorm:0,avgScormScore:0,
         totalQuizzes:0,passedQuizzes:0,avgQuizScore:0,
@@ -5023,20 +5025,21 @@
       },[user.id]);
 
       const load=useCallback(async()=>{
-        // Charger les inscriptions
+        // Charger les inscriptions aux cours
         const{data:enr}=await supabase.from('enrollments').select('*,playlists:playlist_id(id,title)').eq('learner_id',user.id);
         setEnrollments(enr||[]);
         
+        // Charger les inscriptions aux parcours
+        const{data:pathEnr}=await supabase.from('path_enrollments').select('*,learning_paths(id,title,description)').eq('learner_id',user.id);
+        
         // Charger la progression vidéo - essayer aussi avec enrollment_id
         const{data:vp,error:vpError}=await supabase.from('video_progress').select('*,playlist_videos:playlist_video_id(videos:video_id(title,duration))').eq('learner_id',user.id);
-        console.log('📊 MyProgressPage - video_progress by learner_id:', {count: vp?.length, data: vp, error: vpError});
         
         // Si pas de résultats par learner_id, essayer par enrollment_id
         let videoProgressData = vp || [];
         if(videoProgressData.length === 0 && enr?.length > 0) {
           const enrollmentIds = enr.map(e => e.id);
           const{data:vpByEnrollment} = await supabase.from('video_progress').select('*,playlist_videos:playlist_video_id(videos:video_id(title,duration))').in('enrollment_id', enrollmentIds);
-          console.log('📊 MyProgressPage - video_progress by enrollment_id:', {count: vpByEnrollment?.length, data: vpByEnrollment});
           videoProgressData = vpByEnrollment || [];
         }
         setVideoProgress(videoProgressData);
@@ -5055,6 +5058,14 @@
         
         // Charger les sessions de cours depuis la base de données
         const{data:courseSessions}=await supabase.from('course_sessions').select('*').eq('learner_id',user.id);
+        
+        // Calculer les stats des parcours
+        const pathStats={
+          total:(pathEnr||[]).length,
+          completed:(pathEnr||[]).filter(p=>p.progress_percent===100||p.status==='completed').length,
+          inProgress:(pathEnr||[]).filter(p=>p.progress_percent>0&&p.progress_percent<100).length,
+          totalTime:(pathEnr||[]).reduce((a,p)=>a+(p.time_spent_seconds||0),0)
+        };
         
         // Calculer les stats
         const totalCourses=(enr||[]).length;
@@ -5090,14 +5101,19 @@
         // Dernière activité
         const dates=[
           ...(enr||[]).map(e=>e.updated_at),
+          ...(pathEnr||[]).map(p=>p.updated_at),
           ...(vp||[]).map(v=>v.updated_at),
           ...(sp||[]).map(s=>s.updated_at),
           ...(qa||[]).map(q=>q.created_at)
         ].filter(Boolean).sort((a,b)=>new Date(b)-new Date(a));
         const lastActivity=dates[0]||null;
         
+        // Sauvegarder les parcours
+        setPathEnrollments(pathEnr||[]);
+        
         setStats({
           totalCourses,completedCourses,inProgressCourses,
+          totalPaths:pathStats.total,completedPaths:pathStats.completed,inProgressPaths:pathStats.inProgress,pathTime:pathStats.totalTime,
           totalVideos,watchedVideos,inProgressVideos,totalWatchTime,
           totalScorm,completedScorm,inProgressScorm,passedScorm,avgScormScore,
           totalQuizzes:quizzesTaken,passedQuizzes,avgQuizScore,
@@ -5191,6 +5207,9 @@
 
       if(loading)return<Loading/>;
 
+      // Calculer le temps total cours (inclut tout: vidéos, SCORM, quiz, etc.)
+      const totalCourseTime=enrollments.reduce((a,e)=>a+(e.time_spent_seconds||0),0);
+
       return<div>
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -5200,40 +5219,49 @@
           {stats.lastActivity&&<p className="text-sm text-gray-500">Dernière activité: {new Date(stats.lastActivity).toLocaleDateString('fr-FR')}</p>}
         </div>
 
-        {/* Stats principales */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
+        {/* Stats principales - Temps total en premier */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
+          <Card className="p-4 text-center bg-gradient-to-br from-blue-600/20 to-blue-800/20 border-blue-500/30">
+            <Icon name="Clock" size={24} className="mx-auto text-blue-400 mb-2"/>
+            <p className="text-2xl font-bold text-blue-400">{formatDuration(totalCourseTime)}</p>
+            <p className="text-xs text-gray-400">Temps total formation</p>
+          </Card>
           <Card className="p-4 text-center">
             <Icon name="BookOpen" size={24} className="mx-auto text-indigo-400 mb-2"/>
             <p className="text-2xl font-bold">{stats.completedCourses}<span className="text-base text-gray-500">/{stats.totalCourses}</span></p>
             <p className="text-xs text-gray-400">Cours terminés</p>
             {stats.inProgressCourses>0&&<p className="text-xs text-yellow-400 mt-1">{stats.inProgressCourses} en cours</p>}
           </Card>
+          {stats.totalPaths>0&&(
+            <Card className="p-4 text-center">
+              <Icon name="Route" size={24} className="mx-auto text-purple-400 mb-2"/>
+              <p className="text-2xl font-bold">{stats.completedPaths}<span className="text-base text-gray-500">/{stats.totalPaths}</span></p>
+              <p className="text-xs text-gray-400">Parcours terminés</p>
+              {stats.inProgressPaths>0&&<p className="text-xs text-yellow-400 mt-1">{stats.inProgressPaths} en cours</p>}
+            </Card>
+          )}
           <Card className="p-4 text-center">
-            <Icon name="Play" size={24} className="mx-auto text-blue-400 mb-2"/>
-            <p className="text-2xl font-bold">{stats.watchedVideos}<span className="text-base text-gray-500">/{stats.totalVideos}</span></p>
-            <p className="text-xs text-gray-400">Vidéos terminées</p>
-            {stats.inProgressVideos>0&&<p className="text-xs text-yellow-400 mt-1">{stats.inProgressVideos} en cours</p>}
-          </Card>
-          <Card className="p-4 text-center">
-            <Icon name="Clock" size={24} className="mx-auto text-purple-400 mb-2"/>
-            <p className="text-2xl font-bold">{formatDuration(stats.totalWatchTime)}</p>
-            <p className="text-xs text-gray-400">Temps vidéo</p>
+            <Icon name="Target" size={24} className="mx-auto text-green-400 mb-2"/>
+            <p className="text-2xl font-bold">{stats.totalCourses>0?Math.round((stats.completedCourses/stats.totalCourses)*100):0}%</p>
+            <p className="text-xs text-gray-400">Taux de complétion</p>
           </Card>
           <Card className="p-4 text-center">
             <Icon name="Package" size={24} className="mx-auto text-orange-400 mb-2"/>
             <p className="text-2xl font-bold">{stats.passedScorm}<span className="text-base text-gray-500">/{stats.totalScorm}</span></p>
             <p className="text-xs text-gray-400">SCORM réussis</p>
-            {stats.inProgressScorm>0&&<p className="text-xs text-yellow-400 mt-1">{stats.inProgressScorm} en cours</p>}
+            {stats.avgScormScore>0&&<p className="text-xs text-green-400 mt-1">Moy: {Math.round(stats.avgScormScore*100)}%</p>}
           </Card>
           <Card className="p-4 text-center">
-            <Icon name="HelpCircle" size={24} className="mx-auto text-green-400 mb-2"/>
-            <p className="text-2xl font-bold">{Math.round(stats.avgQuizScore)}%</p>
-            <p className="text-xs text-gray-400">Score quiz moy.</p>
+            <Icon name="HelpCircle" size={24} className="mx-auto text-purple-400 mb-2"/>
+            <p className="text-2xl font-bold">{stats.passedQuizzes}<span className="text-base text-gray-500">/{stats.totalQuizzes}</span></p>
+            <p className="text-xs text-gray-400">Quiz réussis</p>
+            {stats.avgQuizScore>0&&<p className="text-xs text-green-400 mt-1">Moy: {Math.round(stats.avgQuizScore)}%</p>}
           </Card>
           <Card className="p-4 text-center">
-            <Icon name="Activity" size={24} className="mx-auto text-cyan-400 mb-2"/>
-            <p className="text-2xl font-bold">{formatDuration(stats.totalSessionTime)}</p>
-            <p className="text-xs text-gray-400">Temps total LMS</p>
+            <Icon name="Play" size={24} className="mx-auto text-cyan-400 mb-2"/>
+            <p className="text-2xl font-bold">{stats.watchedVideos}<span className="text-base text-gray-500">/{stats.totalVideos}</span></p>
+            <p className="text-xs text-gray-400">Vidéos vues</p>
+            {stats.totalWatchTime>0&&<p className="text-xs text-blue-400 mt-1">{formatDuration(stats.totalWatchTime)}</p>}
           </Card>
         </div>
 
@@ -5241,6 +5269,7 @@
         <Tabs tabs={[
           {id:'overview',label:'Vue d\'ensemble',icon:'LayoutDashboard'},
           {id:'courses',label:'Mes cours',icon:'BookOpen'},
+          {id:'paths',label:'Mes parcours',icon:'Route'},
           {id:'videos',label:'Vidéos',icon:'Film'},
           {id:'scorm',label:'Modules SCORM',icon:'Package'},
           {id:'sessions',label:'Connexions',icon:'Clock'}
@@ -5303,6 +5332,53 @@
                       <td className="p-4"><div className="flex items-center gap-2"><div className="w-24"><ProgressBar percent={e.progress_percent||0} size="sm" showLabel={false}/></div><span className="text-sm font-medium">{e.progress_percent||0}%</span></div></td>
                       <td className="p-4 text-gray-400">{e.time_spent_seconds?formatDuration(e.time_spent_seconds):'-'}</td>
                       <td className="p-4 text-gray-400 text-sm">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+
+        {/* Détail des parcours */}
+        {activeTab==='paths'&&(
+          <Card>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-750"><tr>
+                  <th className="text-left p-4 font-medium text-gray-400">Parcours</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Statut</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Progression</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Temps passé</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Démarré le</th>
+                </tr></thead>
+                <tbody className="divide-y divide-gray-700">
+                  {pathEnrollments.length===0?<tr><td colSpan="5" className="p-8 text-center text-gray-500">Aucun parcours</td></tr>:pathEnrollments.map(p=>(
+                    <tr key={p.id} className="hover:bg-gray-750/50">
+                      <td className="p-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-purple-500/20 rounded-lg flex items-center justify-center">
+                            <Icon name="Route" size={18} className="text-purple-400"/>
+                          </div>
+                          <div>
+                            <span className="font-medium">{p.learning_paths?.title||'Parcours'}</span>
+                            {p.learning_paths?.description&&<p className="text-xs text-gray-500 truncate max-w-xs">{p.learning_paths.description}</p>}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="p-4">
+                        {p.progress_percent===100||p.status==='completed'?<span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">✓ Terminé</span>:
+                         p.progress_percent>0?<span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded text-xs">En cours</span>:
+                         <span className="px-2 py-1 bg-gray-500/20 text-gray-400 rounded text-xs">Non commencé</span>}
+                      </td>
+                      <td className="p-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-24"><ProgressBar percent={p.progress_percent||0} size="sm" showLabel={false}/></div>
+                          <span className="text-sm font-medium">{p.progress_percent||0}%</span>
+                        </div>
+                      </td>
+                      <td className="p-4 text-blue-400">{p.time_spent_seconds?formatDuration(p.time_spent_seconds):'-'}</td>
+                      <td className="p-4 text-gray-400 text-sm">{p.started_at?new Date(p.started_at).toLocaleDateString('fr-FR'):'-'}</td>
                     </tr>
                   ))}
                 </tbody>
