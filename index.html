@@ -149,25 +149,52 @@
           const{data:perms}=await supabase.from('role_permissions').select('permissions').eq('role',data?.role).single();
           setPermissions(perms?.permissions||{});
           return data;
-        }catch(e){console.error('Erreur:',e);return null;}
+        }catch(e){console.error('Erreur loadProfile:',e);return null;}
       },[]);
 
       useEffect(()=>{
         let mounted=true;
+        
+        // Timeout de sécurité : si le chargement prend plus de 10s, on arrête
+        const timeout=setTimeout(()=>{
+          if(mounted&&loading){
+            console.warn('Auth timeout - forçage fin de chargement');
+            setLoading(false);
+          }
+        },10000);
+        
         const init=async()=>{
           try{
-            const{data:{session}}=await supabase.auth.getSession();
-            if(mounted&&session?.user){setUser(session.user);await loadProfile(session.user.id);}
-          }catch(e){console.error(e);}
-          finally{if(mounted)setLoading(false);}
+            const{data:{session},error}=await supabase.auth.getSession();
+            if(error){
+              console.error('Erreur getSession:',error);
+              // Si erreur de session, on nettoie le localStorage
+              if(error.message?.includes('refresh_token')||error.message?.includes('invalid')){
+                console.warn('Session invalide, nettoyage...');
+                await supabase.auth.signOut();
+              }
+            }
+            if(mounted&&session?.user){
+              setUser(session.user);
+              await loadProfile(session.user.id);
+            }
+          }catch(e){
+            console.error('Erreur init auth:',e);
+          }finally{
+            clearTimeout(timeout);
+            if(mounted)setLoading(false);
+          }
         };
         init();
+        
         const{data:{subscription}}=supabase.auth.onAuthStateChange(async(event,session)=>{
           if(!mounted)return;
+          console.log('Auth event:',event);
           if(event==='SIGNED_IN'&&session?.user){setUser(session.user);await loadProfile(session.user.id);}
           else if(event==='SIGNED_OUT'){setUser(null);setProfile(null);setCenter(null);setPermissions({});setViewAs(null);}
+          else if(event==='TOKEN_REFRESHED'){console.log('Token rafraîchi');}
         });
-        return()=>{mounted=false;subscription.unsubscribe();};
+        return()=>{mounted=false;clearTimeout(timeout);subscription.unsubscribe();};
       },[loadProfile]);
 
       const signIn=async(email,password)=>{
@@ -3590,6 +3617,124 @@
         return{score,total,percent:total>0?Math.round(score/total*100):0};
       };
       
+      // === EXPORT/IMPORT EXCEL ===
+      const exportBankTemplate=()=>{
+        const wb=XLSX.utils.book_new();
+        const templateData=[
+          ['Question','Type','Catégorie','Thème','Sous-thème','Difficulté','Points','Temps(sec)','Réponse 1','Correct 1','Réponse 2','Correct 2','Réponse 3','Correct 3','Réponse 4','Correct 4','Feedback correct','Feedback incorrect'],
+          ['Quelle est la capitale de la France ?','single','Géographie','','','medium','1','0','Paris','TRUE','Lyon','FALSE','Marseille','FALSE','','','Bravo !','La bonne réponse était Paris'],
+          ['Quels sont des nombres premiers ?','multiple','Mathématiques','','','medium','2','30','2','TRUE','3','TRUE','4','FALSE','5','TRUE','',''],
+          ['Le soleil tourne autour de la terre','true_false','Sciences','','','easy','1','0','','FALSE','','','','','','','','La Terre tourne autour du Soleil']
+        ];
+        const ws=XLSX.utils.aoa_to_sheet(templateData);
+        ws['!cols']=[{wch:40},{wch:12},{wch:15},{wch:15},{wch:15},{wch:10},{wch:8},{wch:10},{wch:20},{wch:10},{wch:20},{wch:10},{wch:20},{wch:10},{wch:20},{wch:10},{wch:30},{wch:30}];
+        XLSX.utils.book_append_sheet(wb,ws,'Questions');
+        
+        const instructionsData=[
+          ['=== INSTRUCTIONS ==='],
+          [''],
+          ['Types disponibles: single, multiple, true_false, text, matching, ordering'],
+          [''],
+          ['Pour true_false: Réponse 1 = TRUE ou FALSE (la bonne réponse)'],
+          ['Pour text: Réponses = mots-clés acceptés'],
+          ['Pour matching: Réponse 1 = "gauche|droite", Réponse 2 = "gauche|droite"...'],
+          ['Pour ordering: Réponses dans l\'ordre correct'],
+          [''],
+          ['Difficultés: easy, medium, hard'],
+          ['Correct: TRUE ou FALSE']
+        ];
+        const ws2=XLSX.utils.aoa_to_sheet(instructionsData);
+        XLSX.utils.book_append_sheet(wb,ws2,'Instructions');
+        
+        XLSX.writeFile(wb,'template_banque_questions.xlsx');
+      };
+      
+      const exportBank=()=>{
+        if(bankQuestions.length===0){alert('Aucune question à exporter');return;}
+        const data=[['Question','Type','Catégorie','Thème','Sous-thème','Difficulté','Points','Temps','Réponse 1','Correct 1','Réponse 2','Correct 2','Réponse 3','Correct 3','Réponse 4','Correct 4','Feedback correct','Feedback incorrect']];
+        
+        bankQuestions.forEach(q=>{
+          const answers=q.question_bank_answers||[];
+          const row=[q.question_text,q.question_type,q.category||'',q.theme||'',q.sub_theme||'',q.difficulty||'medium',q.points||1,q.time_limit||0];
+          for(let i=0;i<4;i++){
+            if(answers[i]){
+              row.push(answers[i].answer_text,answers[i].is_correct?'TRUE':'FALSE');
+            }else{
+              row.push('','');
+            }
+          }
+          row.push(q.feedback_correct||'',q.feedback_incorrect||'');
+          data.push(row);
+        });
+        
+        const wb=XLSX.utils.book_new();
+        const ws=XLSX.utils.aoa_to_sheet(data);
+        XLSX.utils.book_append_sheet(wb,ws,'Banque');
+        XLSX.writeFile(wb,`banque_questions_${new Date().toISOString().split('T')[0]}.xlsx`);
+      };
+      
+      const importFromExcel=async(e)=>{
+        const file=e.target.files[0];
+        if(!file)return;
+        
+        const reader=new FileReader();
+        reader.onload=async(evt)=>{
+          try{
+            const data=new Uint8Array(evt.target.result);
+            const workbook=XLSX.read(data,{type:'array'});
+            const sheet=workbook.Sheets[workbook.SheetNames[0]];
+            const rows=XLSX.utils.sheet_to_json(sheet,{header:1});
+            
+            let imported=0;
+            for(let i=1;i<rows.length;i++){
+              const row=rows[i];
+              if(!row[0])continue;
+              
+              const questionData={
+                question_text:row[0],
+                question_type:row[1]||'single',
+                category:row[2]||null,
+                theme:row[3]||null,
+                sub_theme:row[4]||null,
+                difficulty:row[5]||'medium',
+                points:parseInt(row[6])||1,
+                time_limit:parseInt(row[7])||0,
+                feedback_correct:row[16]||null,
+                feedback_incorrect:row[17]||null
+              };
+              
+              const{data:q}=await supabase.from('question_bank').insert(questionData).select().single();
+              if(q){
+                const answers=[];
+                for(let j=0;j<4;j++){
+                  const ansText=row[8+j*2];
+                  const ansCorrect=row[9+j*2];
+                  if(ansText){
+                    answers.push({
+                      question_id:q.id,
+                      answer_text:String(ansText),
+                      is_correct:String(ansCorrect).toUpperCase()==='TRUE',
+                      sort_order:j
+                    });
+                  }
+                }
+                if(answers.length>0){
+                  await supabase.from('question_bank_answers').insert(answers);
+                }
+                imported++;
+              }
+            }
+            
+            alert(`${imported} question(s) importée(s)`);
+            load();
+          }catch(err){
+            alert('Erreur import: '+err.message);
+          }
+        };
+        reader.readAsArrayBuffer(file);
+        e.target.value='';
+      };
+      
       // Rendu des réponses
       const renderAnswers=(q)=>{
         const answers=q.question_bank_answers||q.quiz_answers||[];
@@ -3607,6 +3752,18 @@
       return<div>
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">Quiz & Banque de questions</h1>
+          {activeTab==='questions'&&(
+            <div className="flex gap-2">
+              <Button variant="secondary" size="sm" icon="Download" onClick={exportBankTemplate}>Template</Button>
+              <Button variant="secondary" size="sm" icon="FileDown" onClick={exportBank}>Exporter</Button>
+              <label className="cursor-pointer">
+                <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition">
+                  <Icon name="Upload" size={16}/>Importer
+                </span>
+                <input type="file" accept=".xlsx,.xls" className="hidden" onChange={importFromExcel}/>
+              </label>
+            </div>
+          )}
         </div>
         
         <Tabs tabs={[
