@@ -610,7 +610,7 @@
 
       // Ouvrir le détail d'un apprenant
       const openLearnerDetail=async(learnerId,learnerName)=>{
-        const{data}=await supabase.from('scorm_progress').select(`*,scorm_modules:module_id(id,title,category),enrollments:enrollment_id(playlists:playlist_id(title))`).eq('learner_id',learnerId).order('updated_at',{ascending:false});
+        const{data}=await supabase.from('scorm_progress').select('*').eq('learner_id',learnerId).order('last_accessed_at',{ascending:false});
         setLearnerHistory(data||[]);
         setSelectedLearner({id:learnerId,name:learnerName});
       };
@@ -876,7 +876,7 @@
           setRecentActivity(filteredRecent.slice(0,5));
           
           // Activité SCORM récente
-          const{data:scormRecent}=await supabase.from('scorm_progress').select('*,profiles:learner_id(first_name,last_name),scorm_modules:module_id(title)').order('updated_at',{ascending:false}).limit(5);
+          const{data:scormRecent}=await supabase.from('scorm_progress').select('*').order('last_accessed_at',{ascending:false}).limit(5);
           setRecentScorm(scormRecent||[]);
           
           // Badges récemment obtenus (filtrés par centre)
@@ -3715,7 +3715,7 @@
         setEnrollments(data||[]);
         
         // Charger toutes les progressions SCORM de l'apprenant
-        const{data:scorm}=await supabase.from('scorm_progress').select('*,scorm_modules:module_id(title,category),enrollments:enrollment_id(playlists:playlist_id(title))').eq('learner_id',user.id).order('updated_at',{ascending:false});
+        const{data:scorm}=await supabase.from('scorm_progress').select('*').eq('learner_id',user.id).order('last_accessed_at',{ascending:false});
         setAllMyScorm(scorm||[]);
         
         // Calculer les stats SCORM personnelles
@@ -3763,10 +3763,23 @@
         setVideoProgress(progressMap);
         
         // Charger le quiz du cours
-        const{data:quiz}=await supabase.from('quizzes').select('*,quiz_questions(*,quiz_answers(*))').eq('playlist_id',enrollment.playlist_id).single();
-        if(quiz){
+        const{data:quiz,error:quizError}=await supabase.from('quizzes').select('*').eq('playlist_id',enrollment.playlist_id).maybeSingle();
+        if(quiz&&!quizError){
+          // Charger les questions et réponses séparément
+          const{data:questions}=await supabase.from('quiz_questions').select('*').eq('quiz_id',quiz.id).order('sort_order');
+          const questionIds=(questions||[]).map(q=>q.id);
+          let answers=[];
+          if(questionIds.length>0){
+            const{data:ans}=await supabase.from('quiz_answers').select('*').in('question_id',questionIds);
+            answers=ans||[];
+          }
+          // Associer les réponses aux questions
+          const questionsWithAnswers=(questions||[]).map(q=>({
+            ...q,
+            quiz_answers:answers.filter(a=>a.question_id===q.id)
+          }));
           setCourseQuiz(quiz);
-          setQuizQuestions(quiz.quiz_questions||[]);
+          setQuizQuestions(questionsWithAnswers);
           // Charger les tentatives précédentes
           const{data:attempts}=await supabase.from('quiz_attempts').select('*').eq('quiz_id',quiz.id).eq('learner_id',user.id).order('created_at',{ascending:false});
           setQuizAttempts(attempts||[]);
@@ -5115,11 +5128,11 @@
         setVideoProgress(videoProgressData);
         
         // Charger la progression SCORM
-        const{data:sp}=await supabase.from('scorm_progress').select('*,scorm_modules:module_id(title,category),enrollments:enrollment_id(playlists:playlist_id(title))').eq('learner_id',user.id);
+        const{data:sp}=await supabase.from('scorm_progress').select('*').eq('learner_id',user.id);
         setScormProgress(sp||[]);
         
         // Charger les tentatives de quiz
-        const{data:qa}=await supabase.from('quiz_attempts').select('*,quizzes:quiz_id(title,passing_score)').eq('learner_id',user.id);
+        const{data:qa}=await supabase.from('quiz_attempts').select('*').eq('learner_id',user.id);
         setQuizAttempts(qa||[]);
         
         // Charger les sessions depuis localStorage
