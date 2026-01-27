@@ -3257,11 +3257,12 @@
       // Charger les données existantes AVANT d'initialiser l'API
       useEffect(()=>{
         const loadProgress=async()=>{
-          console.log('SCORM: Loading existing progress for module', module.id);
+          console.log('SCORM: Loading existing progress for module', module.id, 'learner', user.id);
+          // La contrainte unique est sur (module_id, learner_id)
           const{data,error}=await supabase.from('scorm_progress')
             .select('*')
-            .eq('enrollment_id',enrollmentId)
             .eq('module_id',module.id)
+            .eq('learner_id',user.id)
             .maybeSingle();
           
           if(error){
@@ -3271,7 +3272,7 @@
           if(data){
             console.log('SCORM: Found existing progress', data);
             setSavedCmiData(data.cmi_data||{});
-            setStatus(data.completion_status||'not attempted');
+            setStatus(data.completion_status||'unknown');
             setScore(data.score_scaled);
           }else{
             console.log('SCORM: No existing progress found');
@@ -3280,7 +3281,7 @@
           setInitialDataLoaded(true);
         };
         loadProgress();
-      },[enrollmentId,module.id]);
+      },[module.id,user.id]);
       
       // Initialiser l'API SCORM seulement après le chargement des données
       useEffect(()=>{
@@ -3356,14 +3357,18 @@
                 const lessonStatus=SCORM12_API._data['cmi.core.lesson_status']||'not attempted';
                 const scoreRaw=SCORM12_API._data['cmi.core.score.raw'];
                 const scoreScaled=scoreRaw?parseFloat(scoreRaw)/100:null;
+                const sessionTime=SCORM12_API._data['cmi.core.session_time']||null;
+                const totalTime=SCORM12_API._data['cmi.core.total_time']||null;
+                const location=SCORM12_API._data['cmi.core.lesson_location']||null;
+                const suspendData=SCORM12_API._data['cmi.suspend_data']||null;
                 
-                console.log('SCORM Saving:', {enrollmentId, moduleId:module.id, lessonStatus, scoreScaled});
+                console.log('SCORM Saving:', {moduleId:module.id, lessonStatus, scoreScaled, learnerId:user.id});
                 
-                // Pattern select-then-insert/update pour éviter les erreurs
+                // La contrainte unique est sur (module_id, learner_id)
                 const{data:existing,error:selectError}=await supabase.from('scorm_progress')
                   .select('id')
-                  .eq('enrollment_id',enrollmentId)
                   .eq('module_id',module.id)
+                  .eq('learner_id',user.id)
                   .maybeSingle();
                 
                 if(selectError){
@@ -3371,14 +3376,21 @@
                 }
                 
                 const payload={
-                  enrollment_id:enrollmentId,
                   module_id:module.id,
                   learner_id:user.id,
+                  enrollment_id:enrollmentId,
                   completion_status:lessonStatus,
-                  success_status:lessonStatus==='passed'?'passed':lessonStatus==='failed'?'failed':null,
+                  success_status:lessonStatus==='passed'?'passed':lessonStatus==='failed'?'failed':'unknown',
                   score_scaled:scoreScaled,
+                  score_raw:scoreRaw?parseFloat(scoreRaw):null,
+                  score_min:SCORM12_API._data['cmi.core.score.min']?parseFloat(SCORM12_API._data['cmi.core.score.min']):null,
+                  score_max:SCORM12_API._data['cmi.core.score.max']?parseFloat(SCORM12_API._data['cmi.core.score.max']):null,
+                  session_time:sessionTime,
+                  total_time:totalTime,
+                  location:location,
+                  suspend_data:suspendData,
                   cmi_data:SCORM12_API._data,
-                  updated_at:new Date().toISOString()
+                  last_accessed_at:new Date().toISOString()
                 };
                 
                 let result;
@@ -3476,17 +3488,22 @@
             console.log('SCORM 2004: Commit');
             const saveData=async()=>{
               try{
-                const completionStatus=SCORM2004_API._data['cmi.completion_status']||'not attempted';
+                const completionStatus=SCORM2004_API._data['cmi.completion_status']||'unknown';
                 const successStatus=SCORM2004_API._data['cmi.success_status']||'unknown';
                 const scoreScaled=SCORM2004_API._data['cmi.score.scaled']?parseFloat(SCORM2004_API._data['cmi.score.scaled']):null;
+                const scoreRaw=SCORM2004_API._data['cmi.score.raw'];
+                const sessionTime=SCORM2004_API._data['cmi.session_time']||null;
+                const totalTime=SCORM2004_API._data['cmi.total_time']||null;
+                const location=SCORM2004_API._data['cmi.location']||null;
+                const suspendData=SCORM2004_API._data['cmi.suspend_data']||null;
                 
-                console.log('SCORM 2004 Saving:', {enrollmentId, moduleId:module.id, completionStatus, scoreScaled});
+                console.log('SCORM 2004 Saving:', {moduleId:module.id, completionStatus, scoreScaled, learnerId:user.id});
                 
-                // Pattern select-then-insert/update pour éviter les erreurs
+                // La contrainte unique est sur (module_id, learner_id)
                 const{data:existing,error:selectError}=await supabase.from('scorm_progress')
                   .select('id')
-                  .eq('enrollment_id',enrollmentId)
                   .eq('module_id',module.id)
+                  .eq('learner_id',user.id)
                   .maybeSingle();
                 
                 if(selectError){
@@ -3494,14 +3511,21 @@
                 }
                 
                 const payload={
-                  enrollment_id:enrollmentId,
                   module_id:module.id,
                   learner_id:user.id,
+                  enrollment_id:enrollmentId,
                   completion_status:completionStatus,
-                  success_status:successStatus!=='unknown'?successStatus:null,
+                  success_status:successStatus,
                   score_scaled:scoreScaled,
+                  score_raw:scoreRaw?parseFloat(scoreRaw):null,
+                  score_min:SCORM2004_API._data['cmi.score.min']?parseFloat(SCORM2004_API._data['cmi.score.min']):null,
+                  score_max:SCORM2004_API._data['cmi.score.max']?parseFloat(SCORM2004_API._data['cmi.score.max']):null,
+                  session_time:sessionTime,
+                  total_time:totalTime,
+                  location:location,
+                  suspend_data:suspendData,
                   cmi_data:SCORM2004_API._data,
-                  updated_at:new Date().toISOString()
+                  last_accessed_at:new Date().toISOString()
                 };
                 
                 let result;
