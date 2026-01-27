@@ -229,9 +229,42 @@
     // Score Badge pour SCORM
     const ScoreBadge=({score,showLabel=true})=>{
       if(score===null||score===undefined)return<span className="text-gray-500 text-sm">—</span>;
-      const percent=Math.round(score*100);
+      // Détecter si le score est en format 0-1 ou 0-100
+      let percent;
+      if(score>1){
+        // Score déjà en pourcentage (ex: 90)
+        percent=Math.round(score);
+      }else{
+        // Score en format décimal (ex: 0.9)
+        percent=Math.round(score*100);
+      }
       const color=percent>=70?'text-green-400':percent>=50?'text-yellow-400':'text-red-400';
-      return<span className={`font-semibold ${color}`}>{percent}%{showLabel&&' score'}</span>;
+      return<span className={`font-semibold ${color}`}>{percent}%</span>;
+    };
+    
+    // Fonction pour parser le temps SCORM
+    const parseScormTime=(timeStr)=>{
+      if(!timeStr)return 0;
+      // Format SCORM 1.2: HH:MM:SS ou HHHH:MM:SS.SS
+      if(timeStr.includes(':')){
+        const parts=timeStr.split(':');
+        const h=parseInt(parts[0])||0;
+        const m=parseInt(parts[1])||0;
+        const s=parseFloat(parts[2])||0;
+        return h*3600+m*60+Math.round(s);
+      }
+      // Format SCORM 2004: PT1H30M45S
+      if(timeStr.startsWith('PT')){
+        let seconds=0;
+        const hMatch=timeStr.match(/(\d+)H/);
+        const mMatch=timeStr.match(/(\d+)M/);
+        const sMatch=timeStr.match(/(\d+(?:\.\d+)?)S/);
+        if(hMatch)seconds+=parseInt(hMatch[1])*3600;
+        if(mMatch)seconds+=parseInt(mMatch[1])*60;
+        if(sMatch)seconds+=Math.round(parseFloat(sMatch[1]));
+        return seconds;
+      }
+      return 0;
     };
     
     // Status Badge pour SCORM
@@ -5224,17 +5257,25 @@
         const completedScorm=scormProgressData.filter(s=>s.completion_status==='completed'||s.completion_status==='passed').length;
         const inProgressScorm=scormProgressData.filter(s=>s.completion_status==='incomplete'||s.completion_status==='browsed').length;
         const passedScorm=scormProgressData.filter(s=>s.completion_status==='passed'||s.success_status==='passed').length;
-        const scormWithScore=scormProgressData.filter(s=>s.score_scaled!==null);
-        const avgScormScore=scormWithScore.length>0?scormWithScore.reduce((a,s)=>a+(s.score_scaled||0),0)/scormWithScore.length:0;
+        const scormWithScore=scormProgressData.filter(s=>s.score_scaled!==null&&s.score_scaled!==undefined);
+        // Calculer le score moyen en gérant les deux formats (0-1 ou 0-100)
+        const avgScormScore=scormWithScore.length>0?scormWithScore.reduce((a,s)=>{
+          const score=s.score_scaled||0;
+          return a+(score>1?score:score*100);
+        },0)/scormWithScore.length:0;
+        
+        // Calculer le temps total passé sur les SCORM
+        const totalScormTime=scormProgressData.reduce((a,s)=>a+parseScormTime(s.total_time),0);
         
         const quizzesTaken=[...new Set(quizAttemptsData.map(q=>q.quiz_id))].length;
         const passedQuizzes=quizAttemptsData.filter(q=>q.passed).length;
         const avgQuizScore=quizAttemptsData.length>0?quizAttemptsData.reduce((a,q)=>a+(q.score_percent||0),0)/quizAttemptsData.length:0;
         
-        // Temps total LMS = temps sur les cours (prioritaire) + sessions localStorage (fallback)
+        // Temps total = temps cours + temps SCORM (si pas déjà inclus)
         const sessionsWithDuration=localSessions.filter(s=>s.duration);
         const localSessionTime=sessionsWithDuration.reduce((a,s)=>a+(s.duration||0),0);
         const dbSessionTime=(courseSessions||[]).reduce((a,s)=>a+(s.duration_seconds||0),0);
+        // Prioriser: temps des cours > temps DB > temps local
         const totalSessionTime=totalCourseTime>0?totalCourseTime:(dbSessionTime>0?dbSessionTime:localSessionTime);
         const sessionsCount=(courseSessions||[]).length||localSessions.length;
         
@@ -5252,10 +5293,10 @@
         setPathEnrollments(pathEnr||[]);
         
         setStats({
-          totalCourses,completedCourses,inProgressCourses,
+          totalCourses,completedCourses,inProgressCourses,totalCourseTime,
           totalPaths:pathStats.total,completedPaths:pathStats.completed,inProgressPaths:pathStats.inProgress,pathTime:pathStats.totalTime,
           totalVideos,watchedVideos,inProgressVideos,totalWatchTime,
-          totalScorm,completedScorm,inProgressScorm,passedScorm,avgScormScore,
+          totalScorm,completedScorm,inProgressScorm,passedScorm,avgScormScore,totalScormTime,
           totalQuizzes:quizzesTaken,passedQuizzes,avgQuizScore,
           totalSessionTime,sessionsCount,lastActivity
         });
@@ -5347,9 +5388,6 @@
 
       if(loading)return<Loading/>;
 
-      // Calculer le temps total cours (inclut tout: vidéos, SCORM, quiz, etc.)
-      const totalCourseTime=enrollments.reduce((a,e)=>a+(e.time_spent_seconds||0),0);
-
       return<div>
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -5363,8 +5401,9 @@
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
           <Card className="p-4 text-center bg-gradient-to-br from-blue-600/20 to-blue-800/20 border-blue-500/30">
             <Icon name="Clock" size={24} className="mx-auto text-blue-400 mb-2"/>
-            <p className="text-2xl font-bold text-blue-400">{formatDuration(totalCourseTime)}</p>
+            <p className="text-2xl font-bold text-blue-400">{formatDuration(stats.totalCourseTime||0)}</p>
             <p className="text-xs text-gray-400">Temps total formation</p>
+            {stats.totalScormTime>0&&<p className="text-xs text-orange-400 mt-1">dont {formatDuration(stats.totalScormTime)} SCORM</p>}
           </Card>
           <Card className="p-4 text-center">
             <Icon name="BookOpen" size={24} className="mx-auto text-indigo-400 mb-2"/>
@@ -5389,7 +5428,7 @@
             <Icon name="Package" size={24} className="mx-auto text-orange-400 mb-2"/>
             <p className="text-2xl font-bold">{stats.passedScorm}<span className="text-base text-gray-500">/{stats.totalScorm}</span></p>
             <p className="text-xs text-gray-400">SCORM réussis</p>
-            {stats.avgScormScore>0&&<p className="text-xs text-green-400 mt-1">Moy: {Math.round(stats.avgScormScore*100)}%</p>}
+            {stats.avgScormScore>0&&<p className="text-xs text-green-400 mt-1">Moy: {Math.round(stats.avgScormScore)}%</p>}
           </Card>
           <Card className="p-4 text-center">
             <Icon name="HelpCircle" size={24} className="mx-auto text-purple-400 mb-2"/>
@@ -5576,38 +5615,14 @@
                 </tr></thead>
                 <tbody className="divide-y divide-gray-700">
                   {scormProgress.length===0?<tr><td colSpan="6" className="p-8 text-center text-gray-500">Aucun module SCORM</td></tr>:scormProgress.map(s=>{
-                    // Calculer le temps depuis total_time SCORM (format HH:MM:SS ou PTXHXMXS)
-                    const parseScormTime=(timeStr)=>{
-                      if(!timeStr)return 0;
-                      // Format SCORM 1.2: HH:MM:SS ou HHHH:MM:SS.SS
-                      if(timeStr.includes(':')){
-                        const parts=timeStr.split(':');
-                        const h=parseInt(parts[0])||0;
-                        const m=parseInt(parts[1])||0;
-                        const s=parseFloat(parts[2])||0;
-                        return h*3600+m*60+Math.round(s);
-                      }
-                      // Format SCORM 2004: PT1H30M45S
-                      if(timeStr.startsWith('PT')){
-                        let seconds=0;
-                        const hMatch=timeStr.match(/(\d+)H/);
-                        const mMatch=timeStr.match(/(\d+)M/);
-                        const sMatch=timeStr.match(/(\d+(?:\.\d+)?)S/);
-                        if(hMatch)seconds+=parseInt(hMatch[1])*3600;
-                        if(mMatch)seconds+=parseInt(mMatch[1])*60;
-                        if(sMatch)seconds+=Math.round(parseFloat(sMatch[1]));
-                        return seconds;
-                      }
-                      return 0;
-                    };
-                    const timeSeconds=parseScormTime(s.total_time);
+                    const timeSeconds=parseScormTime(s.total_time)||parseScormTime(s.session_time)||0;
                     return(
                     <tr key={s.id}>
                       <td className="p-4"><div className="flex items-center gap-3"><div className="w-8 h-8 bg-orange-500/20 rounded flex items-center justify-center"><Icon name="Package" size={16} className="text-orange-400"/></div><div><p className="font-medium">{s.scorm_modules?.title||'Module SCORM'}</p>{s.scorm_modules?.category&&<p className="text-xs text-gray-500">{s.scorm_modules.category}</p>}</div></div></td>
                       <td className="p-4 text-gray-400 text-sm">{s.enrollments?.playlists?.title||'-'}</td>
                       <td className="p-4"><ScormStatusBadge status={s.completion_status}/></td>
                       <td className="p-4"><ScoreBadge score={s.score_scaled}/></td>
-                      <td className="p-4 text-blue-400">{timeSeconds>0?formatDuration(timeSeconds):(s.session_time?formatDuration(parseScormTime(s.session_time)):'-')}</td>
+                      <td className="p-4 text-blue-400">{timeSeconds>0?formatDuration(timeSeconds):'-'}</td>
                       <td className="p-4 text-gray-400 text-sm">{s.last_accessed_at?new Date(s.last_accessed_at).toLocaleDateString('fr-FR'):'-'}</td>
                     </tr>
                   );})}
@@ -5844,78 +5859,6 @@
                   }}
                 >
                   Exporter en Excel
-                </Button>
-
-                <Button
-                  icon="FileText"
-                  variant="secondary"
-                  onClick={()=>{
-                    try{
-                    // Génération d'un rapport HTML téléchargeable
-                    var formatTime=function(s){
-                      if(!s)return '-';
-                      var h=Math.floor(s/3600);
-                      var m=Math.floor((s%3600)/60);
-                      return h>0?(h+'h '+m+'min'):(m+'min');
-                    };
-                    var escapeHtml=function(str){return (str||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')};
-                    
-                    var coursesRows=enrollments.map(function(e){return '<tr><td>'+escapeHtml(e.playlists?.title)+'</td><td>'+(e.status||'')+'</td><td>'+(e.progress_percent||0)+'%</td><td>'+formatTime(e.time_spent_seconds)+'</td></tr>'}).join('');
-                    var pathsRows=pathEnrollments.map(function(p){return '<tr><td>'+escapeHtml(p.learning_paths?.title)+'</td><td>'+(p.progress_percent||0)+'%</td><td>'+formatTime(p.time_spent_seconds)+'</td></tr>'}).join('');
-                    var scormRows=scormProgress.map(function(s){return '<tr><td>'+escapeHtml(s.scorm_modules?.title)+'</td><td>'+(s.completion_status||'')+'</td><td>'+(s.score_scaled?Math.round(s.score_scaled*100)+'%':'-')+'</td><td>'+(s.total_time||'-')+'</td></tr>'}).join('');
-                    
-                    var html='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rapport de progression - '+(profile?.first_name||'')+' '+(profile?.last_name||'')+'</title>';
-                    html+='<style>body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;background:#fff;color:#333;}';
-                    html+='h1{color:#4f46e5;border-bottom:2px solid #4f46e5;padding-bottom:10px;}';
-                    html+='h2{color:#6366f1;margin-top:30px;}';
-                    html+='table{width:100%;border-collapse:collapse;margin:15px 0;}';
-                    html+='th,td{border:1px solid #ddd;padding:8px;text-align:left;}';
-                    html+='th{background:#f3f4f6;}';
-                    html+='.stats{display:flex;gap:20px;flex-wrap:wrap;margin:20px 0;}';
-                    html+='.stat{background:#f9fafb;padding:15px;border-radius:8px;min-width:150px;text-align:center;}';
-                    html+='.stat-value{font-size:24px;font-weight:bold;color:#4f46e5;}';
-                    html+='.stat-label{font-size:12px;color:#666;margin-top:5px;}';
-                    html+='.footer{margin-top:40px;text-align:center;color:#666;font-size:12px;border-top:1px solid #ddd;padding-top:20px;}';
-                    html+='@media print{body{padding:20px;}}</style></head><body>';
-                    html+='<h1>Rapport de progression</h1>';
-                    html+='<p><strong>Apprenant:</strong> '+(profile?.first_name||'')+' '+(profile?.last_name||'')+' ('+user.email+')</p>';
-                    html+='<p><strong>Date du rapport:</strong> '+new Date().toLocaleDateString('fr-FR')+'</p>';
-                    html+='<h2>Statistiques globales</h2>';
-                    html+='<div class="stats">';
-                    html+='<div class="stat"><div class="stat-value">'+formatTime(stats.totalSessionTime)+'</div><div class="stat-label">Temps total</div></div>';
-                    html+='<div class="stat"><div class="stat-value">'+stats.completedCourses+'/'+stats.totalCourses+'</div><div class="stat-label">Cours termines</div></div>';
-                    html+='<div class="stat"><div class="stat-value">'+stats.passedScorm+'/'+stats.totalScorm+'</div><div class="stat-label">SCORM reussis</div></div>';
-                    html+='<div class="stat"><div class="stat-value">'+Math.round(stats.avgScormScore*100)+'%</div><div class="stat-label">Score SCORM moyen</div></div>';
-                    html+='</div>';
-                    html+='<h2>Mes cours ('+enrollments.length+')</h2>';
-                    html+='<table><tr><th>Cours</th><th>Statut</th><th>Progression</th><th>Temps</th></tr>'+coursesRows+'</table>';
-                    if(pathEnrollments.length>0){
-                      html+='<h2>Mes parcours ('+pathEnrollments.length+')</h2>';
-                      html+='<table><tr><th>Parcours</th><th>Progression</th><th>Temps</th></tr>'+pathsRows+'</table>';
-                    }
-                    html+='<h2>Modules SCORM ('+scormProgress.length+')</h2>';
-                    html+='<table><tr><th>Module</th><th>Statut</th><th>Score</th><th>Temps</th></tr>'+scormRows+'</table>';
-                    html+='<div class="footer"><p>Genere depuis CRPro LMS - '+new Date().toLocaleDateString('fr-FR')+' '+new Date().toLocaleTimeString('fr-FR')+'</p>';
-                    html+='<p style="margin-top:10px;font-size:11px;">Pour imprimer: ouvrez ce fichier dans votre navigateur puis Ctrl+P (ou Cmd+P sur Mac)</p></div>';
-                    html+='</body></html>';
-                    
-                    var blob=new Blob([html],{type:'text/html;charset=utf-8'});
-                    var filename='rapport-progression-'+user.email.replace('@','_').replace(/[^a-zA-Z0-9_.-]/g,'_')+'-'+new Date().toISOString().slice(0,10)+'.html';
-                    var url=URL.createObjectURL(blob);
-                    var a=document.createElement('a');
-                    a.style.display='none';
-                    a.href=url;
-                    a.download=filename;
-                    document.body.appendChild(a);
-                    a.click();
-                    setTimeout(function(){
-                      document.body.removeChild(a);
-                      URL.revokeObjectURL(url);
-                    },100);
-                    }catch(err){console.error('Export HTML error:',err);}
-                  }}
-                >
-                  Exporter en HTML
                 </Button>
               </div>
               
