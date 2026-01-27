@@ -3360,11 +3360,15 @@
                 console.log('SCORM Saving:', {enrollmentId, moduleId:module.id, lessonStatus, scoreScaled});
                 
                 // Pattern select-then-insert/update pour éviter les erreurs
-                const{data:existing}=await supabase.from('scorm_progress')
+                const{data:existing,error:selectError}=await supabase.from('scorm_progress')
                   .select('id')
                   .eq('enrollment_id',enrollmentId)
                   .eq('module_id',module.id)
-                  .single();
+                  .maybeSingle();
+                
+                if(selectError){
+                  console.error('SCORM Select Error:', selectError);
+                }
                 
                 const payload={
                   enrollment_id:enrollmentId,
@@ -3378,9 +3382,11 @@
                 };
                 
                 let result;
-                if(existing){
+                if(existing?.id){
+                  console.log('SCORM: Updating existing record', existing.id);
                   result=await supabase.from('scorm_progress').update(payload).eq('id',existing.id);
                 }else{
+                  console.log('SCORM: Inserting new record');
                   result=await supabase.from('scorm_progress').insert(payload);
                 }
                 
@@ -3477,11 +3483,15 @@
                 console.log('SCORM 2004 Saving:', {enrollmentId, moduleId:module.id, completionStatus, scoreScaled});
                 
                 // Pattern select-then-insert/update pour éviter les erreurs
-                const{data:existing}=await supabase.from('scorm_progress')
+                const{data:existing,error:selectError}=await supabase.from('scorm_progress')
                   .select('id')
                   .eq('enrollment_id',enrollmentId)
                   .eq('module_id',module.id)
-                  .single();
+                  .maybeSingle();
+                
+                if(selectError){
+                  console.error('SCORM 2004 Select Error:', selectError);
+                }
                 
                 const payload={
                   enrollment_id:enrollmentId,
@@ -3495,9 +3505,11 @@
                 };
                 
                 let result;
-                if(existing){
+                if(existing?.id){
+                  console.log('SCORM 2004: Updating existing record', existing.id);
                   result=await supabase.from('scorm_progress').update(payload).eq('id',existing.id);
                 }else{
+                  console.log('SCORM 2004: Inserting new record');
                   result=await supabase.from('scorm_progress').insert(payload);
                 }
                 
