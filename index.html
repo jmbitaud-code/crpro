@@ -3206,7 +3206,6 @@
           default:
             return{...base,answers:[{text:'',is_correct:false},{text:'',is_correct:false}]};
         }
-        }
       };
       
       const[newQuestion,setNewQuestion]=useState(getEmptyQuestion());
@@ -3906,7 +3905,7 @@
           if(q.theme)byTheme[q.theme]=(byTheme[q.theme]||0)+1;
           byDifficulty[q.difficulty||'medium']++;
         });
-        return{total:bankQuestions.length,byCategory,byDifficulty};
+        return{total:bankQuestions.length,byCategory,byTheme,byDifficulty};
       },[bankQuestions]);
 
       if(!can('manage_playlists')&&profile?.role!=='trainer')return<Empty icon="Lock" title="Accès refusé"/>;
