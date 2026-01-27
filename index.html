@@ -5738,177 +5738,154 @@
 
             {/* Boutons d'export */}
             <Card className="p-6">
-              <h4 className="font-semibold mb-4">Télécharger vos données</h4>
+              <h4 className="font-semibold mb-4">Telecharger vos donnees</h4>
               <div className="flex flex-wrap gap-4">
                 <Button
-                  icon="FileJson"
-                  onClick={()=>{
-                    const data={
-                      exported_at:new Date().toISOString(),
-                      user:{
-                        id:user.id,
-                        email:user.email,
-                        profile:profile
-                      },
-                      enrollments:enrollments.map(e=>({
-                        course:e.playlists?.title,
-                        status:e.status,
-                        progress:e.progress_percent,
-                        time_spent_seconds:e.time_spent_seconds,
-                        enrolled_at:e.created_at
-                      })),
-                      path_enrollments:pathEnrollments.map(p=>({
-                        path:p.learning_paths?.title,
-                        progress:p.progress_percent,
-                        time_spent_seconds:p.time_spent_seconds,
-                        started_at:p.started_at
-                      })),
-                      video_progress:videoProgress.map(v=>({
-                        video:v.playlist_videos?.videos?.title,
-                        completed:v.is_completed,
-                        watch_time_seconds:v.watch_time_seconds,
-                        last_position:v.last_position_seconds,
-                        updated_at:v.updated_at
-                      })),
-                      scorm_progress:scormProgress.map(s=>({
-                        module:s.scorm_modules?.title,
-                        course:s.enrollments?.playlists?.title,
-                        status:s.completion_status,
-                        success:s.success_status,
-                        score:s.score_scaled?Math.round(s.score_scaled*100)+'%':null,
-                        total_time:s.total_time,
-                        last_accessed:s.last_accessed_at
-                      })),
-                      quiz_attempts:quizAttempts.map(q=>({
-                        quiz:q.quizzes?.title,
-                        score:q.score_percent,
-                        passed:q.passed,
-                        attempted_at:q.created_at
-                      })),
-                      sessions:sessions.map(s=>({
-                        start:s.start,
-                        end:s.end,
-                        duration_seconds:s.duration
-                      }))
-                    };
-                    try{
-                      const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-                      const url=URL.createObjectURL(blob);
-                      const a=document.createElement('a');
-                      a.href=url;
-                      a.download=`mes-donnees-${user.email.replace('@','_')}-${new Date().toISOString().slice(0,10)}.json`;
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                      setTimeout(()=>URL.revokeObjectURL(url),1000);
-                    }catch(err){console.error('Export error:',err);}
-                  }}
-                >
-                  Exporter en JSON
-                </Button>
-
-                <Button
                   icon="FileSpreadsheet"
-                  variant="secondary"
                   onClick={()=>{
                     try{
-                    // Export CSV multi-feuilles
-                    const formatDate=(d)=>d?new Date(d).toLocaleDateString('fr-FR'):'';
-                    
-                    // Feuille Cours
-                    let csv='=== MES COURS ===\n';
-                    csv+='Cours;Statut;Progression;Temps passe;Date inscription\n';
-                    enrollments.forEach(e=>{
-                      const time=e.time_spent_seconds?Math.round(e.time_spent_seconds/60)+' min':'';
-                      csv+=`"${(e.playlists?.title||'').replace(/"/g,"'")}";${e.status||''};${e.progress_percent||0}%;${time};${formatDate(e.created_at)}\n`;
-                    });
-                    
-                    // Feuille Parcours
-                    csv+='\n=== MES PARCOURS ===\n';
-                    csv+='Parcours;Progression;Temps passe;Date demarrage\n';
-                    pathEnrollments.forEach(p=>{
-                      const time=p.time_spent_seconds?Math.round(p.time_spent_seconds/60)+' min':'';
-                      csv+=`"${(p.learning_paths?.title||'').replace(/"/g,"'")}";${p.progress_percent||0}%;${time};${formatDate(p.started_at)}\n`;
-                    });
-                    
-                    // Feuille Videos
-                    csv+='\n=== MES VIDEOS ===\n';
-                    csv+='Video;Terminee;Temps visionne;Derniere vue\n';
-                    videoProgress.forEach(v=>{
-                      const time=v.watch_time_seconds?Math.round(v.watch_time_seconds/60)+' min':'';
-                      csv+=`"${(v.playlist_videos?.videos?.title||'').replace(/"/g,"'")}";${v.is_completed?'Oui':'Non'};${time};${formatDate(v.updated_at)}\n`;
-                    });
-                    
-                    // Feuille SCORM
-                    csv+='\n=== MES MODULES SCORM ===\n';
-                    csv+='Module;Cours;Statut;Score;Temps;Date\n';
-                    scormProgress.forEach(s=>{
-                      const score=s.score_scaled?Math.round(s.score_scaled*100)+'%':'';
-                      csv+=`"${(s.scorm_modules?.title||'').replace(/"/g,"'")}";${(s.enrollments?.playlists?.title||'').replace(/"/g,"'")};${s.completion_status||''};${score};${s.total_time||''};${formatDate(s.last_accessed_at)}\n`;
-                    });
-                    
-                    // Feuille Quiz
-                    csv+='\n=== MES QUIZ ===\n';
-                    csv+='Quiz;Score;Reussi;Date\n';
-                    quizAttempts.forEach(q=>{
-                      csv+=`"${(q.quizzes?.title||'').replace(/"/g,"'")}";${q.score_percent||0}%;${q.passed?'Oui':'Non'};${formatDate(q.created_at)}\n`;
-                    });
-                    
-                    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
-                    const url=URL.createObjectURL(blob);
-                    const a=document.createElement('a');
-                    a.href=url;
-                    a.download=`mes-donnees-${user.email.replace('@','_')}-${new Date().toISOString().slice(0,10)}.csv`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    setTimeout(()=>URL.revokeObjectURL(url),1000);
-                    }catch(err){console.error('Export CSV error:',err);}
-                  }}
-                >
-                  Exporter en CSV
-                </Button>
-
-                <Button
-                  icon="Printer"
-                  variant="secondary"
-                  onClick={()=>{
-                    try{
-                    // Génération d'un rapport imprimable
-                    const formatDate=(d)=>d?new Date(d).toLocaleDateString('fr-FR'):'';
-                    const formatTime=(s)=>{
-                      if(!s)return '-';
-                      const h=Math.floor(s/3600);
-                      const m=Math.floor((s%3600)/60);
+                    // Export Excel avec SheetJS
+                    var formatDate=function(d){return d?new Date(d).toLocaleDateString('fr-FR'):''};
+                    var formatTime=function(s){
+                      if(!s)return '';
+                      var h=Math.floor(s/3600);
+                      var m=Math.floor((s%3600)/60);
                       return h>0?(h+'h '+m+'min'):(m+'min');
                     };
-                    const escapeHtml=(str)=>(str||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
                     
-                    let coursesRows=enrollments.map(e=>'<tr><td>'+escapeHtml(e.playlists?.title)+'</td><td>'+(e.status||'')+'</td><td>'+(e.progress_percent||0)+'%</td><td>'+formatTime(e.time_spent_seconds)+'</td></tr>').join('');
-                    let pathsRows=pathEnrollments.map(p=>'<tr><td>'+escapeHtml(p.learning_paths?.title)+'</td><td>'+(p.progress_percent||0)+'%</td><td>'+formatTime(p.time_spent_seconds)+'</td></tr>').join('');
-                    let scormRows=scormProgress.map(s=>'<tr><td>'+escapeHtml(s.scorm_modules?.title)+'</td><td>'+(s.completion_status||'')+'</td><td>'+(s.score_scaled?Math.round(s.score_scaled*100)+'%':'-')+'</td><td>'+(s.total_time||'-')+'</td></tr>').join('');
+                    // Créer le workbook
+                    var wb=XLSX.utils.book_new();
                     
-                    let html='<!DOCTYPE html><html><head><title>Mes donnees - '+(profile?.first_name||'')+' '+(profile?.last_name||'')+'</title>';
-                    html+='<style>body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;}';
+                    // Feuille Cours
+                    var coursesData=[['Cours','Statut','Progression','Temps passe','Date inscription']];
+                    enrollments.forEach(function(e){
+                      coursesData.push([
+                        e.playlists?.title||'',
+                        e.status||'',
+                        (e.progress_percent||0)+'%',
+                        formatTime(e.time_spent_seconds),
+                        formatDate(e.created_at)
+                      ]);
+                    });
+                    var wsCourses=XLSX.utils.aoa_to_sheet(coursesData);
+                    wsCourses['!cols']=[{wch:40},{wch:15},{wch:12},{wch:15},{wch:15}];
+                    XLSX.utils.book_append_sheet(wb,wsCourses,'Mes Cours');
+                    
+                    // Feuille Parcours
+                    if(pathEnrollments.length>0){
+                      var pathsData=[['Parcours','Progression','Temps passe','Date demarrage']];
+                      pathEnrollments.forEach(function(p){
+                        pathsData.push([
+                          p.learning_paths?.title||'',
+                          (p.progress_percent||0)+'%',
+                          formatTime(p.time_spent_seconds),
+                          formatDate(p.started_at)
+                        ]);
+                      });
+                      var wsPaths=XLSX.utils.aoa_to_sheet(pathsData);
+                      wsPaths['!cols']=[{wch:40},{wch:12},{wch:15},{wch:15}];
+                      XLSX.utils.book_append_sheet(wb,wsPaths,'Mes Parcours');
+                    }
+                    
+                    // Feuille SCORM
+                    if(scormProgress.length>0){
+                      var scormData=[['Module','Cours','Statut','Score','Temps','Date']];
+                      scormProgress.forEach(function(s){
+                        scormData.push([
+                          s.scorm_modules?.title||'',
+                          s.enrollments?.playlists?.title||'',
+                          s.completion_status||'',
+                          s.score_scaled?Math.round(s.score_scaled*100)+'%':'',
+                          s.total_time||'',
+                          formatDate(s.last_accessed_at)
+                        ]);
+                      });
+                      var wsScorm=XLSX.utils.aoa_to_sheet(scormData);
+                      wsScorm['!cols']=[{wch:35},{wch:30},{wch:12},{wch:10},{wch:12},{wch:12}];
+                      XLSX.utils.book_append_sheet(wb,wsScorm,'Modules SCORM');
+                    }
+                    
+                    // Feuille Videos
+                    if(videoProgress.length>0){
+                      var videosData=[['Video','Terminee','Temps visionne','Derniere vue']];
+                      videoProgress.forEach(function(v){
+                        videosData.push([
+                          v.playlist_videos?.videos?.title||'',
+                          v.is_completed?'Oui':'Non',
+                          formatTime(v.watch_time_seconds),
+                          formatDate(v.updated_at)
+                        ]);
+                      });
+                      var wsVideos=XLSX.utils.aoa_to_sheet(videosData);
+                      wsVideos['!cols']=[{wch:40},{wch:10},{wch:15},{wch:12}];
+                      XLSX.utils.book_append_sheet(wb,wsVideos,'Videos');
+                    }
+                    
+                    // Feuille Quiz
+                    if(quizAttempts.length>0){
+                      var quizData=[['Quiz','Score','Reussi','Date']];
+                      quizAttempts.forEach(function(q){
+                        quizData.push([
+                          q.quizzes?.title||'',
+                          (q.score_percent||0)+'%',
+                          q.passed?'Oui':'Non',
+                          formatDate(q.created_at)
+                        ]);
+                      });
+                      var wsQuiz=XLSX.utils.aoa_to_sheet(quizData);
+                      wsQuiz['!cols']=[{wch:40},{wch:10},{wch:10},{wch:12}];
+                      XLSX.utils.book_append_sheet(wb,wsQuiz,'Quiz');
+                    }
+                    
+                    // Telecharger
+                    var filename='mes-donnees-'+user.email.replace('@','_').replace(/[^a-zA-Z0-9_.-]/g,'_')+'-'+new Date().toISOString().slice(0,10)+'.xlsx';
+                    XLSX.writeFile(wb,filename);
+                    }catch(err){console.error('Export Excel error:',err);alert('Erreur lors de l export Excel');}
+                  }}
+                >
+                  Exporter en Excel
+                </Button>
+
+                <Button
+                  icon="FileText"
+                  variant="secondary"
+                  onClick={()=>{
+                    try{
+                    // Génération d'un rapport HTML téléchargeable
+                    var formatTime=function(s){
+                      if(!s)return '-';
+                      var h=Math.floor(s/3600);
+                      var m=Math.floor((s%3600)/60);
+                      return h>0?(h+'h '+m+'min'):(m+'min');
+                    };
+                    var escapeHtml=function(str){return (str||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')};
+                    
+                    var coursesRows=enrollments.map(function(e){return '<tr><td>'+escapeHtml(e.playlists?.title)+'</td><td>'+(e.status||'')+'</td><td>'+(e.progress_percent||0)+'%</td><td>'+formatTime(e.time_spent_seconds)+'</td></tr>'}).join('');
+                    var pathsRows=pathEnrollments.map(function(p){return '<tr><td>'+escapeHtml(p.learning_paths?.title)+'</td><td>'+(p.progress_percent||0)+'%</td><td>'+formatTime(p.time_spent_seconds)+'</td></tr>'}).join('');
+                    var scormRows=scormProgress.map(function(s){return '<tr><td>'+escapeHtml(s.scorm_modules?.title)+'</td><td>'+(s.completion_status||'')+'</td><td>'+(s.score_scaled?Math.round(s.score_scaled*100)+'%':'-')+'</td><td>'+(s.total_time||'-')+'</td></tr>'}).join('');
+                    
+                    var html='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rapport de progression - '+(profile?.first_name||'')+' '+(profile?.last_name||'')+'</title>';
+                    html+='<style>body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;background:#fff;color:#333;}';
                     html+='h1{color:#4f46e5;border-bottom:2px solid #4f46e5;padding-bottom:10px;}';
                     html+='h2{color:#6366f1;margin-top:30px;}';
                     html+='table{width:100%;border-collapse:collapse;margin:15px 0;}';
                     html+='th,td{border:1px solid #ddd;padding:8px;text-align:left;}';
                     html+='th{background:#f3f4f6;}';
-                    html+='.stats{display:flex;gap:20px;flex-wrap:wrap;}';
-                    html+='.stat{background:#f9fafb;padding:15px;border-radius:8px;min-width:150px;}';
+                    html+='.stats{display:flex;gap:20px;flex-wrap:wrap;margin:20px 0;}';
+                    html+='.stat{background:#f9fafb;padding:15px;border-radius:8px;min-width:150px;text-align:center;}';
                     html+='.stat-value{font-size:24px;font-weight:bold;color:#4f46e5;}';
-                    html+='.footer{margin-top:40px;text-align:center;color:#666;font-size:12px;}';
+                    html+='.stat-label{font-size:12px;color:#666;margin-top:5px;}';
+                    html+='.footer{margin-top:40px;text-align:center;color:#666;font-size:12px;border-top:1px solid #ddd;padding-top:20px;}';
                     html+='@media print{body{padding:20px;}}</style></head><body>';
                     html+='<h1>Rapport de progression</h1>';
                     html+='<p><strong>Apprenant:</strong> '+(profile?.first_name||'')+' '+(profile?.last_name||'')+' ('+user.email+')</p>';
                     html+='<p><strong>Date du rapport:</strong> '+new Date().toLocaleDateString('fr-FR')+'</p>';
                     html+='<h2>Statistiques globales</h2>';
                     html+='<div class="stats">';
-                    html+='<div class="stat"><div class="stat-value">'+formatTime(stats.totalSessionTime)+'</div>Temps total</div>';
-                    html+='<div class="stat"><div class="stat-value">'+stats.completedCourses+'/'+stats.totalCourses+'</div>Cours termines</div>';
-                    html+='<div class="stat"><div class="stat-value">'+stats.passedScorm+'/'+stats.totalScorm+'</div>SCORM reussis</div>';
-                    html+='<div class="stat"><div class="stat-value">'+Math.round(stats.avgScormScore*100)+'%</div>Score SCORM moyen</div>';
+                    html+='<div class="stat"><div class="stat-value">'+formatTime(stats.totalSessionTime)+'</div><div class="stat-label">Temps total</div></div>';
+                    html+='<div class="stat"><div class="stat-value">'+stats.completedCourses+'/'+stats.totalCourses+'</div><div class="stat-label">Cours termines</div></div>';
+                    html+='<div class="stat"><div class="stat-value">'+stats.passedScorm+'/'+stats.totalScorm+'</div><div class="stat-label">SCORM reussis</div></div>';
+                    html+='<div class="stat"><div class="stat-value">'+Math.round(stats.avgScormScore*100)+'%</div><div class="stat-label">Score SCORM moyen</div></div>';
                     html+='</div>';
                     html+='<h2>Mes cours ('+enrollments.length+')</h2>';
                     html+='<table><tr><th>Cours</th><th>Statut</th><th>Progression</th><th>Temps</th></tr>'+coursesRows+'</table>';
@@ -5918,19 +5895,27 @@
                     }
                     html+='<h2>Modules SCORM ('+scormProgress.length+')</h2>';
                     html+='<table><tr><th>Module</th><th>Statut</th><th>Score</th><th>Temps</th></tr>'+scormRows+'</table>';
-                    html+='<div class="footer"><p>Genere depuis CRPro LMS</p></div>';
+                    html+='<div class="footer"><p>Genere depuis CRPro LMS - '+new Date().toLocaleDateString('fr-FR')+' '+new Date().toLocaleTimeString('fr-FR')+'</p>';
+                    html+='<p style="margin-top:10px;font-size:11px;">Pour imprimer: ouvrez ce fichier dans votre navigateur puis Ctrl+P (ou Cmd+P sur Mac)</p></div>';
                     html+='</body></html>';
                     
-                    const win=window.open('','_blank');
-                    if(win){
-                      win.document.write(html);
-                      win.document.close();
-                      setTimeout(()=>{try{win.print();}catch(e){}},500);
-                    }
-                    }catch(err){console.error('Print error:',err);}
+                    var blob=new Blob([html],{type:'text/html;charset=utf-8'});
+                    var filename='rapport-progression-'+user.email.replace('@','_').replace(/[^a-zA-Z0-9_.-]/g,'_')+'-'+new Date().toISOString().slice(0,10)+'.html';
+                    var url=URL.createObjectURL(blob);
+                    var a=document.createElement('a');
+                    a.style.display='none';
+                    a.href=url;
+                    a.download=filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    setTimeout(function(){
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                    },100);
+                    }catch(err){console.error('Export HTML error:',err);}
                   }}
                 >
-                  Imprimer le rapport
+                  Exporter en HTML
                 </Button>
               </div>
               
