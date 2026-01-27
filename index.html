@@ -3099,62 +3099,53 @@
     }
 
     // Quiz Management avec types de questions variés
+    // Quiz Management - Nouvelle interface
     function QuizzesPage(){
       const{center,isSuperAdmin,can,profile}=useAuth();
+      const[loading,setLoading]=useState(true);
+      const[activeTab,setActiveTab]=useState('questions');
+      
+      // Données
       const[quizzes,setQuizzes]=useState([]);
       const[playlists,setPlaylists]=useState([]);
-      const[loading,setLoading]=useState(true);
-      const[modal,setModal]=useState(false);
-      const[editing,setEditing]=useState(null);
-      const[form,setForm]=useState({
+      const[bankQuestions,setBankQuestions]=useState([]);
+      const[categories,setCategories]=useState([]);
+      const[themes,setThemes]=useState([]);
+      const[subThemes,setSubThemes]=useState([]);
+      
+      // Catégories
+      const[newCategory,setNewCategory]=useState('');
+      const[newTheme,setNewTheme]=useState('');
+      const[newSubTheme,setNewSubTheme]=useState({theme:'',name:''});
+      
+      // Questions - Formulaire
+      const[editingQuestion,setEditingQuestion]=useState(null);
+      const[uploadingMedia,setUploadingMedia]=useState(false);
+      const[bankFilter,setBankFilter]=useState({category:'all',theme:'all',sub_theme:'all',difficulty:'all',search:''});
+      
+      // Quiz
+      const[quizModal,setQuizModal]=useState(false);
+      const[editingQuiz,setEditingQuiz]=useState(null);
+      const[quizForm,setQuizForm]=useState({
         title:'',description:'',playlist_id:'',passing_score:70,is_required:false,
         max_attempts:0,time_limit:0,shuffle_questions:false,shuffle_answers:false,
-        show_answers:true,show_feedback:true,allow_review:true,
-        // Banque de questions
-        use_question_bank:false,
-        bank_category:'',
-        bank_difficulty:'',
-        bank_count:10
+        show_answers:true,show_feedback:true,allow_review:true
       });
-      const[saving,setSaving]=useState(false);
-      const[questionsModal,setQuestionsModal]=useState(null);
-      const[questions,setQuestions]=useState([]);
-      const[showAdvanced,setShowAdvanced]=useState(false);
-      
-      // Banque de questions
-      const[activeTab,setActiveTab]=useState('quizzes'); // 'quizzes', 'bank' ou 'categories'
-      const[bankQuestions,setBankQuestions]=useState([]);
-      const[bankModal,setBankModal]=useState(false);
-      const[editingBankQuestion,setEditingBankQuestion]=useState(null);
-      const[bankFilter,setBankFilter]=useState({category:'all',theme:'all',sub_theme:'all',difficulty:'all',search:''});
-      const[importModal,setImportModal]=useState(null);
-      const[selectedBankQuestions,setSelectedBankQuestions]=useState([]);
-      
-      // Catégories personnalisables
-      const[categories,setCategories]=useState([]);
-      const[newCategory,setNewCategory]=useState('');
-      const[categoryModal,setCategoryModal]=useState(false);
-      
-      // Thèmes et sous-thèmes
-      const[themes,setThemes]=useState([]);
-      const[newTheme,setNewTheme]=useState('');
-      const[subThemes,setSubThemes]=useState([]);
-      const[newSubTheme,setNewSubTheme]=useState({theme:'',name:''});
-      const[uploadingMedia,setUploadingMedia]=useState(false);
-      
-      // Preview et Export
+      const[selectedQuestions,setSelectedQuestions]=useState([]);
+      const[quizQuestions,setQuizQuestions]=useState([]);
       const[previewQuiz,setPreviewQuiz]=useState(null);
       const[previewAnswers,setPreviewAnswers]=useState({});
       const[previewSubmitted,setPreviewSubmitted]=useState(false);
+      const[saving,setSaving]=useState(false);
+      const sortableRef=useRef(null);
+      const sortableInstance=useRef(null);
       
-      // Difficultés (fixes)
       const DIFFICULTIES=[
         {value:'easy',label:'Facile',color:'green'},
         {value:'medium',label:'Moyen',color:'yellow'},
         {value:'hard',label:'Difficile',color:'red'}
       ];
       
-      // Types de questions disponibles
       const QUESTION_TYPES={
         single:{label:'Choix unique',icon:'CircleDot',desc:'Une seule bonne réponse'},
         multiple:{label:'Choix multiple',icon:'CheckSquare',desc:'Plusieurs bonnes réponses possibles'},
@@ -3164,52 +3155,26 @@
         ordering:{label:'Ordonnancement',icon:'ListOrdered',desc:'Remettre dans le bon ordre'}
       };
       
-      // État initial pour nouvelle question selon le type (avec options avancées)
       const getEmptyQuestion=(type='single')=>{
         const base={
-          question_text:'',
-          question_type:type,
-          // Classification
-          category:'',
-          theme:'',
-          sub_theme:'',
-          difficulty:'medium',
-          // Options avancées
-          points:1,
-          time_limit:0,
-          // Médias
-          image_url:'',
-          image_file:null, // Pour upload
-          audio_url:'',
-          audio_file:null, // Pour upload MP3
-          vimeo_id:'', // ID vidéo Vimeo
-          // Feedback
-          feedback_correct:'',
-          feedback_incorrect:'',
-          // Données selon le type
-          answers:[],
-          keywords:[],
-          pairs:[],
-          items:[]
+          question_text:'',question_type:type,category:'',theme:'',sub_theme:'',difficulty:'medium',
+          points:1,time_limit:0,image_url:'',audio_url:'',vimeo_id:'',
+          feedback_correct:'',feedback_incorrect:'',
+          answers:[],keywords:[],pairs:[],items:[]
         };
         switch(type){
-          case 'true_false':
-            return{...base,answers:[{text:'Vrai',is_correct:true},{text:'Faux',is_correct:false}]};
-          case 'text':
-            return{...base,answers:[{text:'',is_correct:true}]};
-          case 'matching':
-            return{...base,pairs:[{left:'',right:''},{left:'',right:''}]};
-          case 'ordering':
-            return{...base,items:['','']};
-          case 'multiple':
-            return{...base,answers:[{text:'',is_correct:false},{text:'',is_correct:false}]};
-          default:
-            return{...base,answers:[{text:'',is_correct:false},{text:'',is_correct:false}]};
+          case 'true_false':return{...base,answers:[{text:'Vrai',is_correct:true},{text:'Faux',is_correct:false}]};
+          case 'text':return{...base,answers:[{text:'',is_correct:true}]};
+          case 'matching':return{...base,pairs:[{left:'',right:''},{left:'',right:''}]};
+          case 'ordering':return{...base,items:['','']};
+          case 'multiple':return{...base,answers:[{text:'',is_correct:false},{text:'',is_correct:false}]};
+          default:return{...base,answers:[{text:'',is_correct:false},{text:'',is_correct:false}]};
         }
       };
       
-      const[newQuestion,setNewQuestion]=useState(getEmptyQuestion());
-
+      const[questionForm,setQuestionForm]=useState(getEmptyQuestion());
+      
+      // Chargement des données
       const load=useCallback(async()=>{
         try{
           const{data:qz}=await supabase.from('quizzes').select('*').order('created_at',{ascending:false});
@@ -3219,79 +3184,58 @@
             const{data:pInfo}=await supabase.from('playlists').select('id,title').in('id',playlistIds);
             (pInfo||[]).forEach(p=>playlistsInfo[p.id]=p);
           }
-          const quizIds=(qz||[]).map(q=>q.id);
-          let questionsCount={};
-          if(quizIds.length>0){
-            const{data:qCount}=await supabase.from('quiz_questions').select('quiz_id').in('quiz_id',quizIds);
-            (qCount||[]).forEach(q=>{questionsCount[q.quiz_id]=(questionsCount[q.quiz_id]||0)+1;});
-          }
-          const enrichedQuizzes=(qz||[]).map(q=>({
-            ...q,
-            playlists:playlistsInfo[q.playlist_id]||null,
-            questions_count:questionsCount[q.id]||0
-          }));
-          setQuizzes(enrichedQuizzes);
+          setQuizzes((qz||[]).map(q=>({...q,playlists:playlistsInfo[q.playlist_id]||null})));
+          
           const{data:pl}=await supabase.from('playlists').select('id,title').order('title');
           setPlaylists(pl||[]);
-          // Charger la banque de questions (peut ne pas exister)
-          try{
-            const{data:bank}=await supabase.from('question_bank').select('*,question_bank_answers(*)').order('created_at',{ascending:false});
-            setBankQuestions(bank||[]);
-          }catch(e){setBankQuestions([]);}
-          // Charger les catégories personnalisées (peut ne pas exister)
-          try{
-            const{data:cats}=await supabase.from('question_categories').select('*').order('name');
-            setCategories(cats||[]);
-          }catch(e){setCategories([]);}
-          // Charger les thèmes (peut ne pas exister)
-          try{
-            const{data:th}=await supabase.from('question_themes').select('*').order('name');
-            setThemes(th||[]);
-          }catch(e){setThemes([]);}
-          // Charger les sous-thèmes (peut ne pas exister)
-          try{
-            const{data:sth}=await supabase.from('question_sub_themes').select('*').order('name');
-            setSubThemes(sth||[]);
-          }catch(e){setSubThemes([]);}
-        }catch(err){
-          console.error('Erreur chargement quiz:',err);
-        }
+          
+          try{const{data:bank}=await supabase.from('question_bank').select('*,question_bank_answers(*)').order('created_at',{ascending:false});setBankQuestions(bank||[]);}catch(e){setBankQuestions([]);}
+          try{const{data:cats}=await supabase.from('question_categories').select('*').order('name');setCategories(cats||[]);}catch(e){setCategories([]);}
+          try{const{data:th}=await supabase.from('question_themes').select('*').order('name');setThemes(th||[]);}catch(e){setThemes([]);}
+          try{const{data:sth}=await supabase.from('question_sub_themes').select('*').order('name');setSubThemes(sth||[]);}catch(e){setSubThemes([]);}
+        }catch(err){console.error('Erreur chargement:',err);}
         setLoading(false);
       },[]);
       
       useEffect(()=>{load();},[load]);
-
-      // Gestion des catégories
-      const addCategory=async()=>{
-        if(!newCategory.trim())return;
-        if(categories.some(c=>c.name.toLowerCase()===newCategory.trim().toLowerCase())){
-          alert('Cette catégorie existe déjà');return;
+      
+      // Drag & drop pour réorganiser les questions du quiz
+      useEffect(()=>{
+        if(sortableRef.current&&quizQuestions.length>0&&window.Sortable){
+          if(sortableInstance.current)sortableInstance.current.destroy();
+          sortableInstance.current=window.Sortable.create(sortableRef.current,{
+            animation:150,handle:'.drag-handle',
+            onEnd:(evt)=>{
+              const newOrder=[...quizQuestions];
+              const[moved]=newOrder.splice(evt.oldIndex,1);
+              newOrder.splice(evt.newIndex,0,moved);
+              setQuizQuestions(newOrder);
+            }
+          });
         }
+        return()=>{if(sortableInstance.current)sortableInstance.current.destroy();};
+      },[quizQuestions]);
+      
+      // === CATÉGORIES ===
+      const addCategory=async()=>{
+        if(!newCategory.trim()||categories.some(c=>c.name.toLowerCase()===newCategory.trim().toLowerCase()))return;
         const{data}=await supabase.from('question_categories').insert({name:newCategory.trim()}).select().single();
         if(data)setCategories([...categories,data]);
         setNewCategory('');
       };
       
       const deleteCategory=async(id)=>{
-        // Vérifier si des questions utilisent cette catégorie
         const cat=categories.find(c=>c.id===id);
-        const questionsWithCat=bankQuestions.filter(q=>q.category===cat?.name);
-        if(questionsWithCat.length>0){
-          if(!confirm(`${questionsWithCat.length} question(s) utilisent cette catégorie. Les questions seront mises en "Sans catégorie". Continuer ?`))return;
-          // Mettre à jour les questions
-          await supabase.from('question_bank').update({category:'Sans catégorie'}).eq('category',cat.name);
-        }
+        const count=bankQuestions.filter(q=>q.category===cat?.name).length;
+        if(count>0&&!confirm(`${count} question(s) utilisent cette catégorie. Continuer ?`))return;
+        if(count>0)await supabase.from('question_bank').update({category:null}).eq('category',cat.name);
         await supabase.from('question_categories').delete().eq('id',id);
         setCategories(categories.filter(c=>c.id!==id));
-        await load();
+        load();
       };
-
-      // Gestion des thèmes
+      
       const addTheme=async()=>{
-        if(!newTheme.trim())return;
-        if(themes.some(t=>t.name.toLowerCase()===newTheme.trim().toLowerCase())){
-          alert('Ce thème existe déjà');return;
-        }
+        if(!newTheme.trim()||themes.some(t=>t.name.toLowerCase()===newTheme.trim().toLowerCase()))return;
         const{data}=await supabase.from('question_themes').insert({name:newTheme.trim()}).select().single();
         if(data)setThemes([...themes,data]);
         setNewTheme('');
@@ -3299,31 +3243,20 @@
       
       const deleteTheme=async(id)=>{
         const theme=themes.find(t=>t.id===id);
-        const questionsWithTheme=bankQuestions.filter(q=>q.theme===theme?.name);
-        if(questionsWithTheme.length>0){
-          if(!confirm(`${questionsWithTheme.length} question(s) utilisent ce thème. Continuer ?`))return;
-          await supabase.from('question_bank').update({theme:null}).eq('theme',theme.name);
-        }
-        // Supprimer aussi les sous-thèmes associés
+        const count=bankQuestions.filter(q=>q.theme===theme?.name).length;
+        if(count>0&&!confirm(`${count} question(s) utilisent ce thème. Continuer ?`))return;
         await supabase.from('question_sub_themes').delete().eq('theme_id',id);
         await supabase.from('question_themes').delete().eq('id',id);
         setThemes(themes.filter(t=>t.id!==id));
         setSubThemes(subThemes.filter(st=>st.theme_id!==id));
-        await load();
+        load();
       };
-
-      // Gestion des sous-thèmes
+      
       const addSubTheme=async()=>{
         if(!newSubTheme.theme||!newSubTheme.name.trim())return;
         const theme=themes.find(t=>t.name===newSubTheme.theme);
         if(!theme)return;
-        if(subThemes.some(st=>st.theme_id===theme.id&&st.name.toLowerCase()===newSubTheme.name.trim().toLowerCase())){
-          alert('Ce sous-thème existe déjà');return;
-        }
-        const{data}=await supabase.from('question_sub_themes').insert({
-          theme_id:theme.id,
-          name:newSubTheme.name.trim()
-        }).select().single();
+        const{data}=await supabase.from('question_sub_themes').insert({theme_id:theme.id,name:newSubTheme.name.trim()}).select().single();
         if(data)setSubThemes([...subThemes,data]);
         setNewSubTheme({theme:newSubTheme.theme,name:''});
       };
@@ -3332,8 +3265,8 @@
         await supabase.from('question_sub_themes').delete().eq('id',id);
         setSubThemes(subThemes.filter(st=>st.id!==id));
       };
-
-      // Upload média (image ou audio)
+      
+      // === QUESTIONS - Médias ===
       const uploadMedia=async(file,type)=>{
         if(!file)return null;
         setUploadingMedia(true);
@@ -3341,578 +3274,332 @@
           const ext=file.name.split('.').pop().toLowerCase();
           const fileName=`${Date.now()}-${Math.random().toString(36).substr(2,9)}.${ext}`;
           const folder=type==='image'?'question-images':'question-audio';
-          const path=`${folder}/${fileName}`;
-          
-          const{error}=await supabase.storage.from('media').upload(path,file,{
-            cacheControl:'3600',
-            upsert:false
-          });
-          
+          const{error}=await supabase.storage.from('media').upload(`${folder}/${fileName}`,file);
           if(error)throw error;
-          
-          const{data:{publicUrl}}=supabase.storage.from('media').getPublicUrl(path);
+          const{data:{publicUrl}}=supabase.storage.from('media').getPublicUrl(`${folder}/${fileName}`);
           setUploadingMedia(false);
           return publicUrl;
-        }catch(err){
-          console.error('Erreur upload:',err);
-          alert('Erreur lors de l\'upload: '+err.message);
-          setUploadingMedia(false);
-          return null;
-        }
+        }catch(err){alert('Erreur upload: '+err.message);setUploadingMedia(false);return null;}
       };
-
-      // Gérer le changement de fichier image
+      
       const handleImageChange=async(e)=>{
         const file=e.target.files[0];
         if(!file)return;
-        if(!file.type.startsWith('image/')){
-          alert('Veuillez sélectionner une image');return;
-        }
-        if(file.size>5*1024*1024){
-          alert('L\'image ne doit pas dépasser 5 Mo');return;
-        }
+        if(!file.type.startsWith('image/')){alert('Sélectionnez une image');return;}
+        if(file.size>5*1024*1024){alert('Max 5 Mo');return;}
         const url=await uploadMedia(file,'image');
-        if(url)setNewQuestion({...newQuestion,image_url:url,image_file:file});
+        if(url)setQuestionForm({...questionForm,image_url:url});
       };
-
-      // Gérer le changement de fichier audio
+      
       const handleAudioChange=async(e)=>{
         const file=e.target.files[0];
         if(!file)return;
-        if(!file.type.startsWith('audio/')){
-          alert('Veuillez sélectionner un fichier audio');return;
-        }
-        if(file.size>20*1024*1024){
-          alert('Le fichier audio ne doit pas dépasser 20 Mo');return;
-        }
+        if(!file.type.startsWith('audio/')){alert('Sélectionnez un fichier audio');return;}
+        if(file.size>20*1024*1024){alert('Max 20 Mo');return;}
         const url=await uploadMedia(file,'audio');
-        if(url)setNewQuestion({...newQuestion,audio_url:url,audio_file:file});
+        if(url)setQuestionForm({...questionForm,audio_url:url});
       };
-
-      // Extraire l'ID Vimeo d'une URL
+      
       const extractVimeoId=(url)=>{
         if(!url)return'';
         const match=url.match(/(?:vimeo\.com\/)(\d+)/);
-        return match?match[1]:'';
+        return match?match[1]:url;
       };
-
-      // Export Excel template
-      const exportBankTemplate=()=>{
-        const wb=XLSX.utils.book_new();
-        const templateData=[
-          ['Question','Type','Catégorie','Difficulté','Points','Temps (sec)','Réponse 1','Correct 1','Réponse 2','Correct 2','Réponse 3','Correct 3','Réponse 4','Correct 4','Feedback correct','Feedback incorrect'],
-          ['Quelle est la capitale de la France ?','single','Géographie','easy','1','30','Paris','TRUE','Lyon','FALSE','Marseille','FALSE','Bordeaux','FALSE','Bravo !','La bonne réponse était Paris'],
-          ['Cochez les nombres premiers','multiple','Mathématiques','medium','2','60','2','TRUE','4','FALSE','7','TRUE','9','FALSE','',''],
-          ['Le soleil tourne autour de la Terre','true_false','Sciences','easy','1','15','Vrai','FALSE','Faux','TRUE','','','','','',''],
-        ];
-        const ws=XLSX.utils.aoa_to_sheet(templateData);
-        ws['!cols']=[{wch:40},{wch:12},{wch:15},{wch:10},{wch:8},{wch:10},{wch:20},{wch:10},{wch:20},{wch:10},{wch:20},{wch:10},{wch:20},{wch:10},{wch:25},{wch:25}];
-        XLSX.utils.book_append_sheet(wb,ws,'Template');
-        
-        // Feuille instructions
-        const instructions=[
-          ['=== INSTRUCTIONS IMPORT BANQUE DE QUESTIONS ==='],
-          [''],
-          ['Types disponibles: single, multiple, true_false, text, matching, ordering'],
-          ['Difficultés: easy, medium, hard'],
-          ['Correct: TRUE ou FALSE'],
-          [''],
-          ['Pour true_false: Réponse 1 = "Vrai", Réponse 2 = "Faux"'],
-          ['Pour text: Mettre les mots-clés dans les colonnes Réponse (tous avec Correct = TRUE)'],
-          ['Pour matching: Format "element|correspondance" dans chaque réponse'],
-          ['Pour ordering: Mettre les éléments dans l\'ordre correct'],
-        ];
-        const wsInst=XLSX.utils.aoa_to_sheet(instructions);
-        XLSX.utils.book_append_sheet(wb,wsInst,'Instructions');
-        
-        XLSX.writeFile(wb,'template-banque-questions.xlsx');
-      };
-
-      // Export banque complète
-      const exportBank=()=>{
-        if(bankQuestions.length===0){alert('Aucune question à exporter');return;}
-        const wb=XLSX.utils.book_new();
-        const data=[['Question','Type','Catégorie','Difficulté','Points','Temps','Réponse 1','Correct 1','Réponse 2','Correct 2','Réponse 3','Correct 3','Réponse 4','Correct 4','Feedback correct','Feedback incorrect']];
-        
-        bankQuestions.forEach(q=>{
-          const answers=q.question_bank_answers||[];
-          const row=[
-            q.question_text,
-            q.question_type,
-            q.category||'',
-            q.difficulty||'medium',
-            q.points||1,
-            q.time_limit||0,
-            answers[0]?.answer_text||'',answers[0]?.is_correct?'TRUE':'FALSE',
-            answers[1]?.answer_text||'',answers[1]?.is_correct?'TRUE':'FALSE',
-            answers[2]?.answer_text||'',answers[2]?.is_correct?'TRUE':'FALSE',
-            answers[3]?.answer_text||'',answers[3]?.is_correct?'TRUE':'FALSE',
-            q.feedback_correct||'',
-            q.feedback_incorrect||''
-          ];
-          data.push(row);
-        });
-        
-        const ws=XLSX.utils.aoa_to_sheet(data);
-        XLSX.utils.book_append_sheet(wb,ws,'Banque');
-        XLSX.writeFile(wb,'banque-questions-'+new Date().toISOString().slice(0,10)+'.xlsx');
-      };
-
-      // Import depuis Excel
-      const importFromExcel=async(file)=>{
-        const reader=new FileReader();
-        reader.onload=async(e)=>{
-          try{
-            const wb=XLSX.read(e.target.result,{type:'binary'});
-            const ws=wb.Sheets[wb.SheetNames[0]];
-            const data=XLSX.utils.sheet_to_json(ws,{header:1});
-            
-            // Ignorer l'entête
-            const rows=data.slice(1).filter(r=>r[0]);
-            let imported=0;
-            
-            for(const row of rows){
-              const[questionText,type,category,difficulty,points,timeLimit,r1,c1,r2,c2,r3,c3,r4,c4,fbCorrect,fbIncorrect]=row;
-              
-              if(!questionText||!type)continue;
-              
-              // Créer la question
-              const{data:q}=await supabase.from('question_bank').insert({
-                question_text:questionText,
-                question_type:type||'single',
-                category:category||'Sans catégorie',
-                difficulty:difficulty||'medium',
-                points:parseInt(points)||1,
-                time_limit:parseInt(timeLimit)||0,
-                feedback_correct:fbCorrect||null,
-                feedback_incorrect:fbIncorrect||null
-              }).select().single();
-              
-              if(q){
-                // Créer les réponses
-                const answers=[];
-                if(r1)answers.push({question_id:q.id,answer_text:r1,is_correct:String(c1).toUpperCase()==='TRUE',sort_order:0});
-                if(r2)answers.push({question_id:q.id,answer_text:r2,is_correct:String(c2).toUpperCase()==='TRUE',sort_order:1});
-                if(r3)answers.push({question_id:q.id,answer_text:r3,is_correct:String(c3).toUpperCase()==='TRUE',sort_order:2});
-                if(r4)answers.push({question_id:q.id,answer_text:r4,is_correct:String(c4).toUpperCase()==='TRUE',sort_order:3});
-                
-                if(answers.length>0){
-                  await supabase.from('question_bank_answers').insert(answers);
-                }
-                imported++;
-              }
-            }
-            
-            alert(`${imported} question(s) importée(s)`);
-            load();
-          }catch(err){
-            alert('Erreur lors de l\'import: '+err.message);
-          }
-        };
-        reader.readAsBinaryString(file);
-      };
-
-      // Prévisualisation du quiz
-      const openPreview=async(quiz)=>{
-        const{data}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('quiz_id',quiz.id).order('sort_order');
-        let previewQuestions=data||[];
-        
-        // Mélanger les questions si activé
-        if(quiz.shuffle_questions){
-          previewQuestions=[...previewQuestions].sort(()=>Math.random()-0.5);
-        }
-        
-        // Mélanger les réponses si activé
-        if(quiz.shuffle_answers){
-          previewQuestions=previewQuestions.map(q=>({
-            ...q,
-            quiz_answers:(q.quiz_answers||[]).sort(()=>Math.random()-0.5)
-          }));
-        }
-        
-        setPreviewQuiz({...quiz,questions:previewQuestions});
-        setPreviewAnswers({});
-        setPreviewSubmitted(false);
-      };
-
-      // Calculer le score de la preview
-      const calculatePreviewScore=()=>{
-        if(!previewQuiz)return{score:0,total:0,percent:0};
-        let score=0;
-        let total=0;
-        
-        previewQuiz.questions.forEach(q=>{
-          const points=q.points||1;
-          total+=points;
-          const userAnswer=previewAnswers[q.id];
-          const correctAnswers=(q.quiz_answers||[]).filter(a=>a.is_correct).map(a=>a.id);
-          
-          if(q.question_type==='single'||q.question_type==='true_false'){
-            if(correctAnswers.includes(userAnswer))score+=points;
-          }else if(q.question_type==='multiple'){
-            const userArr=userAnswer||[];
-            const allCorrect=correctAnswers.every(id=>userArr.includes(id));
-            const noWrong=userArr.every(id=>correctAnswers.includes(id));
-            if(allCorrect&&noWrong)score+=points;
-          }
-        });
-        
-        return{score,total,percent:total>0?Math.round((score/total)*100):0};
-      };
-
-      const handleSave=async()=>{
-        setSaving(true);
-        const payload={
-          title:form.title,
-          description:form.description||null,
-          playlist_id:form.playlist_id||null,
-          passing_score:parseInt(form.passing_score)||70,
-          is_required:form.is_required,
-          max_attempts:form.max_attempts||0,
-          time_limit:form.time_limit||0,
-          shuffle_questions:form.shuffle_questions||false,
-          shuffle_answers:form.shuffle_answers||false,
-          show_answers:form.show_answers!==false,
-          show_feedback:form.show_feedback!==false,
-          allow_review:form.allow_review!==false
-        };
-        if(editing)await supabase.from('quizzes').update(payload).eq('id',editing.id);
-        else await supabase.from('quizzes').insert(payload);
-        await load();setModal(false);setForm({title:'',description:'',playlist_id:'',passing_score:70,is_required:false,max_attempts:0,time_limit:0,shuffle_questions:false,shuffle_answers:false,show_answers:true,show_feedback:true,allow_review:true});setEditing(null);setSaving(false);
-      };
-
-      const handleDelete=async(id)=>{if(!confirm('Supprimer ce quiz et toutes ses questions ?'))return;await supabase.from('quizzes').delete().eq('id',id);load();};
-
-      const openQuestions=async(quiz)=>{
-        setQuestionsModal(quiz);
-        const{data}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('quiz_id',quiz.id).order('sort_order');
-        setQuestions(data||[]);setNewQuestion(getEmptyQuestion());
-      };
-
-      const changeQuestionType=(type)=>{setNewQuestion(getEmptyQuestion(type));};
-
-      const updateAnswer=(index,field,value)=>{
-        setNewQuestion(prev=>{
-          const newAnswers=[...prev.answers];
-          if(field==='is_correct'&&prev.question_type==='single'){
-            newAnswers.forEach((a,i)=>a.is_correct=(i===index));
-          }else if(field==='is_correct'&&prev.question_type==='true_false'){
-            newAnswers[0].is_correct=(index===0);newAnswers[1].is_correct=(index===1);
-          }else{
-            newAnswers[index]={...newAnswers[index],[field]:value};
-          }
-          return{...prev,answers:newAnswers};
-        });
-      };
-
-      const addAnswerOption=()=>{if(newQuestion.answers.length<8)setNewQuestion({...newQuestion,answers:[...newQuestion.answers,{text:'',is_correct:false}]});};
-      const removeAnswerOption=(index)=>{if(newQuestion.answers.length>2)setNewQuestion({...newQuestion,answers:newQuestion.answers.filter((_,i)=>i!==index)});};
-
-      const updatePair=(index,side,value)=>{const newPairs=[...newQuestion.pairs];newPairs[index]={...newPairs[index],[side]:value};setNewQuestion({...newQuestion,pairs:newPairs});};
-      const addPair=()=>{if(newQuestion.pairs.length<8)setNewQuestion({...newQuestion,pairs:[...newQuestion.pairs,{left:'',right:''}]});};
-      const removePair=(index)=>{if(newQuestion.pairs.length>2)setNewQuestion({...newQuestion,pairs:newQuestion.pairs.filter((_,i)=>i!==index)});};
-
-      const updateItem=(index,value)=>{const newItems=[...newQuestion.items];newItems[index]=value;setNewQuestion({...newQuestion,items:newItems});};
-      const addItem=()=>{if(newQuestion.items.length<10)setNewQuestion({...newQuestion,items:[...newQuestion.items,'']});};
-      const removeItem=(index)=>{if(newQuestion.items.length>2)setNewQuestion({...newQuestion,items:newQuestion.items.filter((_,i)=>i!==index)});};
-
-      const addKeyword=()=>{
-        const kw=newQuestion.answers[0]?.text?.trim();
-        if(kw&&!(newQuestion.keywords||[]).includes(kw)){
-          setNewQuestion({...newQuestion,keywords:[...(newQuestion.keywords||[]),kw],answers:[{text:'',is_correct:true}]});
-        }
-      };
-      const removeKeyword=(kw)=>{setNewQuestion({...newQuestion,keywords:(newQuestion.keywords||[]).filter(k=>k!==kw)});};
-
-      const validateQuestion=()=>{
-        if(!newQuestion.question_text.trim()){alert('Veuillez entrer une question');return false;}
-        switch(newQuestion.question_type){
-          case 'single':case 'multiple':
-            if(newQuestion.answers.filter(a=>a.text.trim()).length<2){alert('Veuillez entrer au moins 2 réponses');return false;}
-            if(!newQuestion.answers.some(a=>a.is_correct&&a.text.trim())){alert('Veuillez cocher au moins une bonne réponse');return false;}
-            break;
-          case 'text':
-            if(!(newQuestion.keywords||[]).length){alert('Veuillez ajouter au moins un mot-clé attendu');return false;}
-            break;
-          case 'matching':
-            if((newQuestion.pairs||[]).filter(p=>p.left.trim()&&p.right.trim()).length<2){alert('Veuillez entrer au moins 2 paires complètes');return false;}
-            break;
-          case 'ordering':
-            if((newQuestion.items||[]).filter(i=>i.trim()).length<2){alert('Veuillez entrer au moins 2 éléments');return false;}
-            break;
-        }
-        return true;
-      };
-
-      const prepareAnswersData=(questionId)=>{
-        switch(newQuestion.question_type){
-          case 'single':case 'multiple':
-            return newQuestion.answers.filter(a=>a.text.trim()).map((a,i)=>({question_id:questionId,answer_text:a.text.trim(),is_correct:a.is_correct,sort_order:i}));
-          case 'true_false':
-            return newQuestion.answers.map((a,i)=>({question_id:questionId,answer_text:a.text,is_correct:a.is_correct,sort_order:i}));
-          case 'text':
-            return(newQuestion.keywords||[]).map((kw,i)=>({question_id:questionId,answer_text:kw,is_correct:true,sort_order:i}));
-          case 'matching':
-            return(newQuestion.pairs||[]).filter(p=>p.left.trim()&&p.right.trim()).map((p,i)=>({question_id:questionId,answer_text:JSON.stringify({left:p.left.trim(),right:p.right.trim()}),is_correct:true,sort_order:i}));
-          case 'ordering':
-            return(newQuestion.items||[]).filter(i=>i.trim()).map((item,i)=>({question_id:questionId,answer_text:item.trim(),is_correct:true,sort_order:i}));
-          default:return[];
-        }
-      };
-
-      const addQuestion=async()=>{
-        if(!validateQuestion())return;
-        try{
-          const{data:q,error:qError}=await supabase.from('quiz_questions').insert({
-            quiz_id:questionsModal.id,
-            question_text:newQuestion.question_text.trim(),
-            question_type:newQuestion.question_type,
-            sort_order:questions.length,
-            points:newQuestion.points||1,
-            time_limit:newQuestion.time_limit||0,
-            image_url:newQuestion.image_url||null,
-            audio_url:newQuestion.audio_url||null,
-            vimeo_id:newQuestion.vimeo_id||null,
-            feedback_correct:newQuestion.feedback_correct||null,
-            feedback_incorrect:newQuestion.feedback_incorrect||null
-          }).select().single();
-          if(qError)throw qError;
-          if(q){
-            const answersToInsert=prepareAnswersData(q.id);
-            if(answersToInsert.length>0){const{error:aError}=await supabase.from('quiz_answers').insert(answersToInsert);if(aError)throw aError;}
-            const{data:fullQ}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('id',q.id).single();
-            setQuestions(prev=>[...prev,fullQ]);
-          }
-          setNewQuestion(getEmptyQuestion());
-          setShowAdvanced(false);
-        }catch(err){console.error('Erreur ajout question:',err);alert('Erreur: '+err.message);}
-      };
-
-      const deleteQuestion=async(id)=>{if(!confirm('Supprimer cette question ?'))return;await supabase.from('quiz_questions').delete().eq('id',id);setQuestions(questions.filter(q=>q.id!==id));};
-
-      const duplicateQuestion=async(q)=>{
-        try{
-          const{data:newQ}=await supabase.from('quiz_questions').insert({
-            quiz_id:questionsModal.id,
-            question_text:q.question_text+' (copie)',
-            question_type:q.question_type,
-            sort_order:questions.length,
-            points:q.points||1,
-            time_limit:q.time_limit||0,
-            image_url:q.image_url||null,
-            audio_url:q.audio_url||null,
-            vimeo_id:q.vimeo_id||null,
-            feedback_correct:q.feedback_correct||null,
-            feedback_incorrect:q.feedback_incorrect||null
-          }).select().single();
-          if(newQ&&q.quiz_answers?.length>0){
-            const answers=q.quiz_answers.map((a,i)=>({question_id:newQ.id,answer_text:a.answer_text,is_correct:a.is_correct,sort_order:i}));
-            await supabase.from('quiz_answers').insert(answers);
-          }
-          const{data:fullQ}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('id',newQ.id).single();
-          setQuestions(prev=>[...prev,fullQ]);
-        }catch(err){alert('Erreur: '+err.message);}
-      };
-
-      const renderQuestionAnswers=(q)=>{
-        const answers=q.quiz_answers||q.question_bank_answers||[];
-        switch(q.question_type){
-          case 'matching':
-            return answers.map((a,i)=>{try{const pair=JSON.parse(a.answer_text);return<p key={a.id} className="text-sm text-gray-400">{i+1}. {pair.left} ↔ {pair.right}</p>;}catch{return null;}});
-          case 'ordering':
-            return<div className="flex flex-wrap gap-1">{answers.sort((a,b)=>a.sort_order-b.sort_order).map((a,i)=>(<span key={a.id} className="text-sm bg-gray-600 px-2 py-1 rounded">{i+1}. {a.answer_text}</span>))}</div>;
-          case 'text':
-            return<p className="text-sm text-gray-400">Mots-clés: {answers.map(a=>a.answer_text).join(', ')}</p>;
-          default:
-            return answers.map(a=>(<p key={a.id} className={`text-sm ${a.is_correct?'text-green-400':'text-gray-400'}`}>{a.is_correct?'✓':'○'} {a.answer_text}</p>));
-        }
-      };
-
-      // ===== BANQUE DE QUESTIONS =====
       
-      // Sauvegarder une question dans la banque
-      const saveBankQuestion=async()=>{
+      // === QUESTIONS - CRUD ===
+      const changeQuestionType=(type)=>{
+        const newQ=getEmptyQuestion(type);
+        setQuestionForm({...newQ,question_text:questionForm.question_text,category:questionForm.category,theme:questionForm.theme,sub_theme:questionForm.sub_theme,difficulty:questionForm.difficulty,points:questionForm.points,time_limit:questionForm.time_limit,image_url:questionForm.image_url,audio_url:questionForm.audio_url,vimeo_id:questionForm.vimeo_id,feedback_correct:questionForm.feedback_correct,feedback_incorrect:questionForm.feedback_incorrect});
+      };
+      
+      const updateAnswer=(idx,field,value)=>{
+        const answers=[...questionForm.answers];
+        if(field==='is_correct'&&questionForm.question_type==='single'){
+          answers.forEach((a,i)=>a.is_correct=i===idx);
+        }else if(field==='is_correct'&&questionForm.question_type==='true_false'){
+          answers[0].is_correct=idx===0;
+          answers[1].is_correct=idx===1;
+        }else{
+          answers[idx][field]=value;
+        }
+        setQuestionForm({...questionForm,answers});
+      };
+      
+      const addAnswerOption=()=>{if(questionForm.answers.length<8)setQuestionForm({...questionForm,answers:[...questionForm.answers,{text:'',is_correct:false}]});};
+      const removeAnswerOption=(idx)=>{if(questionForm.answers.length>2)setQuestionForm({...questionForm,answers:questionForm.answers.filter((_,i)=>i!==idx)});};
+      
+      const updatePair=(idx,field,value)=>{const pairs=[...questionForm.pairs];pairs[idx][field]=value;setQuestionForm({...questionForm,pairs});};
+      const addPair=()=>{if((questionForm.pairs||[]).length<8)setQuestionForm({...questionForm,pairs:[...questionForm.pairs,{left:'',right:''}]});};
+      const removePair=(idx)=>{if((questionForm.pairs||[]).length>2)setQuestionForm({...questionForm,pairs:questionForm.pairs.filter((_,i)=>i!==idx)});};
+      
+      const updateItem=(idx,value)=>{const items=[...questionForm.items];items[idx]=value;setQuestionForm({...questionForm,items});};
+      const addItem=()=>{if((questionForm.items||[]).length<10)setQuestionForm({...questionForm,items:[...questionForm.items,'']});};
+      const removeItem=(idx)=>{if((questionForm.items||[]).length>2)setQuestionForm({...questionForm,items:questionForm.items.filter((_,i)=>i!==idx)});};
+      
+      const addKeyword=()=>{
+        const kw=questionForm.answers[0]?.text?.trim();
+        if(kw&&!questionForm.keywords.includes(kw)){
+          setQuestionForm({...questionForm,keywords:[...questionForm.keywords,kw],answers:[{text:'',is_correct:true}]});
+        }
+      };
+      const removeKeyword=(kw)=>setQuestionForm({...questionForm,keywords:questionForm.keywords.filter(k=>k!==kw)});
+      
+      const validateQuestion=()=>{
+        if(!questionForm.question_text.trim()){alert('Entrez la question');return false;}
+        switch(questionForm.question_type){
+          case'single':case'multiple':
+            if(questionForm.answers.filter(a=>a.text.trim()).length<2){alert('Min 2 réponses');return false;}
+            if(!questionForm.answers.some(a=>a.is_correct)){alert('Cochez au moins une bonne réponse');return false;}
+            return true;
+          case'text':return questionForm.keywords.length>0||(alert('Ajoutez au moins un mot-clé'),false);
+          case'matching':return(questionForm.pairs||[]).filter(p=>p.left.trim()&&p.right.trim()).length>=2||(alert('Min 2 paires complètes'),false);
+          case'ordering':return(questionForm.items||[]).filter(i=>i.trim()).length>=2||(alert('Min 2 éléments'),false);
+          default:return true;
+        }
+      };
+      
+      const prepareAnswersData=()=>{
+        switch(questionForm.question_type){
+          case'matching':return(questionForm.pairs||[]).filter(p=>p.left&&p.right).map((p,i)=>({answer_text:JSON.stringify(p),is_correct:true,sort_order:i}));
+          case'ordering':return(questionForm.items||[]).filter(i=>i).map((item,i)=>({answer_text:item,is_correct:true,sort_order:i}));
+          case'text':return(questionForm.keywords||[]).map((kw,i)=>({answer_text:kw,is_correct:true,sort_order:i}));
+          default:return questionForm.answers.filter(a=>a.text.trim()).map((a,i)=>({answer_text:a.text.trim(),is_correct:a.is_correct,sort_order:i}));
+        }
+      };
+      
+      const saveQuestion=async()=>{
         if(!validateQuestion())return;
+        setSaving(true);
         try{
           const questionData={
-            question_text:newQuestion.question_text.trim(),
-            question_type:newQuestion.question_type,
-            category:newQuestion.category||null,
-            theme:newQuestion.theme||null,
-            sub_theme:newQuestion.sub_theme||null,
-            difficulty:newQuestion.difficulty||'medium',
-            points:newQuestion.points||1,
-            time_limit:newQuestion.time_limit||0,
-            image_url:newQuestion.image_url||null,
-            audio_url:newQuestion.audio_url||null,
-            vimeo_id:newQuestion.vimeo_id||null,
-            feedback_correct:newQuestion.feedback_correct||null,
-            feedback_incorrect:newQuestion.feedback_incorrect||null
+            question_text:questionForm.question_text.trim(),
+            question_type:questionForm.question_type,
+            category:questionForm.category||null,
+            theme:questionForm.theme||null,
+            sub_theme:questionForm.sub_theme||null,
+            difficulty:questionForm.difficulty||'medium',
+            points:questionForm.points||1,
+            time_limit:questionForm.time_limit||0,
+            image_url:questionForm.image_url||null,
+            audio_url:questionForm.audio_url||null,
+            vimeo_id:questionForm.vimeo_id||null,
+            feedback_correct:questionForm.feedback_correct||null,
+            feedback_incorrect:questionForm.feedback_incorrect||null
           };
           
           let questionId;
-          if(editingBankQuestion){
-            await supabase.from('question_bank').update(questionData).eq('id',editingBankQuestion.id);
-            await supabase.from('question_bank_answers').delete().eq('question_id',editingBankQuestion.id);
-            questionId=editingBankQuestion.id;
+          if(editingQuestion){
+            await supabase.from('question_bank').update(questionData).eq('id',editingQuestion.id);
+            await supabase.from('question_bank_answers').delete().eq('question_id',editingQuestion.id);
+            questionId=editingQuestion.id;
           }else{
             const{data:q}=await supabase.from('question_bank').insert(questionData).select().single();
             questionId=q.id;
           }
           
-          // Préparer les réponses
-          const answersData=prepareAnswersData(questionId).map(a=>({...a,question_id:questionId}));
-          if(answersData.length>0){
-            await supabase.from('question_bank_answers').insert(answersData);
-          }
+          const answersData=prepareAnswersData().map(a=>({...a,question_id:questionId}));
+          if(answersData.length>0)await supabase.from('question_bank_answers').insert(answersData);
           
           await load();
-          setBankModal(false);
-          setEditingBankQuestion(null);
-          setNewQuestion(getEmptyQuestion());
-        }catch(err){
-          alert('Erreur: '+err.message);
-        }
+          setQuestionForm(getEmptyQuestion());
+          setEditingQuestion(null);
+        }catch(err){alert('Erreur: '+err.message);}
+        setSaving(false);
       };
-
-      // Supprimer une question de la banque
-      const deleteBankQuestion=async(id)=>{
-        if(!confirm('Supprimer cette question de la banque ?'))return;
+      
+      const editQuestion=(q)=>{
+        const answers=q.question_bank_answers||[];
+        let formData={...getEmptyQuestion(q.question_type),
+          question_text:q.question_text,category:q.category||'',theme:q.theme||'',sub_theme:q.sub_theme||'',
+          difficulty:q.difficulty||'medium',points:q.points||1,time_limit:q.time_limit||0,
+          image_url:q.image_url||'',audio_url:q.audio_url||'',vimeo_id:q.vimeo_id||'',
+          feedback_correct:q.feedback_correct||'',feedback_incorrect:q.feedback_incorrect||''
+        };
+        switch(q.question_type){
+          case'matching':formData.pairs=answers.map(a=>{try{return JSON.parse(a.answer_text);}catch{return{left:'',right:''};}});break;
+          case'ordering':formData.items=answers.sort((a,b)=>a.sort_order-b.sort_order).map(a=>a.answer_text);break;
+          case'text':formData.keywords=answers.map(a=>a.answer_text);formData.answers=[{text:'',is_correct:true}];break;
+          default:formData.answers=answers.map(a=>({text:a.answer_text,is_correct:a.is_correct}));
+        }
+        setQuestionForm(formData);
+        setEditingQuestion(q);
+      };
+      
+      const deleteQuestion=async(id)=>{
+        if(!confirm('Supprimer cette question ?'))return;
         await supabase.from('question_bank').delete().eq('id',id);
         setBankQuestions(bankQuestions.filter(q=>q.id!==id));
       };
-
-      // Éditer une question de la banque
-      const editBankQuestion=(q)=>{
-        const answers=q.question_bank_answers||[];
-        let questionData={
-          question_text:q.question_text,
-          question_type:q.question_type,
-          category:q.category||'',
-          theme:q.theme||'',
-          sub_theme:q.sub_theme||'',
-          difficulty:q.difficulty||'medium',
-          points:q.points||1,
-          time_limit:q.time_limit||0,
-          image_url:q.image_url||'',
-          audio_url:q.audio_url||'',
-          vimeo_id:q.vimeo_id||'',
-          feedback_correct:q.feedback_correct||'',
-          feedback_incorrect:q.feedback_incorrect||'',
-          answers:[],keywords:[],pairs:[],items:[]
-        };
-        
-        switch(q.question_type){
-          case 'matching':
-            questionData.pairs=answers.map(a=>{try{return JSON.parse(a.answer_text);}catch{return{left:'',right:''};}});
-            break;
-          case 'ordering':
-            questionData.items=answers.sort((a,b)=>a.sort_order-b.sort_order).map(a=>a.answer_text);
-            break;
-          case 'text':
-            questionData.keywords=answers.map(a=>a.answer_text);
-            questionData.answers=[{text:'',is_correct:true}];
-            break;
-          default:
-            questionData.answers=answers.map(a=>({text:a.answer_text,is_correct:a.is_correct}));
-        }
-        
-        setNewQuestion(questionData);
-        setEditingBankQuestion(q);
-        setBankModal(true);
-        setShowAdvanced(true);
-      };
-
-      // Importer des questions de la banque vers un quiz
-      const importFromBank=async()=>{
-        if(selectedBankQuestions.length===0){alert('Sélectionnez au moins une question');return;}
-        
-        try{
-          for(const bankQ of selectedBankQuestions){
-            const bq=bankQuestions.find(q=>q.id===bankQ);
-            if(!bq)continue;
-            
-            // Créer la question dans le quiz
-            const{data:newQ}=await supabase.from('quiz_questions').insert({
-              quiz_id:importModal.id,
-              question_text:bq.question_text,
-              question_type:bq.question_type,
-              sort_order:questions.length+selectedBankQuestions.indexOf(bankQ),
-              points:bq.points||1,
-              time_limit:bq.time_limit||0,
-              image_url:bq.image_url,
-              audio_url:bq.audio_url,
-              vimeo_id:bq.vimeo_id,
-              feedback_correct:bq.feedback_correct,
-              feedback_incorrect:bq.feedback_incorrect
-            }).select().single();
-            
-            // Copier les réponses
-            if(newQ&&bq.question_bank_answers?.length>0){
-              const answers=bq.question_bank_answers.map((a,i)=>({
-                question_id:newQ.id,
-                answer_text:a.answer_text,
-                is_correct:a.is_correct,
-                sort_order:i
-              }));
-              await supabase.from('quiz_answers').insert(answers);
-            }
-          }
-          
-          // Recharger les questions du quiz
-          const{data}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('quiz_id',importModal.id).order('sort_order');
-          setQuestions(data||[]);
-          setImportModal(null);
-          setSelectedBankQuestions([]);
-          alert(`${selectedBankQuestions.length} question(s) importée(s)`);
-        }catch(err){
-          alert('Erreur: '+err.message);
-        }
-      };
-
-      // Piocher X questions aléatoires de la banque
-      const randomPickFromBank=async(quiz,count,category,difficulty)=>{
-        let filtered=bankQuestions;
-        if(category&&category!=='all')filtered=filtered.filter(q=>q.category===category);
-        if(difficulty&&difficulty!=='all')filtered=filtered.filter(q=>q.difficulty===difficulty);
-        
-        // Mélanger et prendre N questions
-        const shuffled=[...filtered].sort(()=>Math.random()-0.5);
-        const picked=shuffled.slice(0,Math.min(count,shuffled.length));
-        
-        if(picked.length===0){alert('Aucune question disponible avec ces critères');return;}
-        
-        setSelectedBankQuestions(picked.map(q=>q.id));
-        setImportModal(quiz);
-      };
-
-      // Filtrer les questions de la banque
-      const filteredBankQuestions=useMemo(()=>{
+      
+      const cancelEdit=()=>{setQuestionForm(getEmptyQuestion());setEditingQuestion(null);};
+      
+      // Filtrage des questions
+      const filteredQuestions=useMemo(()=>{
         return bankQuestions.filter(q=>{
           if(bankFilter.category!=='all'&&q.category!==bankFilter.category)return false;
-          if(bankFilter.theme&&bankFilter.theme!=='all'&&q.theme!==bankFilter.theme)return false;
-          if(bankFilter.sub_theme&&bankFilter.sub_theme!=='all'&&q.sub_theme!==bankFilter.sub_theme)return false;
+          if(bankFilter.theme!=='all'&&q.theme!==bankFilter.theme)return false;
+          if(bankFilter.sub_theme!=='all'&&q.sub_theme!==bankFilter.sub_theme)return false;
           if(bankFilter.difficulty!=='all'&&q.difficulty!==bankFilter.difficulty)return false;
-          if(bankFilter.search){
-            const s=bankFilter.search.toLowerCase();
-            if(!q.question_text.toLowerCase().includes(s))return false;
-          }
+          if(bankFilter.search&&!q.question_text.toLowerCase().includes(bankFilter.search.toLowerCase()))return false;
           return true;
         });
       },[bankQuestions,bankFilter]);
-
-      // Stats de la banque
-      const bankStats=useMemo(()=>{
-        const byCategory={};
-        const byTheme={};
-        const byDifficulty={easy:0,medium:0,hard:0};
-        bankQuestions.forEach(q=>{
-          byCategory[q.category||'Sans catégorie']=(byCategory[q.category||'Sans catégorie']||0)+1;
-          if(q.theme)byTheme[q.theme]=(byTheme[q.theme]||0)+1;
-          byDifficulty[q.difficulty||'medium']++;
+      
+      // === QUIZ ===
+      const openQuizModal=(quiz=null)=>{
+        if(quiz){
+          setEditingQuiz(quiz);
+          setQuizForm({
+            title:quiz.title,description:quiz.description||'',playlist_id:quiz.playlist_id||'',
+            passing_score:quiz.passing_score||70,is_required:quiz.is_required||false,
+            max_attempts:quiz.max_attempts||0,time_limit:quiz.time_limit||0,
+            shuffle_questions:quiz.shuffle_questions||false,shuffle_answers:quiz.shuffle_answers||false,
+            show_answers:quiz.show_answers!==false,show_feedback:quiz.show_feedback!==false,allow_review:quiz.allow_review!==false
+          });
+          // Charger les questions du quiz
+          supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('quiz_id',quiz.id).order('sort_order').then(({data})=>{
+            setQuizQuestions(data||[]);
+          });
+        }else{
+          setEditingQuiz(null);
+          setQuizForm({title:'',description:'',playlist_id:'',passing_score:70,is_required:false,max_attempts:0,time_limit:0,shuffle_questions:false,shuffle_answers:false,show_answers:true,show_feedback:true,allow_review:true});
+          setQuizQuestions([]);
+        }
+        setSelectedQuestions([]);
+        setQuizModal(true);
+      };
+      
+      const saveQuiz=async()=>{
+        if(!quizForm.title.trim()){alert('Entrez un titre');return;}
+        setSaving(true);
+        try{
+          const payload={
+            title:quizForm.title.trim(),
+            description:quizForm.description||null,
+            playlist_id:quizForm.playlist_id||null,
+            passing_score:parseInt(quizForm.passing_score)||70,
+            is_required:quizForm.is_required,
+            max_attempts:quizForm.max_attempts||0,
+            time_limit:quizForm.time_limit||0,
+            shuffle_questions:quizForm.shuffle_questions,
+            shuffle_answers:quizForm.shuffle_answers,
+            show_answers:quizForm.show_answers,
+            show_feedback:quizForm.show_feedback,
+            allow_review:quizForm.allow_review
+          };
+          
+          let quizId;
+          if(editingQuiz){
+            await supabase.from('quizzes').update(payload).eq('id',editingQuiz.id);
+            quizId=editingQuiz.id;
+            // Supprimer les anciennes questions
+            await supabase.from('quiz_questions').delete().eq('quiz_id',quizId);
+          }else{
+            const{data:newQuiz}=await supabase.from('quizzes').insert(payload).select().single();
+            quizId=newQuiz.id;
+          }
+          
+          // Insérer les questions sélectionnées
+          for(let i=0;i<quizQuestions.length;i++){
+            const q=quizQuestions[i];
+            const isFromBank=q.question_bank_answers!==undefined;
+            
+            const{data:newQ}=await supabase.from('quiz_questions').insert({
+              quiz_id:quizId,
+              question_text:q.question_text,
+              question_type:q.question_type,
+              sort_order:i,
+              points:q.points||1,
+              time_limit:q.time_limit||0,
+              image_url:q.image_url,
+              audio_url:q.audio_url,
+              vimeo_id:q.vimeo_id,
+              feedback_correct:q.feedback_correct,
+              feedback_incorrect:q.feedback_incorrect
+            }).select().single();
+            
+            // Copier les réponses
+            const answers=isFromBank?q.question_bank_answers:q.quiz_answers;
+            if(newQ&&answers?.length>0){
+              await supabase.from('quiz_answers').insert(answers.map((a,j)=>({
+                question_id:newQ.id,
+                answer_text:a.answer_text,
+                is_correct:a.is_correct,
+                sort_order:j
+              })));
+            }
+          }
+          
+          await load();
+          setQuizModal(false);
+        }catch(err){alert('Erreur: '+err.message);}
+        setSaving(false);
+      };
+      
+      const deleteQuiz=async(id)=>{
+        if(!confirm('Supprimer ce quiz et toutes ses questions ?'))return;
+        await supabase.from('quizzes').delete().eq('id',id);
+        setQuizzes(quizzes.filter(q=>q.id!==id));
+      };
+      
+      // Ajouter des questions de la banque au quiz
+      const addQuestionsToQuiz=()=>{
+        const toAdd=bankQuestions.filter(q=>selectedQuestions.includes(q.id)&&!quizQuestions.some(qq=>qq.id===q.id||qq.bank_id===q.id));
+        setQuizQuestions([...quizQuestions,...toAdd.map(q=>({...q,bank_id:q.id}))]);
+        setSelectedQuestions([]);
+      };
+      
+      // Pioche aléatoire
+      const randomPick=(count)=>{
+        let available=filteredQuestions.filter(q=>!quizQuestions.some(qq=>qq.id===q.id||qq.bank_id===q.id));
+        const shuffled=[...available].sort(()=>Math.random()-0.5);
+        const picked=shuffled.slice(0,Math.min(count,shuffled.length));
+        setQuizQuestions([...quizQuestions,...picked.map(q=>({...q,bank_id:q.id}))]);
+      };
+      
+      const removeFromQuiz=(idx)=>{
+        setQuizQuestions(quizQuestions.filter((_,i)=>i!==idx));
+      };
+      
+      // Prévisualisation
+      const openPreview=(quiz)=>{
+        supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('quiz_id',quiz.id).order('sort_order').then(({data})=>{
+          let questions=data||[];
+          if(quiz.shuffle_questions)questions=[...questions].sort(()=>Math.random()-0.5);
+          if(quiz.shuffle_answers)questions=questions.map(q=>({...q,quiz_answers:(q.quiz_answers||[]).sort(()=>Math.random()-0.5)}));
+          setPreviewQuiz({...quiz,questions});
+          setPreviewAnswers({});
+          setPreviewSubmitted(false);
         });
-        return{total:bankQuestions.length,byCategory,byTheme,byDifficulty};
-      },[bankQuestions]);
+      };
+      
+      const calculateScore=()=>{
+        if(!previewQuiz)return{score:0,total:0,percent:0};
+        let score=0,total=0;
+        previewQuiz.questions.forEach(q=>{
+          const pts=q.points||1;total+=pts;
+          const userAns=previewAnswers[q.id];
+          const correct=(q.quiz_answers||[]).filter(a=>a.is_correct).map(a=>a.id);
+          if(q.question_type==='single'||q.question_type==='true_false'){
+            if(correct.includes(userAns))score+=pts;
+          }else if(q.question_type==='multiple'){
+            const arr=userAns||[];
+            if(correct.every(id=>arr.includes(id))&&arr.every(id=>correct.includes(id)))score+=pts;
+          }
+        });
+        return{score,total,percent:total>0?Math.round(score/total*100):0};
+      };
+      
+      // Rendu des réponses
+      const renderAnswers=(q)=>{
+        const answers=q.question_bank_answers||q.quiz_answers||[];
+        switch(q.question_type){
+          case'matching':return answers.map((a,i)=>{try{const p=JSON.parse(a.answer_text);return<p key={i} className="text-xs text-gray-400">{p.left} ↔ {p.right}</p>;}catch{return null;}});
+          case'ordering':return<div className="flex flex-wrap gap-1">{answers.sort((a,b)=>a.sort_order-b.sort_order).map((a,i)=><span key={i} className="text-xs bg-gray-600 px-2 py-0.5 rounded">{i+1}. {a.answer_text}</span>)}</div>;
+          case'text':return<p className="text-xs text-gray-400">Mots-clés: {answers.map(a=>a.answer_text).join(', ')}</p>;
+          default:return answers.map((a,i)=><p key={i} className={`text-xs ${a.is_correct?'text-green-400':'text-gray-500'}`}>{a.is_correct?'✓':'○'} {a.answer_text}</p>);
+        }
+      };
 
       if(!can('manage_playlists')&&profile?.role!=='trainer')return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
@@ -3920,136 +3607,15 @@
       return<div>
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">Quiz & Banque de questions</h1>
-          <div className="flex gap-2">
-            {activeTab==='bank'&&<>
-              <Button variant="secondary" icon="Download" onClick={exportBankTemplate}>Template Excel</Button>
-              <Button variant="secondary" icon="FileDown" onClick={exportBank}>Exporter</Button>
-              <label className="cursor-pointer"><Button variant="secondary" icon="FileUp" as="span">Importer</Button><input type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>e.target.files[0]&&importFromExcel(e.target.files[0])}/></label>
-              <Button icon="Plus" onClick={()=>{setNewQuestion({...getEmptyQuestion(),category:categories[0]?.name||'Sans catégorie',difficulty:'medium'});setEditingBankQuestion(null);setBankModal(true);setShowAdvanced(true);}}>Nouvelle question</Button>
-            </>}
-            {activeTab==='quizzes'&&<Button icon="Plus" onClick={()=>{setForm({title:'',description:'',playlist_id:'',passing_score:70,is_required:false,max_attempts:0,time_limit:0,shuffle_questions:false,shuffle_answers:false,show_answers:true,show_feedback:true,allow_review:true,use_question_bank:false,bank_category:'',bank_difficulty:'',bank_count:10});setEditing(null);setModal(true);}}>Créer un quiz</Button>}
-            {activeTab==='categories'&&<Button icon="Plus" onClick={()=>setCategoryModal(true)}>Nouvelle catégorie</Button>}
-          </div>
         </div>
         
-        {/* Onglets Quiz / Banque / Catégories */}
         <Tabs tabs={[
-          {id:'quizzes',label:`Quiz (${quizzes.length})`,icon:'HelpCircle'},
-          {id:'bank',label:`Banque (${bankQuestions.length})`,icon:'Database'},
-          {id:'categories',label:`Catégories (${categories.length})`,icon:'Tag'}
+          {id:'categories',label:`Catégories`,icon:'Tag'},
+          {id:'questions',label:`Questions (${bankQuestions.length})`,icon:'Database'},
+          {id:'quizzes',label:`Quiz (${quizzes.length})`,icon:'HelpCircle'}
         ]} active={activeTab} onChange={setActiveTab}/>
         
-        {/* === ONGLET QUIZ === */}
-        {activeTab==='quizzes'&&(
-          <>
-        {quizzes.length===0?<Empty icon="HelpCircle" title="Aucun quiz" desc="Créez votre premier quiz"/>:(
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {quizzes.map(q=>(
-              <Card key={q.id} className="p-4">
-                <div className="flex items-start justify-between mb-3">
-                  <div><h3 className="font-semibold">{q.title}</h3><p className="text-sm text-gray-400">{q.playlists?.title||'Quiz indépendant'}</p></div>
-                  {q.is_required&&<span className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs">Obligatoire</span>}
-                </div>
-                <div className="flex items-center flex-wrap gap-2 text-sm text-gray-400 mb-3">
-                  <span><Icon name="HelpCircle" size={14} className="inline mr-1"/>{q.questions_count||0} questions</span>
-                  <span><Icon name="Target" size={14} className="inline mr-1"/>{q.passing_score}%</span>
-                  {q.time_limit>0&&<span className="text-blue-400"><Icon name="Clock" size={14} className="inline mr-1"/>{q.time_limit}min</span>}
-                  {q.max_attempts>0&&<span className="text-orange-400"><Icon name="RotateCcw" size={14} className="inline mr-1"/>{q.max_attempts}x</span>}
-                </div>
-                {/* Badges des options */}
-                <div className="flex flex-wrap gap-1 mb-3">
-                  {q.shuffle_questions&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">Mélange Q</span>}
-                  {q.shuffle_answers&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">Mélange R</span>}
-                  {q.show_answers&&<span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs">Réponses</span>}
-                  {q.allow_review&&<span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-400 rounded text-xs">Révision</span>}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="ghost" size="sm" icon="List" onClick={()=>openQuestions(q)}>Questions</Button>
-                  <Button variant="ghost" size="sm" icon="Play" onClick={()=>openPreview(q)}>Prévisualiser</Button>
-                  <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(q);setForm({title:q.title,description:q.description||'',playlist_id:q.playlist_id||'',passing_score:q.passing_score,is_required:q.is_required,max_attempts:q.max_attempts||0,time_limit:q.time_limit||0,shuffle_questions:q.shuffle_questions||false,shuffle_answers:q.shuffle_answers||false,show_answers:q.show_answers!==false,show_feedback:q.show_feedback!==false,allow_review:q.allow_review!==false});setModal(true);}}/>
-                  <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(q.id)}/>
-                </div>
-              </Card>
-            ))}
-          </div>
-        )}
-          </>
-        )}
-
-        {/* === ONGLET BANQUE DE QUESTIONS === */}
-        {activeTab==='bank'&&(
-          <div className="space-y-6">
-            {/* Stats de la banque */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <Card className="p-4 text-center">
-                <p className="text-3xl font-bold text-indigo-400">{bankStats.total}</p>
-                <p className="text-sm text-gray-400">Questions totales</p>
-              </Card>
-              <Card className="p-4 text-center">
-                <p className="text-3xl font-bold text-green-400">{bankStats.byDifficulty.easy}</p>
-                <p className="text-sm text-gray-400">Faciles</p>
-              </Card>
-              <Card className="p-4 text-center">
-                <p className="text-3xl font-bold text-yellow-400">{bankStats.byDifficulty.medium}</p>
-                <p className="text-sm text-gray-400">Moyennes</p>
-              </Card>
-              <Card className="p-4 text-center">
-                <p className="text-3xl font-bold text-red-400">{bankStats.byDifficulty.hard}</p>
-                <p className="text-sm text-gray-400">Difficiles</p>
-              </Card>
-            </div>
-            
-            {/* Filtres */}
-            <Card className="p-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Input icon="Search" placeholder="Rechercher..." value={bankFilter.search} onChange={e=>setBankFilter({...bankFilter,search:e.target.value})}/>
-                <Select value={bankFilter.category} onChange={e=>setBankFilter({...bankFilter,category:e.target.value})} options={[{value:'all',label:'Toutes catégories'},...categories.map(c=>({value:c.name,label:c.name}))]}/>
-                <Select value={bankFilter.difficulty} onChange={e=>setBankFilter({...bankFilter,difficulty:e.target.value})} options={[{value:'all',label:'Toutes difficultés'},...DIFFICULTIES.map(d=>({value:d.value,label:d.label}))]}/>
-              </div>
-            </Card>
-            
-            {/* Liste des questions */}
-            {filteredBankQuestions.length===0?<Empty icon="Database" title="Aucune question" desc="Ajoutez des questions à la banque"/>:(
-              <div className="space-y-3">
-                {filteredBankQuestions.map((q,i)=>(
-                  <Card key={q.id} className="p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center flex-wrap gap-2 mb-2">
-                          <span className="px-2 py-0.5 bg-gray-600 rounded text-xs">{QUESTION_TYPES[q.question_type]?.label||q.question_type}</span>
-                          {q.category&&<span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded text-xs">{q.category}</span>}
-                          {q.theme&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs"><Icon name="Folder" size={10} className="inline mr-1"/>{q.theme}</span>}
-                          {q.sub_theme&&<span className="px-2 py-0.5 bg-purple-500/10 text-purple-300 rounded text-xs">{q.sub_theme}</span>}
-                          <span className={`px-2 py-0.5 rounded text-xs ${q.difficulty==='easy'?'bg-green-500/20 text-green-400':q.difficulty==='hard'?'bg-red-500/20 text-red-400':'bg-yellow-500/20 text-yellow-400'}`}>
-                            {DIFFICULTIES.find(d=>d.value===q.difficulty)?.label||'Moyen'}
-                          </span>
-                          {(q.points||1)!==1&&<span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs">{q.points} pts</span>}
-                          {q.time_limit>0&&<span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">{q.time_limit}s</span>}
-                          {q.audio_url&&<span className="px-2 py-0.5 bg-pink-500/20 text-pink-400 rounded text-xs"><Icon name="Music" size={10} className="inline"/></span>}
-                          {q.vimeo_id&&<span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-400 rounded text-xs"><Icon name="Video" size={10} className="inline"/></span>}
-                        </div>
-                        {/* Médias */}
-                        <div className="flex gap-3 mb-2">
-                          {q.image_url&&<img src={q.image_url} alt="" className="max-h-20 rounded"/>}
-                          {q.audio_url&&<audio src={q.audio_url} controls className="h-8"/>}
-                          {q.vimeo_id&&<div className="w-32 aspect-video bg-gray-800 rounded overflow-hidden"><iframe src={`https://player.vimeo.com/video/${q.vimeo_id}`} className="w-full h-full" frameBorder="0"/></div>}
-                        </div>
-                        <p className="font-medium mb-2">{q.question_text}</p>
-                        <div className="space-y-1">{renderQuestionAnswers(q)}</div>
-                      </div>
-                      <div className="flex gap-1 ml-4">
-                        <button onClick={()=>editBankQuestion(q)} className="p-2 hover:bg-gray-600 rounded" title="Modifier"><Icon name="Edit2" size={16}/></button>
-                        <button onClick={()=>deleteBankQuestion(q.id)} className="p-2 hover:bg-red-600 rounded" title="Supprimer"><Icon name="Trash2" size={16}/></button>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* === ONGLET CATÉGORIES / THÈMES === */}
+        {/* === ONGLET CATÉGORIES === */}
         {activeTab==='categories'&&(
           <div className="space-y-6">
             {/* Catégories */}
@@ -4061,16 +3627,13 @@
               </div>
               {categories.length===0?<p className="text-gray-500 text-center py-4">Aucune catégorie</p>:(
                 <div className="flex flex-wrap gap-2">
-                  {categories.map(cat=>{
-                    const count=bankQuestions.filter(q=>q.category===cat.name).length;
-                    return(
-                      <div key={cat.id} className="flex items-center gap-2 px-3 py-2 bg-gray-700 rounded-lg">
-                        <span className="font-medium">{cat.name}</span>
-                        <span className="text-xs text-gray-400">({count})</span>
-                        <button onClick={()=>deleteCategory(cat.id)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={14} className="text-red-400"/></button>
-                      </div>
-                    );
-                  })}
+                  {categories.map(cat=>(
+                    <div key={cat.id} className="flex items-center gap-2 px-3 py-2 bg-gray-700 rounded-lg">
+                      <span>{cat.name}</span>
+                      <span className="text-xs text-gray-400">({bankQuestions.filter(q=>q.category===cat.name).length})</span>
+                      <button onClick={()=>deleteCategory(cat.id)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={14} className="text-red-400"/></button>
+                    </div>
+                  ))}
                 </div>
               )}
             </Card>
@@ -4084,497 +3647,111 @@
               </div>
               {themes.length===0?<p className="text-gray-500 text-center py-4">Aucun thème</p>:(
                 <div className="space-y-3">
-                  {themes.map(theme=>{
-                    const count=bankQuestions.filter(q=>q.theme===theme.name).length;
-                    const themeSubs=subThemes.filter(st=>st.theme_id===theme.id);
-                    return(
-                      <div key={theme.id} className="p-3 bg-gray-700 rounded-lg">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <Icon name="Folder" size={18} className="text-purple-400"/>
-                            <span className="font-medium">{theme.name}</span>
-                            <span className="text-xs text-gray-400">({count} questions)</span>
-                          </div>
-                          <button onClick={()=>deleteTheme(theme.id)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="Trash2" size={14} className="text-red-400"/></button>
+                  {themes.map(theme=>(
+                    <div key={theme.id} className="p-3 bg-gray-700 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Icon name="Folder" size={18} className="text-purple-400"/>
+                          <span className="font-medium">{theme.name}</span>
+                          <span className="text-xs text-gray-400">({bankQuestions.filter(q=>q.theme===theme.name).length})</span>
                         </div>
-                        {/* Sous-thèmes */}
-                        <div className="ml-6 space-y-1">
-                          {themeSubs.map(st=>{
-                            const stCount=bankQuestions.filter(q=>q.sub_theme===st.name).length;
-                            return(
-                              <div key={st.id} className="flex items-center justify-between py-1 px-2 bg-gray-600/50 rounded">
-                                <span className="text-sm"><Icon name="FileText" size={14} className="inline mr-2 text-gray-400"/>{st.name} <span className="text-gray-500">({stCount})</span></span>
-                                <button onClick={()=>deleteSubTheme(st.id)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={12} className="text-red-400"/></button>
-                              </div>
-                            );
-                          })}
-                          {/* Ajouter sous-thème */}
-                          <div className="flex gap-2 mt-2">
-                            <Input size="sm" className="flex-1" placeholder="Nouveau sous-thème..." value={newSubTheme.theme===theme.name?newSubTheme.name:''} onChange={e=>setNewSubTheme({theme:theme.name,name:e.target.value})} onKeyDown={e=>e.key==='Enter'&&newSubTheme.theme===theme.name&&addSubTheme()}/>
-                            <Button size="sm" variant="ghost" icon="Plus" onClick={()=>{setNewSubTheme({theme:theme.name,name:newSubTheme.name});addSubTheme();}} disabled={newSubTheme.theme!==theme.name||!newSubTheme.name.trim()}/>
+                        <button onClick={()=>deleteTheme(theme.id)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="Trash2" size={14} className="text-red-400"/></button>
+                      </div>
+                      <div className="ml-6 space-y-1">
+                        {subThemes.filter(st=>st.theme_id===theme.id).map(st=>(
+                          <div key={st.id} className="flex items-center justify-between py-1 px-2 bg-gray-600/50 rounded">
+                            <span className="text-sm">{st.name}</span>
+                            <button onClick={()=>deleteSubTheme(st.id)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={12} className="text-red-400"/></button>
                           </div>
+                        ))}
+                        <div className="flex gap-2 mt-2">
+                          <Input size="sm" className="flex-1" placeholder="Nouveau sous-thème..." value={newSubTheme.theme===theme.name?newSubTheme.name:''} onChange={e=>setNewSubTheme({theme:theme.name,name:e.target.value})}/>
+                          <Button size="sm" variant="ghost" icon="Plus" onClick={()=>{if(newSubTheme.theme===theme.name)addSubTheme();}} disabled={newSubTheme.theme!==theme.name||!newSubTheme.name.trim()}/>
                         </div>
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
               )}
-            </Card>
-            
-            {/* Statistiques */}
-            <Card className="p-6">
-              <h3 className="font-semibold mb-4"><Icon name="PieChart" size={20} className="inline mr-2 text-cyan-400"/>Statistiques</h3>
-              <div className="grid grid-cols-3 gap-4 text-center">
-                <div className="p-4 bg-gray-700 rounded-lg">
-                  <p className="text-2xl font-bold text-indigo-400">{categories.length}</p>
-                  <p className="text-sm text-gray-400">Catégories</p>
-                </div>
-                <div className="p-4 bg-gray-700 rounded-lg">
-                  <p className="text-2xl font-bold text-purple-400">{themes.length}</p>
-                  <p className="text-sm text-gray-400">Thèmes</p>
-                </div>
-                <div className="p-4 bg-gray-700 rounded-lg">
-                  <p className="text-2xl font-bold text-cyan-400">{subThemes.length}</p>
-                  <p className="text-sm text-gray-400">Sous-thèmes</p>
-                </div>
-              </div>
             </Card>
           </div>
         )}
-
-        {/* Modal création/édition quiz */}
-        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier le quiz':'Créer un quiz'} size="lg">
-          <div className="space-y-4">
-            <Input label="Titre du quiz *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
-            {playlists.length===0?(<Alert type="warning">Aucun cours disponible.</Alert>):(<Select label="Cours associé *" value={form.playlist_id} onChange={e=>setForm({...form,playlist_id:e.target.value})} options={[{value:'',label:'-- Sélectionner --'},...playlists.map(p=>({value:p.id,label:p.title}))]}/>)}
-            <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div>
-            
-            {/* Paramètres principaux */}
-            <div className="grid grid-cols-2 gap-4">
-              <Input label="Score minimum (%)" type="number" value={form.passing_score} onChange={e=>setForm({...form,passing_score:e.target.value})} min="0" max="100"/>
-              <Input label="Tentatives max (0=illimité)" type="number" value={form.max_attempts} onChange={e=>setForm({...form,max_attempts:parseInt(e.target.value)||0})} min="0" max="99"/>
-            </div>
-            
-            <Input label="Durée limite en minutes (0=illimité)" type="number" value={form.time_limit} onChange={e=>setForm({...form,time_limit:parseInt(e.target.value)||0})} min="0" max="300" icon="Clock"/>
-            
-            {/* Options */}
-            <div className="p-4 bg-gray-700/50 rounded-lg space-y-3">
-              <p className="text-sm font-medium text-gray-300 mb-2">Options du quiz</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <Checkbox label="Mélanger les questions" checked={form.shuffle_questions} onChange={v=>setForm({...form,shuffle_questions:v})}/>
-                <Checkbox label="Mélanger les réponses" checked={form.shuffle_answers} onChange={v=>setForm({...form,shuffle_answers:v})}/>
-                <Checkbox label="Afficher les réponses à la fin" checked={form.show_answers} onChange={v=>setForm({...form,show_answers:v})}/>
-                <Checkbox label="Afficher le feedback" checked={form.show_feedback} onChange={v=>setForm({...form,show_feedback:v})}/>
-                <Checkbox label="Mode révision (revoir ses erreurs)" checked={form.allow_review} onChange={v=>setForm({...form,allow_review:v})}/>
-                <Checkbox label="Quiz obligatoire" checked={form.is_required} onChange={v=>setForm({...form,is_required:v})}/>
-              </div>
-            </div>
-            
-            <div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving} disabled={!form.title||!form.playlist_id}>Enregistrer</Button></div>
-          </div>
-        </Modal>
-
-        {/* Modal gestion des questions */}
-        <Modal isOpen={!!questionsModal} onClose={()=>setQuestionsModal(null)} title={`Questions: ${questionsModal?.title}`} size="xl">
-          <div className="space-y-6">
-            {/* Actions rapides */}
-            {bankQuestions.length>0&&(
-              <div className="flex flex-wrap gap-2 p-3 bg-indigo-500/10 rounded-lg">
-                <span className="text-sm text-indigo-300 mr-2"><Icon name="Database" size={16} className="inline mr-1"/>Importer de la banque:</span>
-                <Button size="sm" variant="secondary" onClick={()=>{setSelectedBankQuestions([]);setImportModal(questionsModal);}}>Sélectionner manuellement</Button>
-                <Button size="sm" variant="secondary" onClick={()=>randomPickFromBank(questionsModal,5,'all','all')}>5 aléatoires</Button>
-                <Button size="sm" variant="secondary" onClick={()=>randomPickFromBank(questionsModal,10,'all','all')}>10 aléatoires</Button>
-              </div>
-            )}
-            
-            {/* Liste des questions existantes */}
-            <div>
-              <h4 className="font-medium mb-3">Questions ({questions.length}) {questions.length>0&&<span className="text-gray-400 font-normal text-sm ml-2">— Total: {questions.reduce((a,q)=>a+(q.points||1),0)} pts</span>}</h4>
-              <div className="space-y-3 max-h-72 overflow-y-auto">
-                {questions.map((q,i)=>(
-                  <div key={q.id} className="p-4 bg-gray-700 rounded-lg">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center flex-wrap gap-2 mb-1">
-                          <span className="text-indigo-400 font-medium">Q{i+1}.</span>
-                          <span className="px-2 py-0.5 bg-gray-600 rounded text-xs">{QUESTION_TYPES[q.question_type]?.label||q.question_type}</span>
-                          {(q.points||1)!==1&&<span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs">{q.points} pts</span>}
-                          {q.time_limit>0&&<span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs"><Icon name="Clock" size={10} className="inline mr-1"/>{q.time_limit}s</span>}
-                          {q.image_url&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs"><Icon name="Image" size={10} className="inline"/></span>}
-                          {q.audio_url&&<span className="px-2 py-0.5 bg-pink-500/20 text-pink-400 rounded text-xs"><Icon name="Music" size={10} className="inline"/></span>}
-                          {q.vimeo_id&&<span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-400 rounded text-xs"><Icon name="Video" size={10} className="inline"/></span>}
-                          {(q.feedback_correct||q.feedback_incorrect)&&<span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs"><Icon name="MessageCircle" size={10} className="inline"/></span>}
-                        </div>
-                        {/* Médias */}
-                        <div className="flex flex-wrap gap-2 mb-2">
-                          {q.image_url&&<img src={q.image_url} alt="" className="max-h-20 rounded"/>}
-                          {q.audio_url&&<audio src={q.audio_url} controls className="h-8"/>}
-                          {q.vimeo_id&&<div className="w-32 aspect-video bg-gray-800 rounded overflow-hidden"><iframe src={`https://player.vimeo.com/video/${q.vimeo_id}`} className="w-full h-full" frameBorder="0"/></div>}
-                        </div>
-                        <p className="font-medium mb-2">{q.question_text}</p>
-                        <div className="space-y-1">{renderQuestionAnswers(q)}</div>
-                        {(q.feedback_correct||q.feedback_incorrect)&&(
-                          <div className="mt-2 pt-2 border-t border-gray-600 text-xs">
-                            {q.feedback_correct&&<p className="text-green-400"><Icon name="Check" size={12} className="inline mr-1"/>Bonne réponse: {q.feedback_correct}</p>}
-                            {q.feedback_incorrect&&<p className="text-red-400"><Icon name="X" size={12} className="inline mr-1"/>Mauvaise réponse: {q.feedback_incorrect}</p>}
+        
+        {/* === ONGLET QUESTIONS (Banque + Formulaire) === */}
+        {activeTab==='questions'&&(
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Colonne gauche : Liste des questions */}
+            <div className="space-y-4">
+              {/* Filtres */}
+              <Card className="p-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  <Input size="sm" icon="Search" placeholder="Rechercher..." value={bankFilter.search} onChange={e=>setBankFilter({...bankFilter,search:e.target.value})}/>
+                  <Select size="sm" value={bankFilter.category} onChange={e=>setBankFilter({...bankFilter,category:e.target.value})} options={[{value:'all',label:'Catégorie'},...categories.map(c=>({value:c.name,label:c.name}))]}/>
+                  <Select size="sm" value={bankFilter.theme} onChange={e=>setBankFilter({...bankFilter,theme:e.target.value,sub_theme:'all'})} options={[{value:'all',label:'Thème'},...themes.map(t=>({value:t.name,label:t.name}))]}/>
+                  <Select size="sm" value={bankFilter.difficulty} onChange={e=>setBankFilter({...bankFilter,difficulty:e.target.value})} options={[{value:'all',label:'Difficulté'},...DIFFICULTIES.map(d=>({value:d.value,label:d.label}))]}/>
+                </div>
+              </Card>
+              
+              {/* Liste */}
+              <div className="space-y-2 max-h-[calc(100vh-300px)] overflow-y-auto">
+                {filteredQuestions.length===0?<Card className="p-8 text-center text-gray-500">Aucune question</Card>:(
+                  filteredQuestions.map(q=>(
+                    <Card key={q.id} className={`p-3 cursor-pointer hover:border-indigo-500 transition-colors ${editingQuestion?.id===q.id?'border-indigo-500':''}`} onClick={()=>editQuestion(q)}>
+                      <div className="flex items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap gap-1 mb-1">
+                            <span className="px-2 py-0.5 bg-gray-600 rounded text-xs">{QUESTION_TYPES[q.question_type]?.label}</span>
+                            {q.category&&<span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded text-xs">{q.category}</span>}
+                            <span className={`px-2 py-0.5 rounded text-xs ${q.difficulty==='easy'?'bg-green-500/20 text-green-400':q.difficulty==='hard'?'bg-red-500/20 text-red-400':'bg-yellow-500/20 text-yellow-400'}`}>{DIFFICULTIES.find(d=>d.value===q.difficulty)?.label}</span>
+                            {q.image_url&&<Icon name="Image" size={12} className="text-purple-400"/>}
+                            {q.audio_url&&<Icon name="Music" size={12} className="text-pink-400"/>}
+                            {q.vimeo_id&&<Icon name="Video" size={12} className="text-cyan-400"/>}
                           </div>
-                        )}
-                      </div>
-                      <div className="flex gap-1 ml-2">
-                        <button onClick={()=>duplicateQuestion(q)} className="p-1.5 hover:bg-gray-600 rounded" title="Dupliquer"><Icon name="Copy" size={14}/></button>
-                        <button onClick={()=>deleteQuestion(q.id)} className="p-1.5 hover:bg-red-600 rounded" title="Supprimer"><Icon name="Trash2" size={14}/></button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                {questions.length===0&&<p className="text-gray-500 text-center py-4">Aucune question</p>}
-              </div>
-            </div>
-
-            {/* Formulaire nouvelle question */}
-            <div className="p-4 bg-gray-700/50 rounded-lg space-y-4">
-              <h4 className="font-medium">Ajouter une question</h4>
-              
-              {/* Sélection du type */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Type de question</label>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                  {Object.entries(QUESTION_TYPES).map(([type,info])=>(
-                    <button key={type} onClick={()=>changeQuestionType(type)} className={`p-3 rounded-lg border text-left transition-all ${newQuestion.question_type===type?'border-indigo-500 bg-indigo-500/20':'border-gray-600 hover:border-gray-500'}`}>
-                      <div className="flex items-center gap-2">
-                        <Icon name={info.icon} size={18} className={newQuestion.question_type===type?'text-indigo-400':'text-gray-400'}/>
-                        <span className="font-medium text-sm">{info.label}</span>
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">{info.desc}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              
-              {/* Texte de la question */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">Question *</label>
-                <textarea value={newQuestion.question_text} onChange={e=>setNewQuestion({...newQuestion,question_text:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Entrez votre question..."/>
-              </div>
-              
-              {/* Choix unique / multiple */}
-              {(newQuestion.question_type==='single'||newQuestion.question_type==='multiple')&&(
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Réponses {newQuestion.question_type==='single'?'(cochez la bonne)':'(cochez les bonnes)'}</label>
-                  <div className="space-y-2">
-                    {newQuestion.answers.map((a,i)=>(
-                      <div key={i} className="flex items-center gap-2">
-                        <input type={newQuestion.question_type==='single'?'radio':'checkbox'} name="correct" checked={a.is_correct} onChange={()=>updateAnswer(i,'is_correct',!a.is_correct)} className="w-5 h-5 accent-indigo-500"/>
-                        <Input className="flex-1" placeholder={`Réponse ${i+1}`} value={a.text} onChange={e=>updateAnswer(i,'text',e.target.value)}/>
-                        {newQuestion.answers.length>2&&<button onClick={()=>removeAnswerOption(i)} className="p-2 hover:bg-red-500/20 rounded"><Icon name="X" size={16} className="text-red-400"/></button>}
-                      </div>
-                    ))}
-                  </div>
-                  {newQuestion.answers.length<8&&<Button variant="ghost" size="sm" icon="Plus" onClick={addAnswerOption} className="mt-2">Ajouter une option</Button>}
-                </div>
-              )}
-              
-              {/* Vrai/Faux */}
-              {newQuestion.question_type==='true_false'&&(
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">La bonne réponse est :</label>
-                  <div className="flex gap-4">
-                    <label className={`flex-1 p-4 rounded-lg border cursor-pointer transition-all ${newQuestion.answers[0]?.is_correct?'border-green-500 bg-green-500/20':'border-gray-600 hover:border-gray-500'}`}>
-                      <input type="radio" name="tf" checked={newQuestion.answers[0]?.is_correct} onChange={()=>updateAnswer(0,'is_correct',true)} className="hidden"/>
-                      <div className="text-center"><Icon name="Check" size={24} className={`mx-auto ${newQuestion.answers[0]?.is_correct?'text-green-400':'text-gray-500'}`}/><span className="font-medium">Vrai</span></div>
-                    </label>
-                    <label className={`flex-1 p-4 rounded-lg border cursor-pointer transition-all ${newQuestion.answers[1]?.is_correct?'border-red-500 bg-red-500/20':'border-gray-600 hover:border-gray-500'}`}>
-                      <input type="radio" name="tf" checked={newQuestion.answers[1]?.is_correct} onChange={()=>updateAnswer(1,'is_correct',true)} className="hidden"/>
-                      <div className="text-center"><Icon name="X" size={24} className={`mx-auto ${newQuestion.answers[1]?.is_correct?'text-red-400':'text-gray-500'}`}/><span className="font-medium">Faux</span></div>
-                    </label>
-                  </div>
-                </div>
-              )}
-              
-              {/* Texte libre */}
-              {newQuestion.question_type==='text'&&(
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Mots-clés acceptés</label>
-                  <div className="flex gap-2 mb-2">
-                    <Input className="flex-1" placeholder="Ajouter un mot-clé..." value={newQuestion.answers[0]?.text||''} onChange={e=>updateAnswer(0,'text',e.target.value)} onKeyDown={e=>e.key==='Enter'&&(e.preventDefault(),addKeyword())}/>
-                    <Button icon="Plus" onClick={addKeyword}>Ajouter</Button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(newQuestion.keywords||[]).map(kw=>(<span key={kw} className="px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-full flex items-center gap-2">{kw}<button onClick={()=>removeKeyword(kw)} className="hover:text-red-400"><Icon name="X" size={14}/></button></span>))}
-                    {!(newQuestion.keywords||[]).length&&<span className="text-gray-500 text-sm">Aucun mot-clé</span>}
-                  </div>
-                </div>
-              )}
-              
-              {/* Correspondance */}
-              {newQuestion.question_type==='matching'&&(
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Paires à associer</label>
-                  <div className="space-y-2">
-                    {(newQuestion.pairs||[]).map((p,i)=>(
-                      <div key={i} className="flex items-center gap-2">
-                        <Input className="flex-1" placeholder={`Élément ${i+1}`} value={p.left} onChange={e=>updatePair(i,'left',e.target.value)}/>
-                        <Icon name="ArrowLeftRight" size={20} className="text-gray-500 shrink-0"/>
-                        <Input className="flex-1" placeholder={`Correspondance ${i+1}`} value={p.right} onChange={e=>updatePair(i,'right',e.target.value)}/>
-                        {(newQuestion.pairs||[]).length>2&&<button onClick={()=>removePair(i)} className="p-2 hover:bg-red-500/20 rounded"><Icon name="X" size={16} className="text-red-400"/></button>}
-                      </div>
-                    ))}
-                  </div>
-                  {(newQuestion.pairs||[]).length<8&&<Button variant="ghost" size="sm" icon="Plus" onClick={addPair} className="mt-2">Ajouter une paire</Button>}
-                </div>
-              )}
-              
-              {/* Ordonnancement */}
-              {newQuestion.question_type==='ordering'&&(
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Éléments dans l'ordre correct</label>
-                  <div className="space-y-2">
-                    {(newQuestion.items||[]).map((item,i)=>(
-                      <div key={i} className="flex items-center gap-2">
-                        <span className="w-8 h-8 bg-indigo-500/20 rounded flex items-center justify-center text-indigo-400 font-medium shrink-0">{i+1}</span>
-                        <Input className="flex-1" placeholder={`Étape ${i+1}`} value={item} onChange={e=>updateItem(i,e.target.value)}/>
-                        {(newQuestion.items||[]).length>2&&<button onClick={()=>removeItem(i)} className="p-2 hover:bg-red-500/20 rounded"><Icon name="X" size={16} className="text-red-400"/></button>}
-                      </div>
-                    ))}
-                  </div>
-                  {(newQuestion.items||[]).length<10&&<Button variant="ghost" size="sm" icon="Plus" onClick={addItem} className="mt-2">Ajouter un élément</Button>}
-                </div>
-              )}
-              
-              {/* Options avancées */}
-              <div className="border-t border-gray-600 pt-4">
-                <button onClick={()=>setShowAdvanced(!showAdvanced)} className="flex items-center gap-2 text-sm text-gray-400 hover:text-white">
-                  <Icon name={showAdvanced?'ChevronDown':'ChevronRight'} size={16}/>
-                  <Icon name="Settings" size={16}/>
-                  Options avancées
-                  {(newQuestion.points!==1||newQuestion.time_limit>0||newQuestion.image_url||newQuestion.audio_url||newQuestion.vimeo_id||newQuestion.feedback_correct||newQuestion.feedback_incorrect)&&(
-                    <span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded text-xs ml-2">Configuré</span>
-                  )}
-                </button>
-                
-                {showAdvanced&&(
-                  <div className="mt-4 space-y-4 p-4 bg-gray-800/50 rounded-lg">
-                    <div className="grid grid-cols-2 gap-4">
-                      {/* Points */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-1">
-                          <Icon name="Star" size={14} className="inline mr-1 text-yellow-400"/>Points
-                        </label>
-                        <Input type="number" min="1" max="100" value={newQuestion.points} onChange={e=>setNewQuestion({...newQuestion,points:parseInt(e.target.value)||1})} placeholder="1"/>
-                      </div>
-                      
-                      {/* Temps limite */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-1">
-                          <Icon name="Clock" size={14} className="inline mr-1 text-blue-400"/>Temps limite (sec)
-                        </label>
-                        <Input type="number" min="0" max="600" value={newQuestion.time_limit} onChange={e=>setNewQuestion({...newQuestion,time_limit:parseInt(e.target.value)||0})} placeholder="0 = illimité"/>
-                      </div>
-                    </div>
-                    
-                    {/* Médias */}
-                    <div className="p-3 bg-gray-700/50 rounded-lg">
-                      <h5 className="text-sm font-medium text-gray-300 mb-3"><Icon name="Image" size={14} className="inline mr-2"/>Médias</h5>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        {/* Image upload */}
-                        <div>
-                          <label className="block text-xs text-gray-400 mb-2">Image</label>
-                          {!newQuestion.image_url?(
-                            <label className="flex flex-col items-center justify-center gap-1 p-3 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-indigo-500 transition-colors">
-                              <Icon name="Upload" size={20} className="text-gray-400"/>
-                              <span className="text-xs text-gray-400">{uploadingMedia?'Upload...':'Choisir'}</span>
-                              <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} disabled={uploadingMedia}/>
-                            </label>
-                          ):(
-                            <div className="relative">
-                              <img src={newQuestion.image_url} alt="Preview" className="w-full h-20 object-cover rounded"/>
-                              <button onClick={()=>setNewQuestion({...newQuestion,image_url:''})} className="absolute top-1 right-1 p-1 bg-red-500 rounded-full"><Icon name="X" size={10}/></button>
-                            </div>
-                          )}
+                          <p className="text-sm truncate">{q.question_text}</p>
                         </div>
-                        
-                        {/* Audio upload */}
-                        <div>
-                          <label className="block text-xs text-gray-400 mb-2">Audio MP3</label>
-                          {!newQuestion.audio_url?(
-                            <label className="flex flex-col items-center justify-center gap-1 p-3 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-indigo-500 transition-colors">
-                              <Icon name="Music" size={20} className="text-gray-400"/>
-                              <span className="text-xs text-gray-400">{uploadingMedia?'Upload...':'Choisir'}</span>
-                              <input type="file" accept="audio/*" className="hidden" onChange={handleAudioChange} disabled={uploadingMedia}/>
-                            </label>
-                          ):(
-                            <div className="flex items-center gap-2 p-2 bg-gray-600 rounded">
-                              <audio src={newQuestion.audio_url} controls className="h-8 flex-1" style={{maxWidth:'100%'}}/>
-                              <button onClick={()=>setNewQuestion({...newQuestion,audio_url:''})} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={12} className="text-red-400"/></button>
-                            </div>
-                          )}
-                        </div>
-                        
-                        {/* Vidéo Vimeo */}
-                        <div>
-                          <label className="block text-xs text-gray-400 mb-2">Vidéo Vimeo</label>
-                          <Input size="sm" placeholder="URL ou ID Vimeo" value={newQuestion.vimeo_id||''} onChange={e=>setNewQuestion({...newQuestion,vimeo_id:extractVimeoId(e.target.value)||e.target.value})}/>
-                          {newQuestion.vimeo_id&&(
-                            <div className="mt-2 aspect-video bg-gray-800 rounded overflow-hidden">
-                              <iframe src={`https://player.vimeo.com/video/${newQuestion.vimeo_id}`} className="w-full h-full" frameBorder="0" allow="autoplay; fullscreen" allowFullScreen/>
-                            </div>
-                          )}
-                        </div>
+                        <button onClick={e=>{e.stopPropagation();deleteQuestion(q.id);}} className="p-1 hover:bg-red-500/20 rounded"><Icon name="Trash2" size={14} className="text-red-400"/></button>
                       </div>
-                    </div>
-                    
-                    {/* Feedback */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-1">
-                          <Icon name="Check" size={14} className="inline mr-1 text-green-400"/>Feedback si correct
-                        </label>
-                        <textarea value={newQuestion.feedback_correct} onChange={e=>setNewQuestion({...newQuestion,feedback_correct:e.target.value})} rows={2} className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm resize-none" placeholder="Bravo ! Explication..."/>
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-1">
-                          <Icon name="X" size={14} className="inline mr-1 text-red-400"/>Feedback si incorrect
-                        </label>
-                        <textarea value={newQuestion.feedback_incorrect} onChange={e=>setNewQuestion({...newQuestion,feedback_incorrect:e.target.value})} rows={2} className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm resize-none" placeholder="Dommage ! La bonne réponse était..."/>
-                      </div>
-                    </div>
-                  </div>
+                    </Card>
+                  ))
                 )}
               </div>
+            </div>
+            
+            {/* Colonne droite : Formulaire */}
+            <Card className="p-4 h-fit sticky top-4">
+              <h3 className="font-semibold mb-4">{editingQuestion?'Modifier la question':'Nouvelle question'}</h3>
               
-              <Button icon="Plus" onClick={addQuestion} disabled={!newQuestion.question_text.trim()||uploadingMedia}>Ajouter la question</Button>
-            </div>
-          </div>
-        </Modal>
-
-        {/* Modal création/édition question banque */}
-        <Modal isOpen={bankModal} onClose={()=>{setBankModal(false);setEditingBankQuestion(null);setNewQuestion(getEmptyQuestion());}} title={editingBankQuestion?'Modifier la question':'Nouvelle question (Banque)'} size="xl">
-          <div className="space-y-4 max-h-[80vh] overflow-y-auto pr-2">
-            {/* Classification */}
-            <div className="p-4 bg-gray-700/50 rounded-lg space-y-3">
-              <h4 className="font-medium text-sm text-gray-300"><Icon name="Tag" size={16} className="inline mr-2"/>Classification</h4>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <Select label="Catégorie" value={newQuestion.category||''} onChange={e=>setNewQuestion({...newQuestion,category:e.target.value})} options={[{value:'',label:'-- Aucune --'},...categories.map(c=>({value:c.name,label:c.name}))]}/>
-                <Select label="Thème" value={newQuestion.theme||''} onChange={e=>setNewQuestion({...newQuestion,theme:e.target.value,sub_theme:''})} options={[{value:'',label:'-- Aucun --'},...themes.map(t=>({value:t.name,label:t.name}))]}/>
-                <Select label="Sous-thème" value={newQuestion.sub_theme||''} onChange={e=>setNewQuestion({...newQuestion,sub_theme:e.target.value})} options={[{value:'',label:'-- Aucun --'},...subThemes.filter(st=>{const theme=themes.find(t=>t.name===newQuestion.theme);return theme&&st.theme_id===theme.id;}).map(st=>({value:st.name,label:st.name}))]} disabled={!newQuestion.theme}/>
-                <Select label="Difficulté" value={newQuestion.difficulty||'medium'} onChange={e=>setNewQuestion({...newQuestion,difficulty:e.target.value})} options={DIFFICULTIES.map(d=>({value:d.value,label:d.label}))}/>
-              </div>
-            </div>
-            
-            {/* Type de question */}
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Type de question</label>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {Object.entries(QUESTION_TYPES).map(([type,info])=>(
-                  <button key={type} onClick={()=>changeQuestionType(type)} className={`p-3 rounded-lg border text-left transition-all ${newQuestion.question_type===type?'border-indigo-500 bg-indigo-500/20':'border-gray-600 hover:border-gray-500'}`}>
-                    <div className="flex items-center gap-2">
-                      <Icon name={info.icon} size={18} className={newQuestion.question_type===type?'text-indigo-400':'text-gray-400'}/>
-                      <span className="font-medium text-sm">{info.label}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-            
-            {/* Texte de la question */}
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">Question *</label>
-              <textarea value={newQuestion.question_text} onChange={e=>setNewQuestion({...newQuestion,question_text:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Entrez votre question..."/>
-            </div>
-            
-            {/* Réponses selon le type (réutilise la même logique) */}
-            {(newQuestion.question_type==='single'||newQuestion.question_type==='multiple')&&(
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Réponses</label>
-                <div className="space-y-2">
-                  {newQuestion.answers.map((a,i)=>(
-                    <div key={i} className="flex items-center gap-2">
-                      <input type={newQuestion.question_type==='single'?'radio':'checkbox'} name="correct" checked={a.is_correct} onChange={()=>updateAnswer(i,'is_correct',!a.is_correct)} className="w-5 h-5 accent-indigo-500"/>
-                      <Input className="flex-1" placeholder={`Réponse ${i+1}`} value={a.text} onChange={e=>updateAnswer(i,'text',e.target.value)}/>
-                      {newQuestion.answers.length>2&&<button onClick={()=>removeAnswerOption(i)} className="p-2 hover:bg-red-500/20 rounded"><Icon name="X" size={16} className="text-red-400"/></button>}
-                    </div>
-                  ))}
-                </div>
-                {newQuestion.answers.length<8&&<Button variant="ghost" size="sm" icon="Plus" onClick={addAnswerOption} className="mt-2">Ajouter</Button>}
-              </div>
-            )}
-            
-            {newQuestion.question_type==='true_false'&&(
-              <div className="flex gap-4">
-                <label className={`flex-1 p-4 rounded-lg border cursor-pointer ${newQuestion.answers[0]?.is_correct?'border-green-500 bg-green-500/20':'border-gray-600'}`}>
-                  <input type="radio" name="tf" checked={newQuestion.answers[0]?.is_correct} onChange={()=>updateAnswer(0,'is_correct',true)} className="hidden"/>
-                  <div className="text-center"><Icon name="Check" size={24} className={`mx-auto ${newQuestion.answers[0]?.is_correct?'text-green-400':'text-gray-500'}`}/><span>Vrai</span></div>
-                </label>
-                <label className={`flex-1 p-4 rounded-lg border cursor-pointer ${newQuestion.answers[1]?.is_correct?'border-red-500 bg-red-500/20':'border-gray-600'}`}>
-                  <input type="radio" name="tf" checked={newQuestion.answers[1]?.is_correct} onChange={()=>updateAnswer(1,'is_correct',true)} className="hidden"/>
-                  <div className="text-center"><Icon name="X" size={24} className={`mx-auto ${newQuestion.answers[1]?.is_correct?'text-red-400':'text-gray-500'}`}/><span>Faux</span></div>
-                </label>
-              </div>
-            )}
-            
-            {newQuestion.question_type==='text'&&(
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Mots-clés acceptés</label>
-                <div className="flex gap-2 mb-2">
-                  <Input className="flex-1" placeholder="Ajouter un mot-clé..." value={newQuestion.answers[0]?.text||''} onChange={e=>updateAnswer(0,'text',e.target.value)} onKeyDown={e=>e.key==='Enter'&&(e.preventDefault(),addKeyword())}/>
-                  <Button icon="Plus" onClick={addKeyword}>Ajouter</Button>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {(newQuestion.keywords||[]).map(kw=>(<span key={kw} className="px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-full flex items-center gap-2">{kw}<button onClick={()=>removeKeyword(kw)}><Icon name="X" size={14}/></button></span>))}
-                </div>
-              </div>
-            )}
-            
-            {newQuestion.question_type==='matching'&&(
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Paires</label>
-                <div className="space-y-2">
-                  {(newQuestion.pairs||[]).map((p,i)=>(
-                    <div key={i} className="flex items-center gap-2">
-                      <Input className="flex-1" placeholder="Élément" value={p.left} onChange={e=>updatePair(i,'left',e.target.value)}/>
-                      <Icon name="ArrowLeftRight" size={20} className="text-gray-500"/>
-                      <Input className="flex-1" placeholder="Correspondance" value={p.right} onChange={e=>updatePair(i,'right',e.target.value)}/>
-                      {(newQuestion.pairs||[]).length>2&&<button onClick={()=>removePair(i)} className="p-2 hover:bg-red-500/20 rounded"><Icon name="X" size={16} className="text-red-400"/></button>}
-                    </div>
-                  ))}
-                </div>
-                {(newQuestion.pairs||[]).length<8&&<Button variant="ghost" size="sm" icon="Plus" onClick={addPair} className="mt-2">Ajouter</Button>}
-              </div>
-            )}
-            
-            {newQuestion.question_type==='ordering'&&(
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Éléments (ordre correct)</label>
-                <div className="space-y-2">
-                  {(newQuestion.items||[]).map((item,i)=>(
-                    <div key={i} className="flex items-center gap-2">
-                      <span className="w-8 h-8 bg-indigo-500/20 rounded flex items-center justify-center text-indigo-400">{i+1}</span>
-                      <Input className="flex-1" placeholder={`Étape ${i+1}`} value={item} onChange={e=>updateItem(i,e.target.value)}/>
-                      {(newQuestion.items||[]).length>2&&<button onClick={()=>removeItem(i)} className="p-2 hover:bg-red-500/20 rounded"><Icon name="X" size={16} className="text-red-400"/></button>}
-                    </div>
-                  ))}
-                </div>
-                {(newQuestion.items||[]).length<10&&<Button variant="ghost" size="sm" icon="Plus" onClick={addItem} className="mt-2">Ajouter</Button>}
-              </div>
-            )}
-            
-            {/* Médias */}
-            <div className="p-4 bg-gray-700/50 rounded-lg space-y-4">
-              <h4 className="font-medium text-sm text-gray-300"><Icon name="Image" size={16} className="inline mr-2"/>Médias</h4>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Image */}
-                <div>
-                  <label className="block text-sm text-gray-300 mb-2">Image</label>
-                  <div className="space-y-2">
-                    <label className="flex items-center justify-center gap-2 p-3 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-indigo-500 transition-colors">
-                      <Icon name="Upload" size={20} className="text-gray-400"/>
-                      <span className="text-sm text-gray-400">{uploadingMedia?'Upload...':'Choisir une image'}</span>
-                      <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} disabled={uploadingMedia}/>
-                    </label>
-                    {newQuestion.image_url&&(
-                      <div className="relative">
-                        <img src={newQuestion.image_url} alt="Preview" className="w-full h-24 object-cover rounded"/>
-                        <button onClick={()=>setNewQuestion({...newQuestion,image_url:''})} className="absolute top-1 right-1 p-1 bg-red-500 rounded-full"><Icon name="X" size={12}/></button>
+              {/* Médias en haut */}
+              <div className="mb-4 p-4 bg-gray-700/50 rounded-lg">
+                <div className="grid grid-cols-2 gap-4 mb-3">
+                  {/* Image ou Vidéo */}
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-2">Image</label>
+                    {!questionForm.image_url?(
+                      <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-indigo-500">
+                        <Icon name="Upload" size={24} className="text-gray-400 mb-1"/>
+                        <span className="text-xs text-gray-400">{uploadingMedia?'Upload...':'Choisir une image'}</span>
+                        <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} disabled={uploadingMedia}/>
+                      </label>
+                    ):(
+                      <div className="relative h-32">
+                        <img src={questionForm.image_url} alt="" className="w-full h-full object-cover rounded-lg"/>
+                        <button onClick={()=>setQuestionForm({...questionForm,image_url:''})} className="absolute top-1 right-1 p-1 bg-red-500 rounded-full"><Icon name="X" size={12}/></button>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Vidéo Vimeo */}
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-2">Vidéo Vimeo</label>
+                    {!questionForm.vimeo_id?(
+                      <div className="h-32 flex flex-col">
+                        <Input size="sm" placeholder="URL ou ID Vimeo" onChange={e=>setQuestionForm({...questionForm,vimeo_id:extractVimeoId(e.target.value)})}/>
+                      </div>
+                    ):(
+                      <div className="relative h-32">
+                        <iframe src={`https://player.vimeo.com/video/${questionForm.vimeo_id}`} className="w-full h-full rounded-lg" frameBorder="0"/>
+                        <button onClick={()=>setQuestionForm({...questionForm,vimeo_id:''})} className="absolute top-1 right-1 p-1 bg-red-500 rounded-full"><Icon name="X" size={12}/></button>
                       </div>
                     )}
                   </div>
@@ -4582,188 +3759,313 @@
                 
                 {/* Audio */}
                 <div>
-                  <label className="block text-sm text-gray-300 mb-2">Audio MP3</label>
-                  <div className="space-y-2">
-                    <label className="flex items-center justify-center gap-2 p-3 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-indigo-500 transition-colors">
+                  <label className="block text-xs text-gray-400 mb-2">Audio MP3</label>
+                  {!questionForm.audio_url?(
+                    <label className="flex items-center justify-center gap-2 p-3 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-indigo-500">
                       <Icon name="Music" size={20} className="text-gray-400"/>
-                      <span className="text-sm text-gray-400">{uploadingMedia?'Upload...':'Choisir un audio'}</span>
+                      <span className="text-xs text-gray-400">{uploadingMedia?'Upload...':'Choisir un audio'}</span>
                       <input type="file" accept="audio/*" className="hidden" onChange={handleAudioChange} disabled={uploadingMedia}/>
                     </label>
-                    {newQuestion.audio_url&&(
-                      <div className="flex items-center gap-2 p-2 bg-gray-600 rounded">
-                        <audio src={newQuestion.audio_url} controls className="h-8 flex-1"/>
-                        <button onClick={()=>setNewQuestion({...newQuestion,audio_url:''})} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={14} className="text-red-400"/></button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                
-                {/* Vidéo Vimeo */}
-                <div>
-                  <label className="block text-sm text-gray-300 mb-2">Vidéo Vimeo</label>
-                  <Input placeholder="URL ou ID Vimeo" value={newQuestion.vimeo_id} onChange={e=>setNewQuestion({...newQuestion,vimeo_id:extractVimeoId(e.target.value)||e.target.value})}/>
-                  {newQuestion.vimeo_id&&(
-                    <div className="mt-2 aspect-video bg-gray-800 rounded overflow-hidden">
-                      <iframe src={`https://player.vimeo.com/video/${newQuestion.vimeo_id}`} className="w-full h-full" frameBorder="0" allow="autoplay; fullscreen" allowFullScreen/>
+                  ):(
+                    <div className="flex items-center gap-2 p-2 bg-gray-600 rounded-lg">
+                      <audio src={questionForm.audio_url} controls className="flex-1 h-8"/>
+                      <button onClick={()=>setQuestionForm({...questionForm,audio_url:''})} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={14} className="text-red-400"/></button>
                     </div>
                   )}
                 </div>
               </div>
-            </div>
-            
-            {/* Options avancées */}
-            <div className="grid grid-cols-2 gap-4 p-3 bg-gray-700/50 rounded-lg">
-              <Input label="Points" type="number" min="1" max="100" value={newQuestion.points} onChange={e=>setNewQuestion({...newQuestion,points:parseInt(e.target.value)||1})}/>
-              <Input label="Temps limite (sec)" type="number" min="0" value={newQuestion.time_limit} onChange={e=>setNewQuestion({...newQuestion,time_limit:parseInt(e.target.value)||0})}/>
-              <div><label className="block text-sm text-gray-300 mb-1">Feedback correct</label><textarea value={newQuestion.feedback_correct} onChange={e=>setNewQuestion({...newQuestion,feedback_correct:e.target.value})} rows={2} className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-sm resize-none"/></div>
-              <div><label className="block text-sm text-gray-300 mb-1">Feedback incorrect</label><textarea value={newQuestion.feedback_incorrect} onChange={e=>setNewQuestion({...newQuestion,feedback_incorrect:e.target.value})} rows={2} className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-sm resize-none"/></div>
-            </div>
-            
-            <div className="flex justify-end gap-3">
-              <Button variant="secondary" onClick={()=>{setBankModal(false);setEditingBankQuestion(null);}}>Annuler</Button>
-              <Button onClick={saveBankQuestion} disabled={!newQuestion.question_text.trim()||uploadingMedia}>{editingBankQuestion?'Mettre à jour':'Ajouter à la banque'}</Button>
-            </div>
-          </div>
-        </Modal>
-
-        {/* Modal import depuis la banque */}
-        <Modal isOpen={!!importModal} onClose={()=>{setImportModal(null);setSelectedBankQuestions([]);}} title={`Importer vers: ${importModal?.title}`} size="xl">
-          <div className="space-y-4">
-            {/* Filtres */}
-            <div className="grid grid-cols-3 gap-4">
-              <Input icon="Search" placeholder="Rechercher..." value={bankFilter.search} onChange={e=>setBankFilter({...bankFilter,search:e.target.value})}/>
-              <Select value={bankFilter.category} onChange={e=>setBankFilter({...bankFilter,category:e.target.value})} options={[{value:'all',label:'Toutes catégories'},...categories.map(c=>({value:c.name,label:c.name}))]}/>
-              <Select value={bankFilter.difficulty} onChange={e=>setBankFilter({...bankFilter,difficulty:e.target.value})} options={[{value:'all',label:'Toutes difficultés'},...DIFFICULTIES.map(d=>({value:d.value,label:d.label}))]}/>
-            </div>
-            
-            <p className="text-sm text-gray-400">{selectedBankQuestions.length} question(s) sélectionnée(s) sur {filteredBankQuestions.length}</p>
-            
-            {/* Liste des questions */}
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {filteredBankQuestions.map(q=>(
-                <label key={q.id} className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-all ${selectedBankQuestions.includes(q.id)?'bg-indigo-500/20 border border-indigo-500':'bg-gray-700 border border-transparent hover:border-gray-600'}`}>
-                  <input type="checkbox" checked={selectedBankQuestions.includes(q.id)} onChange={e=>{
-                    if(e.target.checked)setSelectedBankQuestions([...selectedBankQuestions,q.id]);
-                    else setSelectedBankQuestions(selectedBankQuestions.filter(id=>id!==q.id));
-                  }} className="mt-1 w-5 h-5 accent-indigo-500"/>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="px-2 py-0.5 bg-gray-600 rounded text-xs">{QUESTION_TYPES[q.question_type]?.label}</span>
-                      <span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded text-xs">{q.category}</span>
-                      <span className={`px-2 py-0.5 rounded text-xs ${q.difficulty==='easy'?'bg-green-500/20 text-green-400':q.difficulty==='hard'?'bg-red-500/20 text-red-400':'bg-yellow-500/20 text-yellow-400'}`}>
-                        {DIFFICULTIES.find(d=>d.value===q.difficulty)?.label}
-                      </span>
-                    </div>
-                    <p className="text-sm">{q.question_text}</p>
-                  </div>
-                </label>
-              ))}
-              {filteredBankQuestions.length===0&&<p className="text-center text-gray-500 py-8">Aucune question dans la banque</p>}
-            </div>
-            
-            <div className="flex justify-between">
-              <div className="flex gap-2">
-                <Button variant="secondary" size="sm" onClick={()=>setSelectedBankQuestions(filteredBankQuestions.map(q=>q.id))}>Tout sélectionner</Button>
-                <Button variant="secondary" size="sm" onClick={()=>setSelectedBankQuestions([])}>Tout désélectionner</Button>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="secondary" onClick={()=>setImportModal(null)}>Annuler</Button>
-                <Button onClick={importFromBank} disabled={selectedBankQuestions.length===0}>Importer {selectedBankQuestions.length} question(s)</Button>
-              </div>
-            </div>
-          </div>
-        </Modal>
-
-        {/* Modal prévisualisation quiz */}
-        <Modal isOpen={!!previewQuiz} onClose={()=>setPreviewQuiz(null)} title={`Prévisualisation: ${previewQuiz?.title}`} size="xl">
-          {previewQuiz&&(
-            <div className="space-y-6">
-              {/* Infos quiz */}
-              <div className="flex items-center gap-4 p-3 bg-gray-700/50 rounded-lg text-sm">
-                <span><Icon name="HelpCircle" size={16} className="inline mr-1"/>{previewQuiz.questions?.length||0} questions</span>
-                <span><Icon name="Target" size={16} className="inline mr-1"/>{previewQuiz.passing_score}% pour réussir</span>
-                {previewQuiz.time_limit>0&&<span><Icon name="Clock" size={16} className="inline mr-1"/>{previewQuiz.time_limit} min</span>}
-                {previewQuiz.shuffle_questions&&<span className="text-purple-400">Questions mélangées</span>}
-                {previewQuiz.shuffle_answers&&<span className="text-purple-400">Réponses mélangées</span>}
+              
+              {/* Classification */}
+              <div className="grid grid-cols-4 gap-2 mb-4">
+                <Select size="sm" value={questionForm.category} onChange={e=>setQuestionForm({...questionForm,category:e.target.value})} options={[{value:'',label:'Catégorie'},...categories.map(c=>({value:c.name,label:c.name}))]}/>
+                <Select size="sm" value={questionForm.theme} onChange={e=>setQuestionForm({...questionForm,theme:e.target.value,sub_theme:''})} options={[{value:'',label:'Thème'},...themes.map(t=>({value:t.name,label:t.name}))]}/>
+                <Select size="sm" value={questionForm.sub_theme} onChange={e=>setQuestionForm({...questionForm,sub_theme:e.target.value})} options={[{value:'',label:'Sous-thème'},...subThemes.filter(st=>{const th=themes.find(t=>t.name===questionForm.theme);return th&&st.theme_id===th.id;}).map(st=>({value:st.name,label:st.name}))]} disabled={!questionForm.theme}/>
+                <Select size="sm" value={questionForm.difficulty} onChange={e=>setQuestionForm({...questionForm,difficulty:e.target.value})} options={DIFFICULTIES.map(d=>({value:d.value,label:d.label}))}/>
               </div>
               
-              {/* Résultat si soumis */}
-              {previewSubmitted&&(
-                <div className={`p-4 rounded-lg ${calculatePreviewScore().percent>=previewQuiz.passing_score?'bg-green-500/20 border border-green-500':'bg-red-500/20 border border-red-500'}`}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold text-lg">{calculatePreviewScore().percent>=previewQuiz.passing_score?'✓ Quiz réussi !':'✗ Quiz échoué'}</p>
-                      <p className="text-sm text-gray-300">Score: {calculatePreviewScore().score}/{calculatePreviewScore().total} points ({calculatePreviewScore().percent}%)</p>
-                    </div>
-                    <Button variant="secondary" onClick={()=>{setPreviewAnswers({});setPreviewSubmitted(false);}}>Recommencer</Button>
+              {/* Type de question */}
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                {Object.entries(QUESTION_TYPES).map(([type,info])=>(
+                  <button key={type} onClick={()=>changeQuestionType(type)} className={`p-2 rounded-lg border text-xs ${questionForm.question_type===type?'border-indigo-500 bg-indigo-500/20':'border-gray-600 hover:border-gray-500'}`}>
+                    <Icon name={info.icon} size={16} className="mx-auto mb-1"/>
+                    {info.label}
+                  </button>
+                ))}
+              </div>
+              
+              {/* Question */}
+              <textarea value={questionForm.question_text} onChange={e=>setQuestionForm({...questionForm,question_text:e.target.value})} rows={2} className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white mb-4" placeholder="Votre question..."/>
+              
+              {/* Réponses selon le type */}
+              <div className="mb-4 max-h-48 overflow-y-auto">
+                {(questionForm.question_type==='single'||questionForm.question_type==='multiple')&&(
+                  <div className="space-y-2">
+                    {questionForm.answers.map((a,i)=>(
+                      <div key={i} className="flex items-center gap-2">
+                        <input type={questionForm.question_type==='single'?'radio':'checkbox'} checked={a.is_correct} onChange={()=>updateAnswer(i,'is_correct',!a.is_correct)} className="w-4 h-4"/>
+                        <Input size="sm" className="flex-1" value={a.text} onChange={e=>updateAnswer(i,'text',e.target.value)} placeholder={`Réponse ${i+1}`}/>
+                        {questionForm.answers.length>2&&<button onClick={()=>removeAnswerOption(i)} className="p-1 text-red-400"><Icon name="X" size={14}/></button>}
+                      </div>
+                    ))}
+                    {questionForm.answers.length<8&&<Button size="sm" variant="ghost" icon="Plus" onClick={addAnswerOption}>Ajouter</Button>}
                   </div>
+                )}
+                
+                {questionForm.question_type==='true_false'&&(
+                  <div className="flex gap-4">
+                    {['Vrai','Faux'].map((label,i)=>(
+                      <button key={i} onClick={()=>updateAnswer(i,'is_correct',true)} className={`flex-1 p-4 rounded-lg border ${questionForm.answers[i]?.is_correct?'border-green-500 bg-green-500/20':'border-gray-600'}`}>
+                        <Icon name={i===0?'Check':'X'} size={24} className={`mx-auto ${questionForm.answers[i]?.is_correct?'text-green-400':'text-gray-500'}`}/>
+                        <span className="block text-center mt-1">{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                
+                {questionForm.question_type==='text'&&(
+                  <div>
+                    <div className="flex gap-2 mb-2">
+                      <Input size="sm" className="flex-1" placeholder="Mot-clé..." value={questionForm.answers[0]?.text||''} onChange={e=>updateAnswer(0,'text',e.target.value)} onKeyDown={e=>e.key==='Enter'&&addKeyword()}/>
+                      <Button size="sm" icon="Plus" onClick={addKeyword}>Ajouter</Button>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {questionForm.keywords.map(kw=>(
+                        <span key={kw} className="px-2 py-1 bg-indigo-500/20 text-indigo-300 rounded-full text-xs flex items-center gap-1">
+                          {kw}<button onClick={()=>removeKeyword(kw)}><Icon name="X" size={12}/></button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {questionForm.question_type==='matching'&&(
+                  <div className="space-y-2">
+                    {(questionForm.pairs||[]).map((p,i)=>(
+                      <div key={i} className="flex items-center gap-2">
+                        <Input size="sm" className="flex-1" value={p.left} onChange={e=>updatePair(i,'left',e.target.value)} placeholder="Élément"/>
+                        <Icon name="ArrowRight" size={16} className="text-gray-500"/>
+                        <Input size="sm" className="flex-1" value={p.right} onChange={e=>updatePair(i,'right',e.target.value)} placeholder="Correspondance"/>
+                        {(questionForm.pairs||[]).length>2&&<button onClick={()=>removePair(i)} className="p-1 text-red-400"><Icon name="X" size={14}/></button>}
+                      </div>
+                    ))}
+                    {(questionForm.pairs||[]).length<8&&<Button size="sm" variant="ghost" icon="Plus" onClick={addPair}>Ajouter</Button>}
+                  </div>
+                )}
+                
+                {questionForm.question_type==='ordering'&&(
+                  <div className="space-y-2">
+                    {(questionForm.items||[]).map((item,i)=>(
+                      <div key={i} className="flex items-center gap-2">
+                        <span className="w-6 h-6 bg-indigo-500/20 rounded flex items-center justify-center text-xs">{i+1}</span>
+                        <Input size="sm" className="flex-1" value={item} onChange={e=>updateItem(i,e.target.value)} placeholder={`Étape ${i+1}`}/>
+                        {(questionForm.items||[]).length>2&&<button onClick={()=>removeItem(i)} className="p-1 text-red-400"><Icon name="X" size={14}/></button>}
+                      </div>
+                    ))}
+                    {(questionForm.items||[]).length<10&&<Button size="sm" variant="ghost" icon="Plus" onClick={addItem}>Ajouter</Button>}
+                  </div>
+                )}
+              </div>
+              
+              {/* Options */}
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <Input size="sm" label="Points" type="number" min="1" value={questionForm.points} onChange={e=>setQuestionForm({...questionForm,points:parseInt(e.target.value)||1})}/>
+                <Input size="sm" label="Temps (sec)" type="number" min="0" value={questionForm.time_limit} onChange={e=>setQuestionForm({...questionForm,time_limit:parseInt(e.target.value)||0})}/>
+              </div>
+              
+              {/* Feedback */}
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <div>
+                  <label className="text-xs text-gray-400">Feedback correct</label>
+                  <textarea value={questionForm.feedback_correct} onChange={e=>setQuestionForm({...questionForm,feedback_correct:e.target.value})} rows={2} className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm"/>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400">Feedback incorrect</label>
+                  <textarea value={questionForm.feedback_incorrect} onChange={e=>setQuestionForm({...questionForm,feedback_incorrect:e.target.value})} rows={2} className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm"/>
+                </div>
+              </div>
+              
+              {/* Actions */}
+              <div className="flex gap-2">
+                {editingQuestion&&<Button variant="secondary" onClick={cancelEdit}>Annuler</Button>}
+                <Button className="flex-1" onClick={saveQuestion} loading={saving} disabled={uploadingMedia}>{editingQuestion?'Mettre à jour':'Créer la question'}</Button>
+              </div>
+            </Card>
+          </div>
+        )}
+        
+        {/* === ONGLET QUIZ === */}
+        {activeTab==='quizzes'&&(
+          <div className="space-y-4">
+            <div className="flex justify-end">
+              <Button icon="Plus" onClick={()=>openQuizModal()}>Créer un quiz</Button>
+            </div>
+            
+            {quizzes.length===0?<Empty icon="HelpCircle" title="Aucun quiz" desc="Créez votre premier quiz"/>:(
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {quizzes.map(quiz=>(
+                  <Card key={quiz.id} className="p-4">
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <h3 className="font-semibold">{quiz.title}</h3>
+                        <p className="text-sm text-gray-400">{quiz.playlists?.title||'Quiz indépendant'}</p>
+                      </div>
+                      {quiz.is_required&&<span className="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">Obligatoire</span>}
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs text-gray-400 mb-3">
+                      <span><Icon name="Target" size={12} className="inline mr-1"/>{quiz.passing_score}%</span>
+                      {quiz.time_limit>0&&<span className="text-blue-400"><Icon name="Clock" size={12} className="inline mr-1"/>{quiz.time_limit}min</span>}
+                      {quiz.max_attempts>0&&<span className="text-orange-400">{quiz.max_attempts}x</span>}
+                    </div>
+                    <div className="flex flex-wrap gap-1 mb-3">
+                      {quiz.shuffle_questions&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">Mélange Q</span>}
+                      {quiz.shuffle_answers&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">Mélange R</span>}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="ghost" icon="Play" onClick={()=>openPreview(quiz)}>Tester</Button>
+                      <Button size="sm" variant="ghost" icon="Edit2" onClick={()=>openQuizModal(quiz)}/>
+                      <Button size="sm" variant="ghost" icon="Trash2" className="text-red-400" onClick={()=>deleteQuiz(quiz.id)}/>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        
+        {/* Modal Quiz */}
+        <Modal isOpen={quizModal} onClose={()=>setQuizModal(false)} title={editingQuiz?'Modifier le quiz':'Créer un quiz'} size="xl">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Gauche : Paramètres */}
+            <div className="space-y-4">
+              <Input label="Titre *" value={quizForm.title} onChange={e=>setQuizForm({...quizForm,title:e.target.value})}/>
+              <Select label="Cours associé" value={quizForm.playlist_id} onChange={e=>setQuizForm({...quizForm,playlist_id:e.target.value})} options={[{value:'',label:'-- Aucun --'},...playlists.map(p=>({value:p.id,label:p.title}))]}/>
+              <textarea value={quizForm.description} onChange={e=>setQuizForm({...quizForm,description:e.target.value})} rows={2} className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white" placeholder="Description..."/>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <Input label="Score min (%)" type="number" value={quizForm.passing_score} onChange={e=>setQuizForm({...quizForm,passing_score:parseInt(e.target.value)||70})}/>
+                <Input label="Tentatives (0=∞)" type="number" value={quizForm.max_attempts} onChange={e=>setQuizForm({...quizForm,max_attempts:parseInt(e.target.value)||0})}/>
+                <Input label="Durée (min, 0=∞)" type="number" value={quizForm.time_limit} onChange={e=>setQuizForm({...quizForm,time_limit:parseInt(e.target.value)||0})}/>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-2 p-3 bg-gray-700/50 rounded-lg">
+                <Checkbox label="Quiz obligatoire" checked={quizForm.is_required} onChange={v=>setQuizForm({...quizForm,is_required:v})}/>
+                <Checkbox label="Mélanger questions" checked={quizForm.shuffle_questions} onChange={v=>setQuizForm({...quizForm,shuffle_questions:v})}/>
+                <Checkbox label="Mélanger réponses" checked={quizForm.shuffle_answers} onChange={v=>setQuizForm({...quizForm,shuffle_answers:v})}/>
+                <Checkbox label="Afficher réponses" checked={quizForm.show_answers} onChange={v=>setQuizForm({...quizForm,show_answers:v})}/>
+                <Checkbox label="Afficher feedback" checked={quizForm.show_feedback} onChange={v=>setQuizForm({...quizForm,show_feedback:v})}/>
+                <Checkbox label="Mode révision" checked={quizForm.allow_review} onChange={v=>setQuizForm({...quizForm,allow_review:v})}/>
+              </div>
+              
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={()=>setQuizModal(false)}>Annuler</Button>
+                <Button className="flex-1" onClick={saveQuiz} loading={saving}>Enregistrer</Button>
+              </div>
+            </div>
+            
+            {/* Droite : Sélection questions */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="font-medium">Questions du quiz ({quizQuestions.length})</h4>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="secondary" onClick={()=>randomPick(5)}>+5 aléatoires</Button>
+                  <Button size="sm" variant="secondary" onClick={()=>randomPick(10)}>+10 aléatoires</Button>
+                </div>
+              </div>
+              
+              {/* Questions sélectionnées (drag & drop) */}
+              <div ref={sortableRef} className="space-y-2 max-h-40 overflow-y-auto p-2 bg-gray-700/30 rounded-lg min-h-[100px]">
+                {quizQuestions.length===0?<p className="text-center text-gray-500 py-4">Aucune question</p>:(
+                  quizQuestions.map((q,i)=>(
+                    <div key={q.id||i} className="flex items-center gap-2 p-2 bg-gray-700 rounded">
+                      <Icon name="GripVertical" size={16} className="drag-handle cursor-move text-gray-500"/>
+                      <span className="text-xs bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded">{i+1}</span>
+                      <span className="flex-1 text-sm truncate">{q.question_text}</span>
+                      <button onClick={()=>removeFromQuiz(i)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={14} className="text-red-400"/></button>
+                    </div>
+                  ))
+                )}
+              </div>
+              
+              {/* Banque pour sélection */}
+              <div className="border-t border-gray-600 pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-sm font-medium">Banque de questions</h4>
+                  <Button size="sm" onClick={addQuestionsToQuiz} disabled={selectedQuestions.length===0}>Ajouter ({selectedQuestions.length})</Button>
+                </div>
+                <div className="flex gap-2 mb-2">
+                  <Input size="sm" className="flex-1" icon="Search" placeholder="Rechercher..." value={bankFilter.search} onChange={e=>setBankFilter({...bankFilter,search:e.target.value})}/>
+                  <Select size="sm" value={bankFilter.category} onChange={e=>setBankFilter({...bankFilter,category:e.target.value})} options={[{value:'all',label:'Catégorie'},...categories.map(c=>({value:c.name,label:c.name}))]}/>
+                </div>
+                <div className="space-y-1 max-h-48 overflow-y-auto">
+                  {filteredQuestions.map(q=>{
+                    const inQuiz=quizQuestions.some(qq=>qq.id===q.id||qq.bank_id===q.id);
+                    return(
+                      <label key={q.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer ${inQuiz?'opacity-50':'hover:bg-gray-700'}`}>
+                        <input type="checkbox" checked={selectedQuestions.includes(q.id)} onChange={e=>{
+                          if(inQuiz)return;
+                          setSelectedQuestions(e.target.checked?[...selectedQuestions,q.id]:selectedQuestions.filter(id=>id!==q.id));
+                        }} disabled={inQuiz} className="w-4 h-4"/>
+                        <span className="flex-1 text-sm truncate">{q.question_text}</span>
+                        <span className="text-xs text-gray-500">{QUESTION_TYPES[q.question_type]?.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </Modal>
+        
+        {/* Modal Prévisualisation */}
+        <Modal isOpen={!!previewQuiz} onClose={()=>setPreviewQuiz(null)} title={`Test: ${previewQuiz?.title}`} size="xl">
+          {previewQuiz&&(
+            <div className="space-y-4">
+              {previewSubmitted&&(
+                <div className={`p-4 rounded-lg ${calculateScore().percent>=previewQuiz.passing_score?'bg-green-500/20':'bg-red-500/20'}`}>
+                  <p className="font-semibold">{calculateScore().percent>=previewQuiz.passing_score?'✓ Réussi':'✗ Échoué'} - {calculateScore().score}/{calculateScore().total} pts ({calculateScore().percent}%)</p>
+                  <Button size="sm" variant="secondary" className="mt-2" onClick={()=>{setPreviewAnswers({});setPreviewSubmitted(false);}}>Recommencer</Button>
                 </div>
               )}
               
-              {/* Questions */}
-              <div className="space-y-6 max-h-96 overflow-y-auto">
-                {(previewQuiz.questions||[]).map((q,i)=>{
-                  const correctAnswers=(q.quiz_answers||[]).filter(a=>a.is_correct).map(a=>a.id);
-                  const userAnswer=previewAnswers[q.id];
-                  const isCorrect=previewSubmitted&&(
-                    (q.question_type==='single'||q.question_type==='true_false')?correctAnswers.includes(userAnswer):
-                    (q.question_type==='multiple')?(userAnswer||[]).length===correctAnswers.length&&correctAnswers.every(id=>(userAnswer||[]).includes(id)):false
-                  );
+              <div className="space-y-4 max-h-96 overflow-y-auto">
+                {previewQuiz.questions.map((q,i)=>{
+                  const correct=(q.quiz_answers||[]).filter(a=>a.is_correct).map(a=>a.id);
+                  const userAns=previewAnswers[q.id];
+                  const isCorrect=previewSubmitted&&((q.question_type==='single'||q.question_type==='true_false')?correct.includes(userAns):(userAns||[]).length===correct.length&&correct.every(id=>(userAns||[]).includes(id)));
                   
                   return(
-                    <div key={q.id} className={`p-4 rounded-lg ${previewSubmitted?(isCorrect?'bg-green-500/10 border border-green-500/30':'bg-red-500/10 border border-red-500/30'):'bg-gray-700'}`}>
-                      <div className="flex items-start gap-3 mb-3">
-                        <span className="px-2 py-1 bg-indigo-500/20 text-indigo-400 rounded font-medium">Q{i+1}</span>
-                        <div className="flex-1">
-                          {q.image_url&&<img src={q.image_url} alt="" className="max-h-32 rounded mb-2"/>}
-                          <p className="font-medium">{q.question_text}</p>
-                          {(q.points||1)!==1&&<span className="text-xs text-gray-400 ml-2">({q.points} pts)</span>}
-                        </div>
+                    <div key={q.id} className={`p-4 rounded-lg ${previewSubmitted?(isCorrect?'bg-green-500/10':'bg-red-500/10'):'bg-gray-700'}`}>
+                      <div className="flex gap-2 mb-2">
+                        <span className="px-2 py-1 bg-indigo-500/20 text-indigo-400 rounded text-sm font-medium">Q{i+1}</span>
+                        <span className="flex-1 font-medium">{q.question_text}</span>
                       </div>
                       
-                      {/* Réponses selon le type */}
                       {(q.question_type==='single'||q.question_type==='true_false')&&(
-                        <div className="space-y-2 ml-10">
+                        <div className="space-y-2 ml-8">
                           {(q.quiz_answers||[]).map(a=>(
-                            <label key={a.id} className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all ${
-                              previewSubmitted?(a.is_correct?'bg-green-500/20 border border-green-500':userAnswer===a.id&&!a.is_correct?'bg-red-500/20 border border-red-500':'bg-gray-600/50 border border-transparent'):
-                              (userAnswer===a.id?'bg-indigo-500/20 border border-indigo-500':'bg-gray-600/50 border border-transparent hover:border-gray-500')
-                            }`}>
-                              <input type="radio" name={`q-${q.id}`} checked={userAnswer===a.id} onChange={()=>!previewSubmitted&&setPreviewAnswers({...previewAnswers,[q.id]:a.id})} disabled={previewSubmitted} className="w-5 h-5 accent-indigo-500"/>
+                            <label key={a.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer ${previewSubmitted?(a.is_correct?'bg-green-500/20':userAns===a.id?'bg-red-500/20':''):(userAns===a.id?'bg-indigo-500/20':'hover:bg-gray-600')}`}>
+                              <input type="radio" checked={userAns===a.id} onChange={()=>!previewSubmitted&&setPreviewAnswers({...previewAnswers,[q.id]:a.id})} disabled={previewSubmitted}/>
                               <span>{a.answer_text}</span>
-                              {previewSubmitted&&a.is_correct&&<Icon name="Check" size={16} className="text-green-400 ml-auto"/>}
                             </label>
                           ))}
                         </div>
                       )}
                       
                       {q.question_type==='multiple'&&(
-                        <div className="space-y-2 ml-10">
+                        <div className="space-y-2 ml-8">
                           {(q.quiz_answers||[]).map(a=>{
-                            const selected=(userAnswer||[]).includes(a.id);
+                            const sel=(userAns||[]).includes(a.id);
                             return(
-                              <label key={a.id} className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all ${
-                                previewSubmitted?(a.is_correct?'bg-green-500/20 border border-green-500':selected&&!a.is_correct?'bg-red-500/20 border border-red-500':'bg-gray-600/50 border border-transparent'):
-                                (selected?'bg-indigo-500/20 border border-indigo-500':'bg-gray-600/50 border border-transparent hover:border-gray-500')
-                              }`}>
-                                <input type="checkbox" checked={selected} onChange={()=>{
+                              <label key={a.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer ${previewSubmitted?(a.is_correct?'bg-green-500/20':sel?'bg-red-500/20':''):(sel?'bg-indigo-500/20':'hover:bg-gray-600')}`}>
+                                <input type="checkbox" checked={sel} onChange={()=>{
                                   if(previewSubmitted)return;
-                                  const arr=userAnswer||[];
-                                  setPreviewAnswers({...previewAnswers,[q.id]:selected?arr.filter(id=>id!==a.id):[...arr,a.id]});
-                                }} disabled={previewSubmitted} className="w-5 h-5 accent-indigo-500"/>
+                                  const arr=userAns||[];
+                                  setPreviewAnswers({...previewAnswers,[q.id]:sel?arr.filter(id=>id!==a.id):[...arr,a.id]});
+                                }} disabled={previewSubmitted}/>
                                 <span>{a.answer_text}</span>
-                                {previewSubmitted&&a.is_correct&&<Icon name="Check" size={16} className="text-green-400 ml-auto"/>}
                               </label>
                             );
                           })}
-                        </div>
-                      )}
-                      
-                      {/* Feedback */}
-                      {previewSubmitted&&previewQuiz.show_feedback&&(isCorrect?q.feedback_correct:q.feedback_incorrect)&&(
-                        <div className={`mt-3 p-3 rounded-lg text-sm ${isCorrect?'bg-green-500/10 text-green-300':'bg-red-500/10 text-red-300'}`}>
-                          <Icon name={isCorrect?'Check':'X'} size={14} className="inline mr-2"/>
-                          {isCorrect?q.feedback_correct:q.feedback_incorrect}
                         </div>
                       )}
                     </div>
@@ -4771,16 +4073,10 @@
                 })}
               </div>
               
-              {/* Actions */}
               {!previewSubmitted?(
-                <div className="flex justify-end gap-3">
-                  <Button variant="secondary" onClick={()=>setPreviewQuiz(null)}>Fermer</Button>
-                  <Button onClick={()=>setPreviewSubmitted(true)} disabled={Object.keys(previewAnswers).length===0}>Soumettre les réponses</Button>
-                </div>
+                <Button className="w-full" onClick={()=>setPreviewSubmitted(true)}>Soumettre</Button>
               ):(
-                <div className="flex justify-end">
-                  <Button onClick={()=>setPreviewQuiz(null)}>Fermer</Button>
-                </div>
+                <Button className="w-full" onClick={()=>setPreviewQuiz(null)}>Fermer</Button>
               )}
             </div>
           )}
@@ -4788,7 +4084,6 @@
       </div>;
     }
 
-    // Enrollments avec inscription en masse
     function EnrollmentsPage(){
       const{center,isSuperAdmin,profile,can}=useAuth();
       const[enrollments,setEnrollments]=useState([]);
