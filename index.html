@@ -101,6 +101,15 @@
       manage_permissions:'Gérer les permissions'
     };
     
+    // Fonction utilitaire pour formater la durée en secondes
+    const formatDuration=(seconds)=>{
+      if(!seconds||seconds<=0)return'-';
+      const h=Math.floor(seconds/3600);
+      const m=Math.floor((seconds%3600)/60);
+      if(h>0)return`${h}h ${m}min`;
+      return`${m}min`;
+    };
+    
     // Labels et couleurs SCORM
     const SCORM_STATUS_LABELS={
       'not attempted':'Non commencé',
@@ -5455,15 +5464,6 @@
           const{jsPDF}=window.jspdf;
           const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
           
-          // Fonction pour formater la durée
-          const formatDuration=(seconds)=>{
-            if(!seconds)return null;
-            const hours=Math.floor(seconds/3600);
-            const mins=Math.floor((seconds%3600)/60);
-            if(hours>0)return `${hours}h ${mins}min`;
-            return `${mins} minutes`;
-          };
-          
           // Fond
           doc.setFillColor(31,41,55);
           doc.rect(0,0,297,210,'F');
@@ -5908,16 +5908,6 @@
           Object.values(chartsRef.current).forEach(c=>c?.destroy());
         };
       },[loading,activeTab,videoProgress,scormProgress,quizAttempts,stats]);
-
-      // Formatage du temps
-      const formatDuration=(seconds)=>{
-        if(!seconds||seconds<60)return `${seconds||0}s`;
-        const h=Math.floor(seconds/3600);
-        const m=Math.floor((seconds%3600)/60);
-        const s=seconds%60;
-        if(h>0)return `${h}h ${m}m`;
-        return `${m}m ${s}s`;
-      };
 
       if(loading)return<Loading/>;
 
