@@ -79,19 +79,9 @@
       return 0;
     };
 
-    let supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
+    const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
       auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}
     });
-    
-    // Fonction pour réinitialiser le client Supabase si nécessaire
-    window.resetSupabaseClient = function() {
-      console.log('🔄 Resetting Supabase client...');
-      supabase = window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
-        auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}
-      });
-      console.log('🔄 Supabase client reset complete');
-      return supabase;
-    };
     
     // Exposer lms_origin globalement pour SCORM Dispatch (Codes Rousseau)
     window.lms_origin = window.location.origin;
@@ -375,7 +365,7 @@
         <aside className={`fixed lg:static inset-y-0 left-0 z-40 w-64 bg-gray-800 border-r border-gray-700 transform transition-transform ${sidebarOpen?'translate-x-0':'-translate-x-full lg:translate-x-0'} ${viewAs?'pt-10':''}`}>
           <div className="h-full flex flex-col">
             <div className="p-4 border-b border-gray-700"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center"><Icon name="GraduationCap" size={24}/></div><div className="flex-1 min-w-0"><h1 className="font-bold truncate">Course Builder</h1>{center&&<p className="text-xs text-gray-400 truncate">{center.name}</p>}</div></div></div>
-            <nav className="flex-1 overflow-y-auto p-3 space-y-1">{menu.map(item=>(<button key={item.id} onClick={()=>{console.log('🧭 Navigation clicked:', item.id);setPage(item.id);if(isMobile)setSidebarOpen(false);}} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition ${page===item.id?'bg-indigo-600':'text-gray-300 hover:bg-gray-700'}`}><Icon name={item.icon} size={20}/><span>{item.label}</span></button>))}</nav>
+            <nav className="flex-1 overflow-y-auto p-3 space-y-1">{menu.map(item=>(<button key={item.id} onClick={()=>{setPage(item.id);if(isMobile)setSidebarOpen(false);}} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition ${page===item.id?'bg-indigo-600':'text-gray-300 hover:bg-gray-700'}`}><Icon name={item.icon} size={20}/><span>{item.label}</span></button>))}</nav>
             <div className="p-4 border-t border-gray-700"><div className="flex items-center gap-3 mb-3"><div className={`w-10 h-10 rounded-full flex items-center justify-center ${viewAs?ROLE_COLORS[viewAs.role]:'bg-gray-700'}`}><Icon name="User" size={20}/></div><div className="flex-1 min-w-0"><p className="font-medium truncate">{profile?.first_name} {profile?.last_name}</p><RoleBadge role={viewAs?.role||profile?.role}/></div></div><Button variant="ghost" className="w-full" icon="LogOut" onClick={signOut}>Déconnexion</Button></div>
           </div>
         </aside>
@@ -439,7 +429,6 @@
             </div>
           </header>
           <div className="p-4 lg:p-6">
-            {console.log('🔄 Rendering page:', page)}
             {page==='dashboard'&&<DashboardPage/>}
             {page==='analytics'&&<AnalyticsPage/>}
             {page==='scorm-tracking'&&<ScormTrackingPage/>}
@@ -4586,14 +4575,9 @@
       const[loading,setLoading]=useState(true);
       const[generating,setGenerating]=useState(null);
 
-      console.log('🎫 MyCertificatesPage render:', {loading, generating, certificatesCount: certificates.length});
-
       useEffect(()=>{
-        console.log('🎫 MyCertificatesPage useEffect triggered');
         const load=async()=>{
-          console.log('🎫 Loading certificates...');
-          const{data,error}=await supabase.from('certificates').select('*,playlists(title),profiles:learner_id(first_name,last_name)').eq('learner_id',user.id).order('issued_at',{ascending:false});
-          console.log('🎫 Certificates loaded:', {count: data?.length, error});
+          const{data}=await supabase.from('certificates').select('*,playlists(title),profiles:learner_id(first_name,last_name)').eq('learner_id',user.id).order('issued_at',{ascending:false});
           setCertificates(data||[]);
           setLoading(false);
         };
@@ -4601,7 +4585,6 @@
       },[user.id]);
 
       const generatePDF=async(cert)=>{
-        console.log('📄 generatePDF started for:', cert.id);
         setGenerating(cert.id);
         try{
           const{jsPDF}=window.jspdf;
@@ -4706,35 +4689,9 @@
           doc.setFontSize(10);
           doc.text('V',148.5,193,{align:'center'});
           
-          // Sauvegarder le PDF
+          // Sauvegarder le PDF avec doc.save natif
           const fileName='certificat_'+cert.certificate_number+'.pdf';
-          console.log('📄 About to save PDF:', fileName);
-          
-          // Créer le PDF en ArrayBuffer puis télécharger
-          const pdfArrayBuffer = doc.output('arraybuffer');
-          const pdfBlob = new Blob([pdfArrayBuffer], { type: 'application/pdf' });
-          
-          // Créer un lien et télécharger
-          const url = URL.createObjectURL(pdfBlob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = fileName;
-          
-          // Clic dans un setTimeout pour ne pas bloquer
-          setTimeout(function() {
-            a.click();
-            // Nettoyer immédiatement et réinitialiser Supabase
-            setTimeout(function() {
-              URL.revokeObjectURL(url);
-              a.remove();
-              console.log('📄 PDF downloaded and cleaned up');
-              // Réinitialiser le client Supabase pour éviter les problèmes de connexion
-              if(window.resetSupabaseClient) {
-                window.resetSupabaseClient();
-              }
-            }, 100);
-          }, 0);
-          
+          doc.save(fileName);
           setGenerating(null);
           
         }catch(err){
@@ -4744,7 +4701,6 @@
         }
       };
 
-      console.log('🎫 MyCertificatesPage about to render, loading:', loading);
       if(loading)return<Loading/>;
 
       return<div>
@@ -5309,67 +5265,31 @@
 
     // My Badges Page (Learner)
     function MyBadgesPage(){
-      console.log('🏅 MyBadgesPage mounted');
       const{user}=useAuth();
       const[earnedBadges,setEarnedBadges]=useState([]);
       const[allBadges,setAllBadges]=useState([]);
       const[points,setPoints]=useState(0);
       const[loading,setLoading]=useState(true);
-      const[error,setError]=useState(null);
 
       useEffect(()=>{
-        console.log('🏅 MyBadgesPage useEffect triggered');
-        let isMounted = true;
-        
         const load=async()=>{
-          console.log('🏅 Loading badges data...');
-          console.log('🏅 Supabase client:', typeof supabase, supabase ? 'exists' : 'null');
-          
-          try{
-            // Ajouter un timeout de 10 secondes
-            const timeoutPromise = new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('Timeout après 10s')), 10000)
-            );
-            
-            const dataPromise = Promise.all([
-              supabase.from('learner_badges').select('*,badges(*)').eq('learner_id',user.id),
-              supabase.from('badges').select('*').eq('is_active',true),
-              supabase.from('learner_points').select('points').eq('learner_id',user.id)
-            ]);
-            
-            console.log('🏅 Waiting for data...');
-            const results = await Promise.race([dataPromise, timeoutPromise]);
-            console.log('🏅 Got results:', results);
-            
-            const [{data:earned,error:e1},{data:all,error:e2},{data:pts,error:e3}] = results;
-            console.log('🏅 Badges loaded:', {earned: earned?.length, all: all?.length, pts: pts?.length, errors: {e1,e2,e3}});
-            
-            if(isMounted){
-              setEarnedBadges(earned||[]);
-              setAllBadges(all||[]);
-              setPoints((pts||[]).reduce((sum,p)=>sum+p.points,0));
-              console.log('🏅 Setting loading to false');
-              setLoading(false);
-            }
-          }catch(err){
-            console.error('🏅 Error loading badges:', err);
-            if(isMounted){
-              setError(err.message);
-              setLoading(false);
-            }
-          }
+          const[{data:earned},{data:all},{data:pts}]=await Promise.all([
+            supabase.from('learner_badges').select('*,badges(*)').eq('learner_id',user.id),
+            supabase.from('badges').select('*').eq('is_active',true),
+            supabase.from('learner_points').select('points').eq('learner_id',user.id)
+          ]);
+          setEarnedBadges(earned||[]);
+          setAllBadges(all||[]);
+          setPoints((pts||[]).reduce((sum,p)=>sum+p.points,0));
+          setLoading(false);
         };
         load();
-        
-        return () => { isMounted = false; };
       },[user.id]);
 
       const colorClasses={gold:'bg-yellow-500',silver:'bg-gray-400',bronze:'bg-orange-600',purple:'bg-purple-500',blue:'bg-blue-500'};
       const earnedIds=earnedBadges.map(e=>e.badge_id);
 
-      console.log('🏅 MyBadgesPage render, loading:', loading, 'error:', error);
       if(loading)return<Loading/>;
-      if(error)return<div className="text-red-500">Erreur: {error}</div>;
 
       return<div>
         <div className="flex items-center justify-between mb-6">
