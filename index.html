@@ -1027,19 +1027,31 @@
     // Analytics Page
     function AnalyticsPage(){
       const{can,center,isSuperAdmin}=useAuth();
-      const[data,setData]=useState({enrollments:[],courses:[],summary:{}});
+      const[data,setData]=useState({enrollments:[],courses:[],summary:{},learnerStats:[]});
       const[loading,setLoading]=useState(true);
       const[filter,setFilter]=useState({course:'all',period:'all'});
+      const[selectedLearner,setSelectedLearner]=useState(null);
       const progressChartRef=useRef(null);
       const statusChartRef=useRef(null);
       const courseChartRef=useRef(null);
       const chartsRef=useRef({});
 
+      // Fonction pour formater le temps
+      const formatTime=(seconds)=>{
+        if(!seconds||seconds===0)return'-';
+        const h=Math.floor(seconds/3600);
+        const m=Math.floor((seconds%3600)/60);
+        const s=seconds%60;
+        if(h>0)return `${h}h ${m}min`;
+        if(m>0)return `${m}min ${s}s`;
+        return `${s}s`;
+      };
+
       const load=useCallback(async()=>{
         // Charger les inscriptions avec détails
         let q=supabase.from('enrollments').select(`
           *,
-          playlists:playlist_id(id,title),
+          playlists:playlist_id(id,title,center_id),
           profiles:learner_id(id,first_name,last_name,email)
         `);
         if(!isSuperAdmin&&center?.id){
@@ -1051,18 +1063,76 @@
         let qc=supabase.from('playlists').select('id,title,is_published');
         if(!isSuperAdmin&&center?.id)qc=qc.eq('center_id',center.id);
         const{data:courses}=await qc;
+        
+        // Charger les sessions de cours pour le temps total
+        let qs=supabase.from('course_sessions').select('*');
+        if(!isSuperAdmin&&center?.id){
+          // Filtrer par les enrollments du centre
+          const enrollmentIds=(enrollments||[]).filter(e=>e.playlists).map(e=>e.id);
+          if(enrollmentIds.length>0)qs=qs.in('enrollment_id',enrollmentIds);
+        }
+        const{data:sessions}=await qs;
+        
+        // Charger les scores SCORM
+        const learnerIds=[...new Set((enrollments||[]).map(e=>e.learner_id).filter(Boolean))];
+        let scormData=[];
+        if(learnerIds.length>0){
+          const{data:sp}=await supabase.from('scorm_progress').select('*').in('learner_id',learnerIds);
+          scormData=sp||[];
+        }
+        
+        // Charger les tentatives de quiz
+        let quizData=[];
+        if(learnerIds.length>0){
+          const{data:qa}=await supabase.from('quiz_attempts').select('*').in('learner_id',learnerIds);
+          quizData=qa||[];
+        }
 
-        // Calculer les statistiques
+        // Calculer les statistiques par apprenant
+        const learnerStats=learnerIds.map(learnerId=>{
+          const learnerEnrollments=(enrollments||[]).filter(e=>e.learner_id===learnerId);
+          const profile=learnerEnrollments[0]?.profiles;
+          const totalTime=learnerEnrollments.reduce((a,e)=>a+(e.time_spent_seconds||0),0);
+          const completedCourses=learnerEnrollments.filter(e=>e.status==='completed').length;
+          const learnerScorm=scormData.filter(s=>s.learner_id===learnerId);
+          const learnerQuiz=quizData.filter(q=>q.learner_id===learnerId);
+          const avgScormScore=learnerScorm.length>0?learnerScorm.reduce((a,s)=>a+(s.score_scaled||0)*100,0)/learnerScorm.length:null;
+          const avgQuizScore=learnerQuiz.length>0?learnerQuiz.reduce((a,q)=>a+(q.score_percent||0),0)/learnerQuiz.length:null;
+          const lastActivity=learnerEnrollments.reduce((latest,e)=>{
+            const d=new Date(e.updated_at);
+            return d>latest?d:latest;
+          },new Date(0));
+          
+          return{
+            id:learnerId,
+            name:profile?`${profile.first_name} ${profile.last_name}`:'Inconnu',
+            email:profile?.email||'',
+            totalCourses:learnerEnrollments.length,
+            completedCourses,
+            totalTime,
+            avgProgress:learnerEnrollments.length>0?Math.round(learnerEnrollments.reduce((a,e)=>a+(e.progress_percent||0),0)/learnerEnrollments.length):0,
+            avgScormScore,
+            avgQuizScore,
+            lastActivity:lastActivity.getTime()>0?lastActivity:null,
+            enrollments:learnerEnrollments
+          };
+        }).sort((a,b)=>b.totalTime-a.totalTime);
+
+        // Calculer les statistiques globales
         const validEnrollments=(enrollments||[]).filter(e=>e.playlists&&e.profiles);
+        const totalTimeAll=validEnrollments.reduce((a,e)=>a+(e.time_spent_seconds||0),0);
         const summary={
           total:validEnrollments.length,
           notStarted:validEnrollments.filter(e=>e.status==='not_started').length,
           inProgress:validEnrollments.filter(e=>e.status==='in_progress').length,
           completed:validEnrollments.filter(e=>e.status==='completed').length,
-          avgProgress:validEnrollments.length?Math.round(validEnrollments.reduce((a,e)=>a+(e.progress_percent||0),0)/validEnrollments.length):0
+          avgProgress:validEnrollments.length?Math.round(validEnrollments.reduce((a,e)=>a+(e.progress_percent||0),0)/validEnrollments.length):0,
+          totalTime:totalTimeAll,
+          avgTimePerCourse:validEnrollments.length>0?Math.round(totalTimeAll/validEnrollments.length):0,
+          learnersCount:learnerIds.length
         };
 
-        setData({enrollments:validEnrollments,courses:courses||[],summary});
+        setData({enrollments:validEnrollments,courses:courses||[],summary,learnerStats});
         setLoading(false);
       },[isSuperAdmin,center?.id]);
 
@@ -1170,20 +1240,59 @@
         return true;
       });
 
-      // Export Excel
+      // Export Excel complet
       const exportExcel=()=>{
+        // Feuille 1: Détail des inscriptions
         const exportData=filteredEnrollments.map(e=>({
           'Apprenant':e.profiles?.first_name+' '+e.profiles?.last_name,
           'Email':e.profiles?.email,
           'Cours':e.playlists?.title,
           'Progression (%)':e.progress_percent||0,
+          'Temps passé':formatTime(e.time_spent_seconds),
+          'Temps (secondes)':e.time_spent_seconds||0,
           'Statut':e.status==='not_started'?'Non commencé':e.status==='in_progress'?'En cours':'Terminé',
-          'Date inscription':new Date(e.created_at).toLocaleDateString('fr-FR')
+          'Date inscription':new Date(e.created_at).toLocaleDateString('fr-FR'),
+          'Dernière activité':e.updated_at?new Date(e.updated_at).toLocaleDateString('fr-FR'):'-'
         }));
         
-        const ws=XLSX.utils.json_to_sheet(exportData);
+        // Feuille 2: Statistiques par apprenant
+        const learnerExport=data.learnerStats.map(l=>({
+          'Apprenant':l.name,
+          'Email':l.email,
+          'Cours inscrits':l.totalCourses,
+          'Cours terminés':l.completedCourses,
+          'Progression moyenne (%)':l.avgProgress,
+          'Temps total':formatTime(l.totalTime),
+          'Temps total (secondes)':l.totalTime,
+          'Score SCORM moyen (%)':l.avgScormScore!==null?Math.round(l.avgScormScore):'-',
+          'Score Quiz moyen (%)':l.avgQuizScore!==null?Math.round(l.avgQuizScore):'-',
+          'Dernière activité':l.lastActivity?new Date(l.lastActivity).toLocaleDateString('fr-FR'):'-'
+        }));
+        
+        // Feuille 3: Résumé global
+        const summaryExport=[{
+          'Métrique':'Total inscriptions','Valeur':data.summary.total
+        },{
+          'Métrique':'Apprenants uniques','Valeur':data.summary.learnersCount
+        },{
+          'Métrique':'Cours terminés','Valeur':data.summary.completed
+        },{
+          'Métrique':'Taux de complétion (%)','Valeur':data.summary.total?Math.round((data.summary.completed/data.summary.total)*100):0
+        },{
+          'Métrique':'Progression moyenne (%)','Valeur':data.summary.avgProgress
+        },{
+          'Métrique':'Temps total passé','Valeur':formatTime(data.summary.totalTime)
+        },{
+          'Métrique':'Temps moyen par cours','Valeur':formatTime(data.summary.avgTimePerCourse)
+        }];
+        
         const wb=XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb,ws,'Statistiques');
+        const ws1=XLSX.utils.json_to_sheet(exportData);
+        const ws2=XLSX.utils.json_to_sheet(learnerExport);
+        const ws3=XLSX.utils.json_to_sheet(summaryExport);
+        XLSX.utils.book_append_sheet(wb,ws1,'Inscriptions');
+        XLSX.utils.book_append_sheet(wb,ws2,'Par apprenant');
+        XLSX.utils.book_append_sheet(wb,ws3,'Résumé');
         XLSX.writeFile(wb,`statistiques_${new Date().toISOString().split('T')[0]}.xlsx`);
       };
 
@@ -1200,12 +1309,17 @@
         </div>
 
         {/* Cartes résumé */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-          <Card className="p-4"><div className="text-gray-400 text-sm">Total inscrits</div><div className="text-2xl font-bold">{data.summary.total}</div></Card>
-          <Card className="p-4"><div className="text-gray-400 text-sm">Non commencés</div><div className="text-2xl font-bold text-gray-500">{data.summary.notStarted}</div></Card>
-          <Card className="p-4"><div className="text-gray-400 text-sm">En cours</div><div className="text-2xl font-bold text-yellow-500">{data.summary.inProgress}</div></Card>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <Card className="p-4"><div className="text-gray-400 text-sm">Apprenants</div><div className="text-2xl font-bold">{data.summary.learnersCount}</div></Card>
+          <Card className="p-4"><div className="text-gray-400 text-sm">Inscriptions</div><div className="text-2xl font-bold">{data.summary.total}</div></Card>
           <Card className="p-4"><div className="text-gray-400 text-sm">Terminés</div><div className="text-2xl font-bold text-green-500">{data.summary.completed}</div></Card>
           <Card className="p-4"><div className="text-gray-400 text-sm">Progression moy.</div><div className="text-2xl font-bold text-indigo-500">{data.summary.avgProgress}%</div></Card>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <Card className="p-4"><div className="text-gray-400 text-sm">Non commencés</div><div className="text-2xl font-bold text-gray-500">{data.summary.notStarted}</div></Card>
+          <Card className="p-4"><div className="text-gray-400 text-sm">En cours</div><div className="text-2xl font-bold text-yellow-500">{data.summary.inProgress}</div></Card>
+          <Card className="p-4"><div className="text-gray-400 text-sm flex items-center gap-1"><Icon name="Clock" size={14}/>Temps total</div><div className="text-2xl font-bold text-blue-500">{formatTime(data.summary.totalTime)}</div></Card>
+          <Card className="p-4"><div className="text-gray-400 text-sm flex items-center gap-1"><Icon name="Clock" size={14}/>Temps moy./cours</div><div className="text-2xl font-bold text-blue-400">{formatTime(data.summary.avgTimePerCourse)}</div></Card>
         </div>
 
         {/* Graphiques */}
@@ -1236,7 +1350,53 @@
           </Card>
         </div>
 
-        {/* Tableau détaillé */}
+        {/* Statistiques par apprenant */}
+        <Card className="mb-6">
+          <div className="p-4 border-b border-gray-700 flex items-center justify-between">
+            <h3 className="font-semibold">Statistiques par apprenant ({data.learnerStats.length})</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-750">
+                <tr>
+                  <th className="text-left p-4 font-medium text-gray-400">Apprenant</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Cours</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Progression</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Temps passé</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Score SCORM</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Score Quiz</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Dernière activité</th>
+                  <th className="text-right p-4"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700">
+                {data.learnerStats.slice(0,15).map(l=>(
+                  <tr key={l.id} className="hover:bg-gray-750/50">
+                    <td className="p-4">
+                      <p className="font-medium">{l.name}</p>
+                      <p className="text-sm text-gray-400">{l.email}</p>
+                    </td>
+                    <td className="p-4">
+                      <span className="text-green-400">{l.completedCourses}</span>
+                      <span className="text-gray-500">/{l.totalCourses}</span>
+                    </td>
+                    <td className="p-4"><ProgressBar percent={l.avgProgress} size="sm" showLabel={true}/></td>
+                    <td className="p-4 font-medium text-blue-400">{formatTime(l.totalTime)}</td>
+                    <td className="p-4">{l.avgScormScore!==null?<span className={l.avgScormScore>=70?'text-green-400':'text-yellow-400'}>{Math.round(l.avgScormScore)}%</span>:'-'}</td>
+                    <td className="p-4">{l.avgQuizScore!==null?<span className={l.avgQuizScore>=70?'text-green-400':'text-yellow-400'}>{Math.round(l.avgQuizScore)}%</span>:'-'}</td>
+                    <td className="p-4 text-gray-400">{l.lastActivity?new Date(l.lastActivity).toLocaleDateString('fr-FR'):'-'}</td>
+                    <td className="p-4 text-right">
+                      <Button variant="ghost" size="sm" icon="Eye" onClick={()=>setSelectedLearner(l)}>Détails</Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {data.learnerStats.length>15&&<p className="p-4 text-center text-gray-400">Affichage limité à 15 apprenants. Exportez pour voir tout.</p>}
+          </div>
+        </Card>
+
+        {/* Tableau détaillé des inscriptions */}
         <Card>
           <div className="p-4 border-b border-gray-700">
             <h3 className="font-semibold">Détail des inscriptions ({filteredEnrollments.length})</h3>
@@ -1248,6 +1408,7 @@
                   <th className="text-left p-4 font-medium text-gray-400">Apprenant</th>
                   <th className="text-left p-4 font-medium text-gray-400">Cours</th>
                   <th className="text-left p-4 font-medium text-gray-400">Progression</th>
+                  <th className="text-left p-4 font-medium text-gray-400">Temps passé</th>
                   <th className="text-left p-4 font-medium text-gray-400">Statut</th>
                   <th className="text-left p-4 font-medium text-gray-400">Date</th>
                 </tr>
@@ -1261,6 +1422,7 @@
                     </td>
                     <td className="p-4">{e.playlists?.title}</td>
                     <td className="p-4"><ProgressBar percent={e.progress_percent||0} size="sm" showLabel={true}/></td>
+                    <td className="p-4 text-blue-400">{formatTime(e.time_spent_seconds)}</td>
                     <td className="p-4">
                       <span className={`px-2 py-1 rounded text-xs ${e.status==='completed'?'bg-green-500/20 text-green-400':e.status==='in_progress'?'bg-yellow-500/20 text-yellow-400':'bg-gray-500/20 text-gray-400'}`}>
                         {e.status==='not_started'?'Non commencé':e.status==='in_progress'?'En cours':'Terminé'}
@@ -1274,6 +1436,60 @@
             {filteredEnrollments.length>20&&<p className="p-4 text-center text-gray-400">Affichage limité à 20 lignes. Exportez pour voir tout.</p>}
           </div>
         </Card>
+
+        {/* Modal détails apprenant */}
+        <Modal isOpen={!!selectedLearner} onClose={()=>setSelectedLearner(null)} title={selectedLearner?`Détails - ${selectedLearner.name}`:''} size="xl">
+          {selectedLearner&&(
+            <div className="space-y-6">
+              {/* Résumé apprenant */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-gray-700/50 p-4 rounded-lg">
+                  <div className="text-gray-400 text-sm">Cours inscrits</div>
+                  <div className="text-2xl font-bold">{selectedLearner.totalCourses}</div>
+                </div>
+                <div className="bg-gray-700/50 p-4 rounded-lg">
+                  <div className="text-gray-400 text-sm">Terminés</div>
+                  <div className="text-2xl font-bold text-green-400">{selectedLearner.completedCourses}</div>
+                </div>
+                <div className="bg-gray-700/50 p-4 rounded-lg">
+                  <div className="text-gray-400 text-sm">Temps total</div>
+                  <div className="text-2xl font-bold text-blue-400">{formatTime(selectedLearner.totalTime)}</div>
+                </div>
+                <div className="bg-gray-700/50 p-4 rounded-lg">
+                  <div className="text-gray-400 text-sm">Progression moy.</div>
+                  <div className="text-2xl font-bold text-indigo-400">{selectedLearner.avgProgress}%</div>
+                </div>
+              </div>
+
+              {/* Détail par cours */}
+              <div>
+                <h4 className="font-semibold mb-3">Détail par cours</h4>
+                <div className="space-y-2">
+                  {selectedLearner.enrollments.map(e=>(
+                    <div key={e.id} className="bg-gray-700/30 p-3 rounded-lg flex items-center justify-between">
+                      <div>
+                        <p className="font-medium">{e.playlists?.title}</p>
+                        <p className="text-sm text-gray-400">Inscrit le {new Date(e.created_at).toLocaleDateString('fr-FR')}</p>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <div className="text-blue-400">{formatTime(e.time_spent_seconds)}</div>
+                          <div className="text-xs text-gray-400">temps passé</div>
+                        </div>
+                        <div className="w-24">
+                          <ProgressBar percent={e.progress_percent||0} size="sm" showLabel={true}/>
+                        </div>
+                        <span className={`px-2 py-1 rounded text-xs ${e.status==='completed'?'bg-green-500/20 text-green-400':e.status==='in_progress'?'bg-yellow-500/20 text-yellow-400':'bg-gray-500/20 text-gray-400'}`}>
+                          {e.status==='not_started'?'Non commencé':e.status==='in_progress'?'En cours':'Terminé'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </Modal>
       </div>;
     }
 
@@ -2919,7 +3135,7 @@
       
       return<div>
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4"><h1 className="text-2xl font-bold">Inscriptions</h1><div className="flex gap-2"><Button variant="secondary" icon="Users" onClick={()=>setBulkModal(true)}>Inscription en masse</Button><Button icon="UserPlus" onClick={()=>setModal(true)}>Inscrire</Button></div></div>
-        {enrollments.length===0?<Empty icon="UserPlus" title="Aucune inscription"/>:<Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Apprenant</th><th className="text-left p-4 font-medium text-gray-400">Cours</th><th className="text-left p-4 font-medium text-gray-400">Progression</th><th className="text-left p-4 font-medium text-gray-400">Date</th><th className="text-right p-4"></th></tr></thead><tbody className="divide-y divide-gray-700">{enrollments.map(e=><tr key={e.id}><td className="p-4"><p className="font-medium">{e.profiles?.first_name} {e.profiles?.last_name}</p><p className="text-sm text-gray-400">{e.profiles?.email}</p></td><td className="p-4">{e.playlists?.title||'—'}</td><td className="p-4"><ProgressBar percent={e.progress_percent||0} size="sm" showLabel={false}/></td><td className="p-4 text-gray-400">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td><td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleUnenroll(e.id)}/></td></tr>)}</tbody></table></div></Card>}
+        {enrollments.length===0?<Empty icon="UserPlus" title="Aucune inscription"/>:<Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Apprenant</th><th className="text-left p-4 font-medium text-gray-400">Cours</th><th className="text-left p-4 font-medium text-gray-400">Progression</th><th className="text-left p-4 font-medium text-gray-400">Temps</th><th className="text-left p-4 font-medium text-gray-400">Statut</th><th className="text-left p-4 font-medium text-gray-400">Date</th><th className="text-right p-4"></th></tr></thead><tbody className="divide-y divide-gray-700">{enrollments.map(e=>{const formatT=(s)=>{if(!s)return'-';const h=Math.floor(s/3600);const m=Math.floor((s%3600)/60);return h>0?`${h}h ${m}min`:`${m}min`;};return<tr key={e.id}><td className="p-4"><p className="font-medium">{e.profiles?.first_name} {e.profiles?.last_name}</p><p className="text-sm text-gray-400">{e.profiles?.email}</p></td><td className="p-4">{e.playlists?.title||'—'}</td><td className="p-4"><ProgressBar percent={e.progress_percent||0} size="sm" showLabel={true}/></td><td className="p-4 text-blue-400">{formatT(e.time_spent_seconds)}</td><td className="p-4"><span className={`px-2 py-1 rounded text-xs ${e.status==='completed'?'bg-green-500/20 text-green-400':e.status==='in_progress'?'bg-yellow-500/20 text-yellow-400':'bg-gray-500/20 text-gray-400'}`}>{e.status==='not_started'?'Non commencé':e.status==='in_progress'?'En cours':'Terminé'}</span></td><td className="p-4 text-gray-400">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td><td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleUnenroll(e.id)}/></td></tr>})}</tbody></table></div></Card>}
         
         <Modal isOpen={modal} onClose={()=>setModal(false)} title="Inscrire"><div className="space-y-4"><Select label="Cours" value={form.playlist_id} onChange={e=>setForm({...form,playlist_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...playlists.map(p=>({value:p.id,label:`${p.title}${p.is_published?'':' (brouillon)'}`}))]}/><Select label="Apprenant" value={form.learner_id} onChange={e=>setForm({...form,learner_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...learners.map(l=>({value:l.id,label:`${l.first_name} ${l.last_name}`}))]}/><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleEnroll} loading={saving} disabled={!form.playlist_id||!form.learner_id}>Inscrire</Button></div></div></Modal>
         
