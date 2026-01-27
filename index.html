@@ -5791,13 +5791,17 @@
                         duration_seconds:s.duration
                       }))
                     };
-                    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-                    const url=URL.createObjectURL(blob);
-                    const a=document.createElement('a');
-                    a.href=url;
-                    a.download=`mes-donnees-${user.email}-${new Date().toISOString().slice(0,10)}.json`;
-                    a.click();
-                    URL.revokeObjectURL(url);
+                    try{
+                      const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+                      const url=URL.createObjectURL(blob);
+                      const a=document.createElement('a');
+                      a.href=url;
+                      a.download=`mes-donnees-${user.email.replace('@','_')}-${new Date().toISOString().slice(0,10)}.json`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      setTimeout(()=>URL.revokeObjectURL(url),1000);
+                    }catch(err){console.error('Export error:',err);}
                   }}
                 >
                   Exporter en JSON
@@ -5807,31 +5811,32 @@
                   icon="FileSpreadsheet"
                   variant="secondary"
                   onClick={()=>{
+                    try{
                     // Export CSV multi-feuilles
                     const formatDate=(d)=>d?new Date(d).toLocaleDateString('fr-FR'):'';
                     
                     // Feuille Cours
                     let csv='=== MES COURS ===\n';
-                    csv+='Cours;Statut;Progression;Temps passé;Date inscription\n';
+                    csv+='Cours;Statut;Progression;Temps passe;Date inscription\n';
                     enrollments.forEach(e=>{
                       const time=e.time_spent_seconds?Math.round(e.time_spent_seconds/60)+' min':'';
-                      csv+=`"${e.playlists?.title||''}";${e.status};${e.progress_percent||0}%;${time};${formatDate(e.created_at)}\n`;
+                      csv+=`"${(e.playlists?.title||'').replace(/"/g,"'")}";${e.status||''};${e.progress_percent||0}%;${time};${formatDate(e.created_at)}\n`;
                     });
                     
                     // Feuille Parcours
                     csv+='\n=== MES PARCOURS ===\n';
-                    csv+='Parcours;Progression;Temps passé;Date démarrage\n';
+                    csv+='Parcours;Progression;Temps passe;Date demarrage\n';
                     pathEnrollments.forEach(p=>{
                       const time=p.time_spent_seconds?Math.round(p.time_spent_seconds/60)+' min':'';
-                      csv+=`"${p.learning_paths?.title||''}";${p.progress_percent||0}%;${time};${formatDate(p.started_at)}\n`;
+                      csv+=`"${(p.learning_paths?.title||'').replace(/"/g,"'")}";${p.progress_percent||0}%;${time};${formatDate(p.started_at)}\n`;
                     });
                     
-                    // Feuille Vidéos
+                    // Feuille Videos
                     csv+='\n=== MES VIDEOS ===\n';
-                    csv+='Vidéo;Terminée;Temps visionné;Dernière vue\n';
+                    csv+='Video;Terminee;Temps visionne;Derniere vue\n';
                     videoProgress.forEach(v=>{
                       const time=v.watch_time_seconds?Math.round(v.watch_time_seconds/60)+' min':'';
-                      csv+=`"${v.playlist_videos?.videos?.title||''}";${v.is_completed?'Oui':'Non'};${time};${formatDate(v.updated_at)}\n`;
+                      csv+=`"${(v.playlist_videos?.videos?.title||'').replace(/"/g,"'")}";${v.is_completed?'Oui':'Non'};${time};${formatDate(v.updated_at)}\n`;
                     });
                     
                     // Feuille SCORM
@@ -5839,23 +5844,26 @@
                     csv+='Module;Cours;Statut;Score;Temps;Date\n';
                     scormProgress.forEach(s=>{
                       const score=s.score_scaled?Math.round(s.score_scaled*100)+'%':'';
-                      csv+=`"${s.scorm_modules?.title||''}";${s.enrollments?.playlists?.title||''};${s.completion_status||''};${score};${s.total_time||''};${formatDate(s.last_accessed_at)}\n`;
+                      csv+=`"${(s.scorm_modules?.title||'').replace(/"/g,"'")}";${(s.enrollments?.playlists?.title||'').replace(/"/g,"'")};${s.completion_status||''};${score};${s.total_time||''};${formatDate(s.last_accessed_at)}\n`;
                     });
                     
                     // Feuille Quiz
                     csv+='\n=== MES QUIZ ===\n';
-                    csv+='Quiz;Score;Réussi;Date\n';
+                    csv+='Quiz;Score;Reussi;Date\n';
                     quizAttempts.forEach(q=>{
-                      csv+=`"${q.quizzes?.title||''}";${q.score_percent||0}%;${q.passed?'Oui':'Non'};${formatDate(q.created_at)}\n`;
+                      csv+=`"${(q.quizzes?.title||'').replace(/"/g,"'")}";${q.score_percent||0}%;${q.passed?'Oui':'Non'};${formatDate(q.created_at)}\n`;
                     });
                     
                     const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
                     const url=URL.createObjectURL(blob);
                     const a=document.createElement('a');
                     a.href=url;
-                    a.download=`mes-donnees-${user.email}-${new Date().toISOString().slice(0,10)}.csv`;
+                    a.download=`mes-donnees-${user.email.replace('@','_')}-${new Date().toISOString().slice(0,10)}.csv`;
+                    document.body.appendChild(a);
                     a.click();
-                    URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    setTimeout(()=>URL.revokeObjectURL(url),1000);
+                    }catch(err){console.error('Export CSV error:',err);}
                   }}
                 >
                   Exporter en CSV
@@ -5865,78 +5873,61 @@
                   icon="Printer"
                   variant="secondary"
                   onClick={()=>{
+                    try{
                     // Génération d'un rapport imprimable
                     const formatDate=(d)=>d?new Date(d).toLocaleDateString('fr-FR'):'';
                     const formatTime=(s)=>{
                       if(!s)return '-';
                       const h=Math.floor(s/3600);
                       const m=Math.floor((s%3600)/60);
-                      return h>0?`${h}h ${m}min`:`${m}min`;
+                      return h>0?(h+'h '+m+'min'):(m+'min');
                     };
+                    const escapeHtml=(str)=>(str||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
                     
-                    const html=`
-                      <!DOCTYPE html>
-                      <html>
-                      <head>
-                        <title>Mes données - ${profile?.first_name} ${profile?.last_name}</title>
-                        <style>
-                          body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;}
-                          h1{color:#4f46e5;border-bottom:2px solid #4f46e5;padding-bottom:10px;}
-                          h2{color:#6366f1;margin-top:30px;}
-                          table{width:100%;border-collapse:collapse;margin:15px 0;}
-                          th,td{border:1px solid #ddd;padding:8px;text-align:left;}
-                          th{background:#f3f4f6;}
-                          .stats{display:flex;gap:20px;flex-wrap:wrap;}
-                          .stat{background:#f9fafb;padding:15px;border-radius:8px;min-width:150px;}
-                          .stat-value{font-size:24px;font-weight:bold;color:#4f46e5;}
-                          .footer{margin-top:40px;text-align:center;color:#666;font-size:12px;}
-                          @media print{body{padding:20px;}}
-                        </style>
-                      </head>
-                      <body>
-                        <h1>📊 Rapport de progression</h1>
-                        <p><strong>Apprenant:</strong> ${profile?.first_name} ${profile?.last_name} (${user.email})</p>
-                        <p><strong>Date du rapport:</strong> ${new Date().toLocaleDateString('fr-FR')}</p>
-                        
-                        <h2>📈 Statistiques globales</h2>
-                        <div class="stats">
-                          <div class="stat"><div class="stat-value">${formatTime(stats.totalSessionTime)}</div>Temps total</div>
-                          <div class="stat"><div class="stat-value">${stats.completedCourses}/${stats.totalCourses}</div>Cours terminés</div>
-                          <div class="stat"><div class="stat-value">${stats.passedScorm}/${stats.totalScorm}</div>SCORM réussis</div>
-                          <div class="stat"><div class="stat-value">${Math.round(stats.avgScormScore*100)}%</div>Score SCORM moyen</div>
-                        </div>
-                        
-                        <h2>📚 Mes cours (${enrollments.length})</h2>
-                        <table>
-                          <tr><th>Cours</th><th>Statut</th><th>Progression</th><th>Temps</th></tr>
-                          ${enrollments.map(e=>`<tr><td>${e.playlists?.title||''}</td><td>${e.status}</td><td>${e.progress_percent||0}%</td><td>${formatTime(e.time_spent_seconds)}</td></tr>`).join('')}
-                        </table>
-                        
-                        ${pathEnrollments.length>0?`
-                        <h2>🛤️ Mes parcours (${pathEnrollments.length})</h2>
-                        <table>
-                          <tr><th>Parcours</th><th>Progression</th><th>Temps</th></tr>
-                          ${pathEnrollments.map(p=>`<tr><td>${p.learning_paths?.title||''}</td><td>${p.progress_percent||0}%</td><td>${formatTime(p.time_spent_seconds)}</td></tr>`).join('')}
-                        </table>
-                        `:''}
-                        
-                        <h2>📦 Modules SCORM (${scormProgress.length})</h2>
-                        <table>
-                          <tr><th>Module</th><th>Statut</th><th>Score</th><th>Temps</th></tr>
-                          ${scormProgress.map(s=>`<tr><td>${s.scorm_modules?.title||''}</td><td>${s.completion_status||''}</td><td>${s.score_scaled?Math.round(s.score_scaled*100)+'%':'-'}</td><td>${s.total_time||'-'}</td></tr>`).join('')}
-                        </table>
-                        
-                        <div class="footer">
-                          <p>Généré depuis CRPro LMS - ${window.location.origin}</p>
-                        </div>
-                      </body>
-                      </html>
-                    `;
+                    let coursesRows=enrollments.map(e=>'<tr><td>'+escapeHtml(e.playlists?.title)+'</td><td>'+(e.status||'')+'</td><td>'+(e.progress_percent||0)+'%</td><td>'+formatTime(e.time_spent_seconds)+'</td></tr>').join('');
+                    let pathsRows=pathEnrollments.map(p=>'<tr><td>'+escapeHtml(p.learning_paths?.title)+'</td><td>'+(p.progress_percent||0)+'%</td><td>'+formatTime(p.time_spent_seconds)+'</td></tr>').join('');
+                    let scormRows=scormProgress.map(s=>'<tr><td>'+escapeHtml(s.scorm_modules?.title)+'</td><td>'+(s.completion_status||'')+'</td><td>'+(s.score_scaled?Math.round(s.score_scaled*100)+'%':'-')+'</td><td>'+(s.total_time||'-')+'</td></tr>').join('');
+                    
+                    let html='<!DOCTYPE html><html><head><title>Mes donnees - '+(profile?.first_name||'')+' '+(profile?.last_name||'')+'</title>';
+                    html+='<style>body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;}';
+                    html+='h1{color:#4f46e5;border-bottom:2px solid #4f46e5;padding-bottom:10px;}';
+                    html+='h2{color:#6366f1;margin-top:30px;}';
+                    html+='table{width:100%;border-collapse:collapse;margin:15px 0;}';
+                    html+='th,td{border:1px solid #ddd;padding:8px;text-align:left;}';
+                    html+='th{background:#f3f4f6;}';
+                    html+='.stats{display:flex;gap:20px;flex-wrap:wrap;}';
+                    html+='.stat{background:#f9fafb;padding:15px;border-radius:8px;min-width:150px;}';
+                    html+='.stat-value{font-size:24px;font-weight:bold;color:#4f46e5;}';
+                    html+='.footer{margin-top:40px;text-align:center;color:#666;font-size:12px;}';
+                    html+='@media print{body{padding:20px;}}</style></head><body>';
+                    html+='<h1>Rapport de progression</h1>';
+                    html+='<p><strong>Apprenant:</strong> '+(profile?.first_name||'')+' '+(profile?.last_name||'')+' ('+user.email+')</p>';
+                    html+='<p><strong>Date du rapport:</strong> '+new Date().toLocaleDateString('fr-FR')+'</p>';
+                    html+='<h2>Statistiques globales</h2>';
+                    html+='<div class="stats">';
+                    html+='<div class="stat"><div class="stat-value">'+formatTime(stats.totalSessionTime)+'</div>Temps total</div>';
+                    html+='<div class="stat"><div class="stat-value">'+stats.completedCourses+'/'+stats.totalCourses+'</div>Cours termines</div>';
+                    html+='<div class="stat"><div class="stat-value">'+stats.passedScorm+'/'+stats.totalScorm+'</div>SCORM reussis</div>';
+                    html+='<div class="stat"><div class="stat-value">'+Math.round(stats.avgScormScore*100)+'%</div>Score SCORM moyen</div>';
+                    html+='</div>';
+                    html+='<h2>Mes cours ('+enrollments.length+')</h2>';
+                    html+='<table><tr><th>Cours</th><th>Statut</th><th>Progression</th><th>Temps</th></tr>'+coursesRows+'</table>';
+                    if(pathEnrollments.length>0){
+                      html+='<h2>Mes parcours ('+pathEnrollments.length+')</h2>';
+                      html+='<table><tr><th>Parcours</th><th>Progression</th><th>Temps</th></tr>'+pathsRows+'</table>';
+                    }
+                    html+='<h2>Modules SCORM ('+scormProgress.length+')</h2>';
+                    html+='<table><tr><th>Module</th><th>Statut</th><th>Score</th><th>Temps</th></tr>'+scormRows+'</table>';
+                    html+='<div class="footer"><p>Genere depuis CRPro LMS</p></div>';
+                    html+='</body></html>';
                     
                     const win=window.open('','_blank');
-                    win.document.write(html);
-                    win.document.close();
-                    setTimeout(()=>win.print(),500);
+                    if(win){
+                      win.document.write(html);
+                      win.document.close();
+                      setTimeout(()=>{try{win.print();}catch(e){}},500);
+                    }
+                    }catch(err){console.error('Print error:',err);}
                   }}
                 >
                   Imprimer le rapport
@@ -5945,7 +5936,7 @@
               
               <p className="text-xs text-gray-500 mt-4">
                 <Icon name="Info" size={12} className="inline mr-1"/>
-                Les données exportées contiennent uniquement vos informations personnelles et votre progression d'apprentissage.
+                Les donnees exportees contiennent uniquement vos informations personnelles et votre progression d apprentissage.
               </p>
             </Card>
           </div>
