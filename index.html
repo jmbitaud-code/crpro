@@ -3152,14 +3152,38 @@
       const[saving,setSaving]=useState(false);
 
       const load=useCallback(async()=>{
-        const{data:e}=await supabase.from('enrollments').select('*,playlists:playlist_id(title),profiles:learner_id(first_name,last_name,email)').order('created_at',{ascending:false});
-        setEnrollments(e||[]);
-        // Admin peut inscrire à tous les cours (même brouillons)
-        let qp=supabase.from('playlists').select('id,title,is_published').order('title');
-        let ql=supabase.from('profiles').select('id,first_name,last_name,email').eq('role','learner');
-        if(!isSuperAdmin&&center?.id){qp=qp.eq('center_id',center.id);ql=ql.eq('center_id',center.id);}
+        // Charger les playlists et apprenants filtrés par centre
+        let qp=supabase.from('playlists').select('id,title,is_published,center_id').order('title');
+        let ql=supabase.from('profiles').select('id,first_name,last_name,email,center_id').eq('role','learner');
+        if(!isSuperAdmin&&center?.id){
+          qp=qp.eq('center_id',center.id);
+          ql=ql.eq('center_id',center.id);
+        }
         const[{data:p},{data:l}]=await Promise.all([qp,ql]);
-        setPlaylists(p||[]);setLearners(l||[]);setLoading(false);
+        setPlaylists(p||[]);
+        setLearners(l||[]);
+        
+        // Charger les inscriptions - filtrer par les playlists ET apprenants du centre
+        const playlistIds=(p||[]).map(pl=>pl.id);
+        const learnerIds=(l||[]).map(le=>le.id);
+        
+        let enrollmentsQuery=supabase.from('enrollments')
+          .select('*,playlists:playlist_id(title,center_id),profiles:learner_id(first_name,last_name,email,center_id)')
+          .order('created_at',{ascending:false});
+        
+        const{data:e}=await enrollmentsQuery;
+        
+        // Si pas super admin, filtrer par les playlists et apprenants du centre
+        if(!isSuperAdmin&&center?.id){
+          const filtered=(e||[]).filter(enr=>
+            playlistIds.includes(enr.playlist_id)&&learnerIds.includes(enr.learner_id)
+          );
+          setEnrollments(filtered);
+        }else{
+          setEnrollments(e||[]);
+        }
+        
+        setLoading(false);
       },[isSuperAdmin,center?.id]);
       useEffect(()=>{load();},[load]);
 
