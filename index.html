@@ -3241,6 +3241,9 @@
       const[score,setScore]=useState(null);
       const[initialDataLoaded,setInitialDataLoaded]=useState(false);
       const[savedCmiData,setSavedCmiData]=useState(null);
+      const[showStartScreen,setShowStartScreen]=useState(true);
+      const[startMode,setStartMode]=useState(null); // 'resume' ou 'restart'
+      const[hasExistingProgress,setHasExistingProgress]=useState(false);
       
       // Exposer lms_origin sur window pour que layer2.js puisse le trouver
       useEffect(() => {
@@ -3274,20 +3277,48 @@
             setSavedCmiData(data.cmi_data||{});
             setStatus(data.completion_status||'unknown');
             setScore(data.score_scaled);
+            setHasExistingProgress(true);
           }else{
             console.log('SCORM: No existing progress found');
             setSavedCmiData({});
+            setHasExistingProgress(false);
+            // Pas de progression existante, on démarre directement
+            setStartMode('restart');
+            setShowStartScreen(false);
           }
           setInitialDataLoaded(true);
         };
         loadProgress();
       },[module.id,user.id]);
       
-      // Initialiser l'API SCORM seulement après le chargement des données
+      // Fonction pour redémarrer (supprimer la progression)
+      const handleRestart=async()=>{
+        console.log('SCORM: Restarting - deleting existing progress');
+        await supabase.from('scorm_progress')
+          .delete()
+          .eq('module_id',module.id)
+          .eq('learner_id',user.id);
+        setSavedCmiData({});
+        setStatus('not attempted');
+        setScore(null);
+        setStartMode('restart');
+        setShowStartScreen(false);
+      };
+      
+      // Fonction pour reprendre
+      const handleResume=()=>{
+        console.log('SCORM: Resuming with existing progress');
+        setStartMode('resume');
+        setShowStartScreen(false);
+      };
+      
+      // Initialiser l'API SCORM seulement après le chargement des données ET le choix du mode
       useEffect(()=>{
-        if(!initialDataLoaded)return;
+        if(!initialDataLoaded||showStartScreen)return;
         
-        console.log('SCORM: Initializing API with saved data', savedCmiData);
+        // Si mode restart, on utilise des données vides
+        const cmiDataToUse = startMode==='restart' ? {} : savedCmiData;
+        console.log('SCORM: Initializing API with mode:', startMode, 'data:', cmiDataToUse);
         
         // Créer l'API SCORM 1.2
         const SCORM12_API={
@@ -3297,16 +3328,16 @@
           _data:{
             'cmi.core.student_id':user.id,
             'cmi.core.student_name':user.email||'Apprenant',
-            'cmi.core.lesson_status':savedCmiData?.['cmi.core.lesson_status']||'not attempted',
-            'cmi.core.lesson_location':savedCmiData?.['cmi.core.lesson_location']||'',
-            'cmi.core.score.raw':savedCmiData?.['cmi.core.score.raw']||'',
-            'cmi.core.score.min':savedCmiData?.['cmi.core.score.min']||'0',
-            'cmi.core.score.max':savedCmiData?.['cmi.core.score.max']||'100',
-            'cmi.suspend_data':savedCmiData?.['cmi.suspend_data']||'',
+            'cmi.core.lesson_status':startMode==='restart'?'not attempted':(cmiDataToUse?.['cmi.core.lesson_status']||'not attempted'),
+            'cmi.core.lesson_location':startMode==='restart'?'':(cmiDataToUse?.['cmi.core.lesson_location']||''),
+            'cmi.core.score.raw':startMode==='restart'?'':(cmiDataToUse?.['cmi.core.score.raw']||''),
+            'cmi.core.score.min':cmiDataToUse?.['cmi.core.score.min']||'0',
+            'cmi.core.score.max':cmiDataToUse?.['cmi.core.score.max']||'100',
+            'cmi.suspend_data':startMode==='restart'?'':(cmiDataToUse?.['cmi.suspend_data']||''),
             'cmi.core.session_time':'00:00:00',
-            'cmi.core.total_time':savedCmiData?.['cmi.core.total_time']||'00:00:00',
-            'cmi.core.entry':savedCmiData?.['cmi.suspend_data']?'resume':'',
-            ...savedCmiData
+            'cmi.core.total_time':startMode==='restart'?'00:00:00':(cmiDataToUse?.['cmi.core.total_time']||'00:00:00'),
+            'cmi.core.entry':startMode==='restart'?'':(cmiDataToUse?.['cmi.suspend_data']?'resume':''),
+            ...(startMode==='restart'?{}:cmiDataToUse)
           },
           
           LMSInitialize:function(param){
@@ -3435,18 +3466,18 @@
           _data:{
             'cmi.learner_id':user.id,
             'cmi.learner_name':user.email||'Apprenant',
-            'cmi.completion_status':savedCmiData?.['cmi.completion_status']||'not attempted',
-            'cmi.success_status':savedCmiData?.['cmi.success_status']||'unknown',
-            'cmi.location':savedCmiData?.['cmi.location']||'',
-            'cmi.score.scaled':savedCmiData?.['cmi.score.scaled']||'',
-            'cmi.score.raw':savedCmiData?.['cmi.score.raw']||'',
-            'cmi.score.min':savedCmiData?.['cmi.score.min']||'0',
-            'cmi.score.max':savedCmiData?.['cmi.score.max']||'100',
-            'cmi.suspend_data':savedCmiData?.['cmi.suspend_data']||'',
+            'cmi.completion_status':startMode==='restart'?'not attempted':(cmiDataToUse?.['cmi.completion_status']||'not attempted'),
+            'cmi.success_status':startMode==='restart'?'unknown':(cmiDataToUse?.['cmi.success_status']||'unknown'),
+            'cmi.location':startMode==='restart'?'':(cmiDataToUse?.['cmi.location']||''),
+            'cmi.score.scaled':startMode==='restart'?'':(cmiDataToUse?.['cmi.score.scaled']||''),
+            'cmi.score.raw':startMode==='restart'?'':(cmiDataToUse?.['cmi.score.raw']||''),
+            'cmi.score.min':cmiDataToUse?.['cmi.score.min']||'0',
+            'cmi.score.max':cmiDataToUse?.['cmi.score.max']||'100',
+            'cmi.suspend_data':startMode==='restart'?'':(cmiDataToUse?.['cmi.suspend_data']||''),
             'cmi.session_time':'PT0H0M0S',
-            'cmi.total_time':savedCmiData?.['cmi.total_time']||'PT0H0M0S',
-            'cmi.entry':savedCmiData?.['cmi.suspend_data']?'resume':'ab-initio',
-            ...savedCmiData
+            'cmi.total_time':startMode==='restart'?'PT0H0M0S':(cmiDataToUse?.['cmi.total_time']||'PT0H0M0S'),
+            'cmi.entry':startMode==='restart'?'ab-initio':(cmiDataToUse?.['cmi.suspend_data']?'resume':'ab-initio'),
+            ...(startMode==='restart'?{}:cmiDataToUse)
           },
           
           Initialize:function(param){
@@ -3571,7 +3602,7 @@
           delete window.API;
           delete window.API_1484_11;
         };
-      },[module.id,enrollmentId,user.id,initialDataLoaded,savedCmiData,onComplete]);
+      },[module.id,enrollmentId,user.id,initialDataLoaded,savedCmiData,onComplete,showStartScreen,startMode]);
       
       // L'URL du module SCORM via le loader hébergé sur GitHub Pages
       const scormUrl = useMemo(() => {
@@ -3613,9 +3644,41 @@
           
           {/* Contenu SCORM */}
           <div className="flex-1 relative">
-            {(loading || !scormUrl)&&<div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10"><Loading text="Chargement du module..."/></div>}
-            {error?<div className="absolute inset-0 flex items-center justify-center"><Alert type="error">{error}</Alert></div>:(
-              scormUrl && <iframe
+            {/* Écran de choix si progression existante */}
+            {showStartScreen&&hasExistingProgress&&initialDataLoaded&&(
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 z-20">
+                <h2 className="text-xl font-semibold mb-2">{module.title}</h2>
+                {score!==null&&<p className="text-gray-400 mb-8">Dernier score: {Math.round(score*100)}%</p>}
+                
+                <div className="flex flex-col gap-4">
+                  <button
+                    onClick={handleResume}
+                    className="flex items-center gap-3 px-8 py-4 bg-white text-gray-900 rounded-full font-medium hover:bg-gray-100 transition"
+                  >
+                    <Icon name="Play" size={20}/>
+                    Reprendre
+                  </button>
+                  
+                  <button
+                    onClick={handleRestart}
+                    className="flex items-center gap-2 px-6 py-2 text-gray-400 hover:text-white transition"
+                  >
+                    <Icon name="RefreshCw" size={16}/>
+                    Redémarrer
+                  </button>
+                </div>
+              </div>
+            )}
+            
+            {/* Loading */}
+            {!showStartScreen&&(loading || !scormUrl)&&<div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10"><Loading text="Chargement du module..."/></div>}
+            
+            {/* Erreur */}
+            {error&&<div className="absolute inset-0 flex items-center justify-center"><Alert type="error">{error}</Alert></div>}
+            
+            {/* Iframe SCORM */}
+            {!showStartScreen&&!error&&scormUrl&&(
+              <iframe
                 ref={iframeRef}
                 src={scormUrl}
                 className="w-full h-full border-0"
