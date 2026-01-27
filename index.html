@@ -3126,7 +3126,7 @@
       const[bankQuestions,setBankQuestions]=useState([]);
       const[bankModal,setBankModal]=useState(false);
       const[editingBankQuestion,setEditingBankQuestion]=useState(null);
-      const[bankFilter,setBankFilter]=useState({category:'all',difficulty:'all',search:''});
+      const[bankFilter,setBankFilter]=useState({category:'all',theme:'all',sub_theme:'all',difficulty:'all',search:''});
       const[importModal,setImportModal]=useState(null);
       const[selectedBankQuestions,setSelectedBankQuestions]=useState([]);
       
@@ -3212,39 +3212,51 @@
       const[newQuestion,setNewQuestion]=useState(getEmptyQuestion());
 
       const load=useCallback(async()=>{
-        const{data:qz}=await supabase.from('quizzes').select('*').order('created_at',{ascending:false});
-        const playlistIds=(qz||[]).filter(q=>q.playlist_id).map(q=>q.playlist_id);
-        let playlistsInfo={};
-        if(playlistIds.length>0){
-          const{data:pInfo}=await supabase.from('playlists').select('id,title').in('id',playlistIds);
-          (pInfo||[]).forEach(p=>playlistsInfo[p.id]=p);
+        try{
+          const{data:qz}=await supabase.from('quizzes').select('*').order('created_at',{ascending:false});
+          const playlistIds=(qz||[]).filter(q=>q.playlist_id).map(q=>q.playlist_id);
+          let playlistsInfo={};
+          if(playlistIds.length>0){
+            const{data:pInfo}=await supabase.from('playlists').select('id,title').in('id',playlistIds);
+            (pInfo||[]).forEach(p=>playlistsInfo[p.id]=p);
+          }
+          const quizIds=(qz||[]).map(q=>q.id);
+          let questionsCount={};
+          if(quizIds.length>0){
+            const{data:qCount}=await supabase.from('quiz_questions').select('quiz_id').in('quiz_id',quizIds);
+            (qCount||[]).forEach(q=>{questionsCount[q.quiz_id]=(questionsCount[q.quiz_id]||0)+1;});
+          }
+          const enrichedQuizzes=(qz||[]).map(q=>({
+            ...q,
+            playlists:playlistsInfo[q.playlist_id]||null,
+            questions_count:questionsCount[q.id]||0
+          }));
+          setQuizzes(enrichedQuizzes);
+          const{data:pl}=await supabase.from('playlists').select('id,title').order('title');
+          setPlaylists(pl||[]);
+          // Charger la banque de questions (peut ne pas exister)
+          try{
+            const{data:bank}=await supabase.from('question_bank').select('*,question_bank_answers(*)').order('created_at',{ascending:false});
+            setBankQuestions(bank||[]);
+          }catch(e){setBankQuestions([]);}
+          // Charger les catégories personnalisées (peut ne pas exister)
+          try{
+            const{data:cats}=await supabase.from('question_categories').select('*').order('name');
+            setCategories(cats||[]);
+          }catch(e){setCategories([]);}
+          // Charger les thèmes (peut ne pas exister)
+          try{
+            const{data:th}=await supabase.from('question_themes').select('*').order('name');
+            setThemes(th||[]);
+          }catch(e){setThemes([]);}
+          // Charger les sous-thèmes (peut ne pas exister)
+          try{
+            const{data:sth}=await supabase.from('question_sub_themes').select('*').order('name');
+            setSubThemes(sth||[]);
+          }catch(e){setSubThemes([]);}
+        }catch(err){
+          console.error('Erreur chargement quiz:',err);
         }
-        const quizIds=(qz||[]).map(q=>q.id);
-        let questionsCount={};
-        if(quizIds.length>0){
-          const{data:qCount}=await supabase.from('quiz_questions').select('quiz_id').in('quiz_id',quizIds);
-          (qCount||[]).forEach(q=>{questionsCount[q.quiz_id]=(questionsCount[q.quiz_id]||0)+1;});
-        }
-        const enrichedQuizzes=(qz||[]).map(q=>({
-          ...q,
-          playlists:playlistsInfo[q.playlist_id]||null,
-          questions_count:questionsCount[q.id]||0
-        }));
-        setQuizzes(enrichedQuizzes);
-        const{data:pl}=await supabase.from('playlists').select('id,title').order('title');
-        setPlaylists(pl||[]);
-        // Charger la banque de questions
-        const{data:bank}=await supabase.from('question_bank').select('*,question_bank_answers(*)').order('created_at',{ascending:false});
-        setBankQuestions(bank||[]);
-        // Charger les catégories personnalisées
-        const{data:cats}=await supabase.from('question_categories').select('*').order('name');
-        setCategories(cats||[]);
-        // Charger les thèmes
-        const{data:th}=await supabase.from('question_themes').select('*').order('name');
-        setThemes(th||[]);
-        // Charger les sous-thèmes
-        const{data:sth}=await supabase.from('question_sub_themes').select('*').order('name');
-        setSubThemes(sth||[]);
         setLoading(false);
       },[]);
       
