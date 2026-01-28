@@ -3155,6 +3155,9 @@
       const[assignModal,setAssignModal]=useState(null);
       const[assignedTrainers,setAssignedTrainers]=useState([]);
       const[licensedIds,setLicensedIds]=useState({courses:[],hasFullCatalog:false});
+      const[extensions,setExtensions]=useState([]);
+      const[extensionUploading,setExtensionUploading]=useState(false);
+      const extensionFileRef=useRef(null);
       const sortableRef=useRef(null);
       const sortableInstanceRef=useRef(null);
 
@@ -3269,8 +3272,56 @@
         const{data:ps}=await supabase.from('playlist_scorm').select('*,scorm_modules(*)').eq('playlist_id',playlist.id).order('position');
         setPlaylistScorm(ps||[]);
         
+        // Charger les extensions du centre pour ce cours
+        if(center?.id&&playlist.is_lms_content){
+          try{
+            const{data:ext}=await supabase.from('course_extensions').select('*').eq('playlist_id',playlist.id).eq('center_id',center.id).order('position');
+            setExtensions(ext||[]);
+          }catch(e){setExtensions([]);}
+        }else{
+          setExtensions([]);
+        }
+        
         setEditContentModal(playlist);
         setContentTab('videos');
+      };
+      
+      // Gestion des extensions (documents ajoutés par le centre)
+      const uploadExtension=async(file)=>{
+        if(!file||!editContentModal||!center?.id)return;
+        setExtensionUploading(true);
+        try{
+          const fileName=`${Date.now()}_${file.name}`;
+          const filePath=`extensions/${center.id}/${editContentModal.id}/${fileName}`;
+          const{error:uploadError}=await supabase.storage.from('documents').upload(filePath,file);
+          if(uploadError)throw uploadError;
+          const{data:{publicUrl}}=supabase.storage.from('documents').getPublicUrl(filePath);
+          
+          const{data:ext}=await supabase.from('course_extensions').insert({
+            playlist_id:editContentModal.id,
+            center_id:center.id,
+            extension_type:'document',
+            title:file.name.replace(/\.[^/.]+$/,''),
+            file_url:publicUrl,
+            file_name:file.name,
+            file_size:file.size,
+            position:extensions.length
+          }).select().single();
+          
+          if(ext)setExtensions([...extensions,ext]);
+        }catch(err){alert('Erreur upload: '+err.message);}
+        setExtensionUploading(false);
+      };
+      
+      const deleteExtension=async(extId)=>{
+        if(!confirm('Supprimer ce document ?'))return;
+        const ext=extensions.find(e=>e.id===extId);
+        if(ext?.file_url){
+          const path=ext.file_url.split('/documents/')[1];
+          if(path)await supabase.storage.from('documents').remove([path]);
+        }
+        await supabase.from('course_extensions').delete().eq('id',extId);
+        setExtensions(extensions.filter(e=>e.id!==extId));
       };
       
       const addVideoToPlaylist=async(videoId)=>{const pos=playlistVideos.length;const{data}=await supabase.from('playlist_videos').insert({playlist_id:editContentModal.id,video_id:videoId,position:pos}).select('*,videos(*)').single();if(data)setPlaylistVideos([...playlistVideos,data]);};
@@ -3389,23 +3440,31 @@
         </Modal>
         
         <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier':'Créer'}><div className="space-y-4"><Input label="Titre" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
-        <Modal isOpen={!!editContentModal} onClose={()=>setEditContentModal(null)} title={`Contenu: ${editContentModal?.title}`} size="xl">
-          <Tabs tabs={[{id:'videos',label:`Vidéos (${playlistVideos.length})`,icon:'Film'},{id:'scorm',label:`SCORM (${playlistScorm.length})`,icon:'Package'}]} active={contentTab} onChange={setContentTab}/>
+        <Modal isOpen={!!editContentModal} onClose={()=>setEditContentModal(null)} title={`Contenu: ${editContentModal?.title}${editContentModal?.is_lms_content?' 📦':''}`} size="xl">
+          <Tabs tabs={[
+            {id:'videos',label:`Vidéos (${playlistVideos.length})`,icon:'Film'},
+            {id:'scorm',label:`SCORM (${playlistScorm.length})`,icon:'Package'},
+            ...(editContentModal?.is_lms_content&&!isSuperAdmin?[{id:'extensions',label:`Mes documents (${extensions.length})`,icon:'FileText'}]:[])
+          ]} active={contentTab} onChange={setContentTab}/>
+          
+          {editContentModal?.is_locked&&!isSuperAdmin&&(contentTab==='videos'||contentTab==='scorm')&&(
+            <Alert type="info" className="mb-4"><Icon name="Lock" size={14} className="inline mr-2"/>Ce cours LMS est verrouillé. Vous pouvez ajouter vos propres documents dans l'onglet "Mes documents".</Alert>
+          )}
           
           {contentTab==='videos'&&<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
-              <h4 className="font-medium mb-3">Dans le cours ({playlistVideos.length}) <span className="text-gray-500 text-sm font-normal">- Glissez pour réorganiser</span></h4>
+              <h4 className="font-medium mb-3">Dans le cours ({playlistVideos.length}) {!editContentModal?.is_locked&&<span className="text-gray-500 text-sm font-normal">- Glissez pour réorganiser</span>}</h4>
               <div ref={sortableRef} className="space-y-2 max-h-96 overflow-y-auto">
                 {playlistVideos.map((pv,i)=><div key={pv.id} data-id={pv.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg">
-                  <div className="drag-handle cursor-grab active:cursor-grabbing p-1 hover:bg-gray-600 rounded"><Icon name="GripVertical" size={16} className="text-gray-400"/></div>
+                  {!editContentModal?.is_locked&&<div className="drag-handle cursor-grab active:cursor-grabbing p-1 hover:bg-gray-600 rounded"><Icon name="GripVertical" size={16} className="text-gray-400"/></div>}
                   <span className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{i+1}</span>
                   <div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{pv.videos?.title}</p></div>
-                  <button onClick={()=>removeVideoFromPlaylist(pv.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button>
+                  {(!editContentModal?.is_locked||isSuperAdmin)&&<button onClick={()=>removeVideoFromPlaylist(pv.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button>}
                 </div>)}
                 {playlistVideos.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucune vidéo</p>}
               </div>
             </div>
-            <div>
+            {(!editContentModal?.is_locked||isSuperAdmin)&&<div>
               <h4 className="font-medium mb-3">Vidéos disponibles</h4>
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)).map(v=><div key={v.id} className="flex items-center gap-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 cursor-pointer" onClick={()=>addVideoToPlaylist(v.id)}>
@@ -3414,7 +3473,7 @@
                 </div>)}
                 {videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)).length===0&&<p className="text-gray-500 text-sm text-center py-4">Toutes les vidéos ajoutées</p>}
               </div>
-            </div>
+            </div>}
           </div>}
           
           {contentTab==='scorm'&&<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -3427,12 +3486,12 @@
                     <p className="font-medium truncate text-sm">{ps.scorm_modules?.title}</p>
                     <p className="text-xs text-gray-400">{ps.scorm_modules?.module_type}</p>
                   </div>
-                  <button onClick={()=>removeScormFromPlaylist(ps.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button>
+                  {(!editContentModal?.is_locked||isSuperAdmin)&&<button onClick={()=>removeScormFromPlaylist(ps.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button>}
                 </div>)}
                 {playlistScorm.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucun module SCORM</p>}
               </div>
             </div>
-            <div>
+            {(!editContentModal?.is_locked||isSuperAdmin)&&<div>
               <h4 className="font-medium mb-3">Modules disponibles</h4>
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {scormModules.filter(m=>!playlistScorm.find(ps=>ps.scorm_module_id===m.id)).map(m=><div key={m.id} className="flex items-center gap-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 cursor-pointer" onClick={()=>addScormToPlaylist(m.id)}>
@@ -3444,7 +3503,37 @@
                 </div>)}
                 {scormModules.filter(m=>!playlistScorm.find(ps=>ps.scorm_module_id===m.id)).length===0&&<p className="text-gray-500 text-sm text-center py-4">{scormModules.length===0?'Aucun module SCORM disponible':'Tous les modules ajoutés'}</p>}
               </div>
+            </div>}
+          </div>}
+          
+          {contentTab==='extensions'&&<div className="space-y-4">
+            <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-lg p-4">
+              <p className="text-sm text-indigo-300"><Icon name="Info" size={14} className="inline mr-2"/>Ces documents sont visibles uniquement par les apprenants de votre centre. Ils complètent le cours LMS officiel.</p>
             </div>
+            
+            <div className="flex items-center gap-4">
+              <input type="file" ref={extensionFileRef} onChange={e=>e.target.files[0]&&uploadExtension(e.target.files[0])} accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" className="hidden"/>
+              <Button icon="Upload" onClick={()=>extensionFileRef.current?.click()} loading={extensionUploading}>Ajouter un document</Button>
+              <span className="text-xs text-gray-500">PDF, Word, Excel, PowerPoint</span>
+            </div>
+            
+            {extensions.length===0?<p className="text-gray-500 text-center py-8">Aucun document ajouté</p>:(
+              <div className="space-y-2">
+                {extensions.map(ext=>(
+                  <div key={ext.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg">
+                    <div className="w-10 h-10 bg-blue-500/20 rounded flex items-center justify-center">
+                      <Icon name="FileText" size={20} className="text-blue-400"/>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{ext.title}</p>
+                      <p className="text-xs text-gray-400">{ext.file_name} • {ext.file_size?Math.round(ext.file_size/1024)+'Ko':''}</p>
+                    </div>
+                    <a href={ext.file_url} target="_blank" className="p-2 hover:bg-gray-600 rounded"><Icon name="Download" size={16}/></a>
+                    <button onClick={()=>deleteExtension(ext.id)} className="p-2 hover:bg-red-600 rounded"><Icon name="Trash2" size={16} className="text-red-400"/></button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>}
         </Modal>
       </div>;
@@ -4677,13 +4766,54 @@
       const[form,setForm]=useState({playlist_id:'',learner_id:''});
       const[bulkForm,setBulkForm]=useState({playlist_id:'',selectedLearners:[]});
       const[saving,setSaving]=useState(false);
+      const[licenseInfo,setLicenseInfo]=useState({hasLicense:true,licensedCourses:[],hasFullCatalog:false,maxLearners:null,usedLearners:0,expiringSoon:false,daysRemaining:null});
 
       const load=useCallback(async()=>{
+        // Charger les licences du centre
+        let licInfo={hasLicense:true,licensedCourses:[],hasFullCatalog:false,maxLearners:null,usedLearners:0,expiringSoon:false,daysRemaining:null};
+        if(!isSuperAdmin&&center?.id){
+          try{
+            const today=new Date().toISOString().split('T')[0];
+            const{data:licenses}=await supabase.from('center_licenses').select('*,content_packs(pack_type)').eq('center_id',center.id).eq('status','active').lte('start_date',today).gte('end_date',today);
+            
+            if(!licenses||licenses.length===0){
+              licInfo.hasLicense=false;
+            }else{
+              licInfo.hasFullCatalog=licenses.some(l=>l.license_type==='full_catalog'||l.content_packs?.pack_type==='full_catalog');
+              
+              // Calculer le max d'apprenants (prendre le plus restrictif si plusieurs licences)
+              const maxes=licenses.filter(l=>l.max_learners).map(l=>l.max_learners);
+              if(maxes.length>0)licInfo.maxLearners=Math.min(...maxes);
+              
+              // Compter les apprenants déjà inscrits à des contenus sous licence
+              const{data:enrolledLearners}=await supabase.from('enrollments').select('learner_id').eq('center_id',center.id);
+              const uniqueLearners=new Set((enrolledLearners||[]).map(e=>e.learner_id));
+              licInfo.usedLearners=uniqueLearners.size;
+              
+              // Vérifier expiration proche
+              const nearestEnd=licenses.reduce((min,l)=>l.end_date<min?l.end_date:min,licenses[0].end_date);
+              const daysLeft=Math.ceil((new Date(nearestEnd)-new Date())/(1000*60*60*24));
+              licInfo.daysRemaining=daysLeft;
+              if(daysLeft<=30)licInfo.expiringSoon=true;
+              
+              // Cours sous licence
+              if(!licInfo.hasFullCatalog){
+                const packIds=licenses.map(l=>l.pack_id).filter(Boolean);
+                if(packIds.length>0){
+                  const{data:items}=await supabase.from('content_pack_items').select('content_type,content_id').in('pack_id',packIds);
+                  (items||[]).forEach(i=>{if(i.content_type==='course')licInfo.licensedCourses.push(i.content_id);});
+                }
+              }
+            }
+          }catch(e){console.log('Erreur licences:',e);}
+        }
+        setLicenseInfo(licInfo);
+        
         // Charger les playlists et apprenants filtrés par centre
-        let qp=supabase.from('playlists').select('id,title,is_published,center_id').order('title');
+        let qp=supabase.from('playlists').select('id,title,is_published,center_id,is_lms_content').order('title');
         let ql=supabase.from('profiles').select('id,first_name,last_name,email,center_id').eq('role','learner');
         if(!isSuperAdmin&&center?.id){
-          qp=qp.eq('center_id',center.id);
+          qp=qp.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
           ql=ql.eq('center_id',center.id);
         }
         const[{data:p},{data:l}]=await Promise.all([qp,ql]);
@@ -4695,7 +4825,7 @@
         const learnerIds=(l||[]).map(le=>le.id);
         
         let enrollmentsQuery=supabase.from('enrollments')
-          .select('*,playlists:playlist_id(title,center_id),profiles:learner_id(first_name,last_name,email,center_id)')
+          .select('*,playlists:playlist_id(title,center_id,is_lms_content),profiles:learner_id(first_name,last_name,email,center_id)')
           .order('created_at',{ascending:false});
         
         const{data:e}=await enrollmentsQuery;
@@ -4713,14 +4843,51 @@
         setLoading(false);
       },[isSuperAdmin,center?.id]);
       useEffect(()=>{load();},[load]);
+      
+      // Vérifier si on peut inscrire à un cours
+      const canEnrollToCourse=(playlistId)=>{
+        if(isSuperAdmin)return{allowed:true};
+        const playlist=playlists.find(p=>p.id===playlistId);
+        if(!playlist)return{allowed:false,reason:'Cours introuvable'};
+        
+        // Cours du centre = toujours OK
+        if(!playlist.is_lms_content)return{allowed:true};
+        
+        // Cours LMS = vérifier licence
+        if(!licenseInfo.hasLicense)return{allowed:false,reason:'Aucune licence active'};
+        if(!licenseInfo.hasFullCatalog&&!licenseInfo.licensedCourses.includes(playlistId)){
+          return{allowed:false,reason:'Cours non inclus dans votre licence'};
+        }
+        
+        // Vérifier quota
+        if(licenseInfo.maxLearners&&licenseInfo.usedLearners>=licenseInfo.maxLearners){
+          return{allowed:false,reason:`Quota atteint (${licenseInfo.usedLearners}/${licenseInfo.maxLearners} apprenants)`};
+        }
+        
+        return{allowed:true};
+      };
 
       const handleEnroll=async()=>{
+        const check=canEnrollToCourse(form.playlist_id);
+        if(!check.allowed){alert(check.reason);return;}
         setSaving(true);
         await supabase.from('enrollments').insert({playlist_id:form.playlist_id,learner_id:form.learner_id,enrolled_by:profile?.id});
         await load();setModal(false);setForm({playlist_id:'',learner_id:''});setSaving(false);
       };
       
       const handleBulkEnroll=async()=>{
+        const check=canEnrollToCourse(bulkForm.playlist_id);
+        if(!check.allowed){alert(check.reason);return;}
+        
+        // Vérifier quota pour inscription en masse
+        if(licenseInfo.maxLearners){
+          const newTotal=licenseInfo.usedLearners+bulkForm.selectedLearners.length;
+          if(newTotal>licenseInfo.maxLearners){
+            alert(`Quota dépassé : vous ne pouvez inscrire que ${licenseInfo.maxLearners-licenseInfo.usedLearners} apprenants supplémentaires`);
+            return;
+          }
+        }
+        
         setSaving(true);
         const inserts=bulkForm.selectedLearners.map(learnerId=>({playlist_id:bulkForm.playlist_id,learner_id:learnerId,enrolled_by:profile?.id}));
         await supabase.from('enrollments').upsert(inserts,{onConflict:'playlist_id,learner_id'});
@@ -4741,19 +4908,42 @@
         const available=learners.filter(l=>!enrolledIds.includes(l.id));
         setBulkForm(prev=>({...prev,selectedLearners:available.map(l=>l.id)}));
       };
+      
+      // Filtrer les cours disponibles pour inscription
+      const availableCourses=playlists.filter(p=>{
+        if(isSuperAdmin)return true;
+        if(!p.is_lms_content)return true; // Cours du centre
+        if(licenseInfo.hasFullCatalog)return true;
+        return licenseInfo.licensedCourses.includes(p.id);
+      });
 
       if(!can('manage_enrollments'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
       
       return<div>
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4"><h1 className="text-2xl font-bold">Inscriptions</h1><div className="flex gap-2"><Button variant="secondary" icon="Users" onClick={()=>setBulkModal(true)}>Inscription en masse</Button><Button icon="UserPlus" onClick={()=>setModal(true)}>Inscrire</Button></div></div>
-        {enrollments.length===0?<Empty icon="UserPlus" title="Aucune inscription"/>:<Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Apprenant</th><th className="text-left p-4 font-medium text-gray-400">Cours</th><th className="text-left p-4 font-medium text-gray-400">Progression</th><th className="text-left p-4 font-medium text-gray-400">Temps</th><th className="text-left p-4 font-medium text-gray-400">Statut</th><th className="text-left p-4 font-medium text-gray-400">Date</th><th className="text-right p-4"></th></tr></thead><tbody className="divide-y divide-gray-700">{enrollments.map(e=>{const formatT=(s)=>{if(!s)return'-';const h=Math.floor(s/3600);const m=Math.floor((s%3600)/60);return h>0?`${h}h ${m}min`:`${m}min`;};return<tr key={e.id}><td className="p-4"><p className="font-medium">{e.profiles?.first_name} {e.profiles?.last_name}</p><p className="text-sm text-gray-400">{e.profiles?.email}</p></td><td className="p-4">{e.playlists?.title||'—'}</td><td className="p-4"><ProgressBar percent={e.progress_percent||0} size="sm" showLabel={true}/></td><td className="p-4 text-blue-400">{formatT(e.time_spent_seconds)}</td><td className="p-4"><span className={`px-2 py-1 rounded text-xs ${e.status==='completed'?'bg-green-500/20 text-green-400':e.status==='in_progress'?'bg-yellow-500/20 text-yellow-400':'bg-gray-500/20 text-gray-400'}`}>{e.status==='not_started'?'Non commencé':e.status==='in_progress'?'En cours':'Terminé'}</span></td><td className="p-4 text-gray-400">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td><td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleUnenroll(e.id)}/></td></tr>})}</tbody></table></div></Card>}
         
-        <Modal isOpen={modal} onClose={()=>setModal(false)} title="Inscrire"><div className="space-y-4"><Select label="Cours" value={form.playlist_id} onChange={e=>setForm({...form,playlist_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...playlists.map(p=>({value:p.id,label:`${p.title}${p.is_published?'':' (brouillon)'}`}))]}/><Select label="Apprenant" value={form.learner_id} onChange={e=>setForm({...form,learner_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...learners.map(l=>({value:l.id,label:`${l.first_name} ${l.last_name}`}))]}/><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleEnroll} loading={saving} disabled={!form.playlist_id||!form.learner_id}>Inscrire</Button></div></div></Modal>
+        {/* Alertes licence */}
+        {!isSuperAdmin&&!licenseInfo.hasLicense&&(
+          <Alert type="error" className="mb-4"><Icon name="AlertTriangle" size={16} className="inline mr-2"/>Aucune licence active. Vous ne pouvez inscrire qu'aux cours de votre centre.</Alert>
+        )}
+        {!isSuperAdmin&&licenseInfo.expiringSoon&&licenseInfo.daysRemaining!==null&&(
+          <Alert type="warning" className="mb-4"><Icon name="Clock" size={16} className="inline mr-2"/>Licence expire dans {licenseInfo.daysRemaining} jours</Alert>
+        )}
+        {!isSuperAdmin&&licenseInfo.maxLearners&&(
+          <Card className="p-4 mb-4 flex items-center justify-between">
+            <div><span className="text-gray-400">Quota apprenants :</span><span className={`ml-2 font-bold ${licenseInfo.usedLearners>=licenseInfo.maxLearners?'text-red-400':'text-green-400'}`}>{licenseInfo.usedLearners} / {licenseInfo.maxLearners}</span></div>
+            <ProgressBar percent={Math.round(licenseInfo.usedLearners/licenseInfo.maxLearners*100)} size="sm" className="w-32"/>
+          </Card>
+        )}
+        
+        {enrollments.length===0?<Empty icon="UserPlus" title="Aucune inscription"/>:<Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Apprenant</th><th className="text-left p-4 font-medium text-gray-400">Cours</th><th className="text-left p-4 font-medium text-gray-400">Progression</th><th className="text-left p-4 font-medium text-gray-400">Temps</th><th className="text-left p-4 font-medium text-gray-400">Statut</th><th className="text-left p-4 font-medium text-gray-400">Date</th><th className="text-right p-4"></th></tr></thead><tbody className="divide-y divide-gray-700">{enrollments.map(e=>{const formatT=(s)=>{if(!s)return'-';const h=Math.floor(s/3600);const m=Math.floor((s%3600)/60);return h>0?`${h}h ${m}min`:`${m}min`;};return<tr key={e.id}><td className="p-4"><p className="font-medium">{e.profiles?.first_name} {e.profiles?.last_name}</p><p className="text-sm text-gray-400">{e.profiles?.email}</p></td><td className="p-4"><div className="flex items-center gap-2">{e.playlists?.title||'—'}{e.playlists?.is_lms_content&&<span className="px-1.5 py-0.5 bg-indigo-600 rounded text-xs">LMS</span>}</div></td><td className="p-4"><ProgressBar percent={e.progress_percent||0} size="sm" showLabel={true}/></td><td className="p-4 text-blue-400">{formatT(e.time_spent_seconds)}</td><td className="p-4"><span className={`px-2 py-1 rounded text-xs ${e.status==='completed'?'bg-green-500/20 text-green-400':e.status==='in_progress'?'bg-yellow-500/20 text-yellow-400':'bg-gray-500/20 text-gray-400'}`}>{e.status==='not_started'?'Non commencé':e.status==='in_progress'?'En cours':'Terminé'}</span></td><td className="p-4 text-gray-400">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td><td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleUnenroll(e.id)}/></td></tr>})}</tbody></table></div></Card>}
+        
+        <Modal isOpen={modal} onClose={()=>setModal(false)} title="Inscrire"><div className="space-y-4"><Select label="Cours" value={form.playlist_id} onChange={e=>setForm({...form,playlist_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...availableCourses.map(p=>({value:p.id,label:`${p.title}${p.is_lms_content?' 📦':''}${p.is_published?'':' (brouillon)'}`}))]}/><Select label="Apprenant" value={form.learner_id} onChange={e=>setForm({...form,learner_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...learners.map(l=>({value:l.id,label:`${l.first_name} ${l.last_name}`}))]}/><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleEnroll} loading={saving} disabled={!form.playlist_id||!form.learner_id}>Inscrire</Button></div></div></Modal>
         
         <Modal isOpen={bulkModal} onClose={()=>setBulkModal(false)} title="Inscription en masse" size="lg">
           <div className="space-y-4">
-            <Select label="Cours" value={bulkForm.playlist_id} onChange={e=>setBulkForm({...bulkForm,playlist_id:e.target.value,selectedLearners:[]})} options={[{value:'',label:'Sélectionner un cours...'},...playlists.map(p=>({value:p.id,label:`${p.title}${p.is_published?'':' (brouillon)'}`}))]}/>
+            <Select label="Cours" value={bulkForm.playlist_id} onChange={e=>setBulkForm({...bulkForm,playlist_id:e.target.value,selectedLearners:[]})} options={[{value:'',label:'Sélectionner un cours...'},...availableCourses.map(p=>({value:p.id,label:`${p.title}${p.is_lms_content?' 📦':''}${p.is_published?'':' (brouillon)'}`}))]}/>
             
             {bulkForm.playlist_id&&(
               <div>
