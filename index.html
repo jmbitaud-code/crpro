@@ -90,15 +90,112 @@
     const ROLE_LABELS={super_admin:'Super Admin',center_admin:'Admin Centre',trainer:'Formateur',learner:'Apprenant'};
     const ROLE_COLORS={super_admin:'bg-red-500',center_admin:'bg-purple-500',trainer:'bg-green-500',learner:'bg-gray-500'};
     
-    const PERMISSION_LABELS={
-      manage_centers:'Gérer les centres',
-      manage_users:'Gérer les utilisateurs',
-      manage_videos:'Gérer les vidéos',
-      manage_playlists:'Gérer les cours',
-      manage_enrollments:'Gérer les inscriptions',
-      view_analytics:'Voir les statistiques',
-      export_reports:'Exporter les rapports',
-      manage_permissions:'Gérer les permissions'
+    // Permissions groupées par catégorie
+    const PERMISSION_GROUPS={
+      centers:{
+        label:'🏢 Centres',
+        permissions:{
+          manage_centers:'Créer/modifier/supprimer des centres'
+        }
+      },
+      users:{
+        label:'👥 Utilisateurs',
+        permissions:{
+          create_users:'Créer des utilisateurs',
+          edit_users:'Modifier les utilisateurs',
+          delete_users:'Supprimer des utilisateurs',
+          import_users:'Importer en masse',
+          assign_roles:'Attribuer des rôles'
+        }
+      },
+      content:{
+        label:'📚 Contenus',
+        permissions:{
+          manage_videos:'Créer/modifier vidéos',
+          view_videos:'Voir la bibliothèque vidéos',
+          manage_scorm:'Créer/modifier modules SCORM',
+          view_scorm:'Voir les modules SCORM',
+          manage_playlists:'Créer/modifier cours',
+          view_playlists:'Voir les cours',
+          assign_content:'Attribuer contenu à un cours'
+        }
+      },
+      quizzes:{
+        label:'❓ Quiz',
+        permissions:{
+          manage_quizzes:'Créer/modifier quiz',
+          view_quizzes:'Voir les quiz',
+          manage_questions:'Gérer la banque de questions',
+          view_questions:'Voir la banque de questions',
+          assign_quizzes:'Attribuer quiz à un cours'
+        }
+      },
+      enrollments:{
+        label:'📝 Inscriptions',
+        permissions:{
+          manage_enrollments:'Gérer les inscriptions',
+          manage_paths:'Gérer les parcours',
+          manage_badges:'Gérer les badges'
+        }
+      },
+      analytics:{
+        label:'📊 Statistiques',
+        permissions:{
+          view_analytics:'Voir les statistiques',
+          view_all_analytics:'Voir toutes les stats (tous centres)',
+          export_reports:'Exporter les rapports'
+        }
+      },
+      evaluation:{
+        label:'🎓 Évaluation',
+        permissions:{
+          view_learner_progress:'Voir progression apprenants',
+          grade_quizzes:'Noter les quiz texte libre',
+          reset_progress:'Réinitialiser progression',
+          issue_certificates:'Délivrer certificats'
+        }
+      },
+      communication:{
+        label:'📧 Communication',
+        permissions:{
+          send_emails:'Envoyer des emails',
+          send_notifications:'Envoyer notifications',
+          manage_email_templates:'Gérer templates email'
+        }
+      },
+      admin:{
+        label:'⚙️ Administration',
+        permissions:{
+          manage_permissions:'Gérer les permissions',
+          view_audit_log:'Voir les logs d\'audit'
+        }
+      }
+    };
+    
+    // Flatten pour compatibilité
+    const PERMISSION_LABELS=Object.values(PERMISSION_GROUPS).reduce((acc,g)=>({...acc,...g.permissions}),{});
+    
+    // Permissions par défaut pour chaque rôle
+    const DEFAULT_PERMISSIONS={
+      super_admin:Object.keys(PERMISSION_LABELS).reduce((a,k)=>({...a,[k]:true}),{}),
+      center_admin:{
+        create_users:true,edit_users:true,delete_users:true,import_users:true,assign_roles:true,
+        manage_videos:true,view_videos:true,manage_scorm:true,view_scorm:true,
+        manage_playlists:true,view_playlists:true,assign_content:true,
+        manage_quizzes:true,view_quizzes:true,manage_questions:true,view_questions:true,assign_quizzes:true,
+        manage_enrollments:true,manage_paths:true,manage_badges:true,
+        view_analytics:true,export_reports:true,
+        view_learner_progress:true,grade_quizzes:true,reset_progress:true,issue_certificates:true,
+        send_emails:true,send_notifications:true,manage_email_templates:true,
+        view_audit_log:true
+      },
+      trainer:{
+        create_users:true,view_videos:true,view_scorm:true,view_playlists:true,assign_content:true,
+        view_quizzes:true,view_questions:true,assign_quizzes:true,
+        manage_enrollments:true,view_analytics:true,view_learner_progress:true,grade_quizzes:true,
+        send_emails:true,send_notifications:true
+      },
+      learner:{}
     };
     
     // Fonction utilitaire pour formater la durée en secondes
@@ -205,7 +302,36 @@
 
       // Fonctions adaptées au mode "Vue comme"
       const realIsSuperAdmin=profile?.role==='super_admin';
+      const realRole=profile?.role;
+      
+      // Vérifier une permission
       const can=(perm)=>realIsSuperAdmin||permissions[perm]===true;
+      
+      // Vérifier si l'utilisateur peut agir sur un centre spécifique
+      const canForCenter=(perm,centerId)=>{
+        if(realIsSuperAdmin)return true;
+        if(!can(perm))return false;
+        // Admin centre et formateur: seulement leur propre centre
+        if(realRole==='center_admin'||realRole==='trainer'){
+          return center?.id===centerId;
+        }
+        return true;
+      };
+      
+      // Vérifier les rôles que l'utilisateur peut assigner
+      const canAssignRole=(targetRole)=>{
+        if(realIsSuperAdmin)return true;
+        if(!can('assign_roles'))return false;
+        // Admin centre: peut assigner apprenant et formateur seulement
+        if(realRole==='center_admin'){
+          return['learner','trainer'].includes(targetRole);
+        }
+        // Formateur: peut créer des apprenants seulement
+        if(realRole==='trainer'){
+          return targetRole==='learner';
+        }
+        return false;
+      };
       
       // Rôle effectif
       const effectiveRole=viewAs?.role||profile?.role;
@@ -230,11 +356,12 @@
         isAuth:!!user,
         isSuperAdmin,
         realIsSuperAdmin,
+        realRole,
         isCenterAdmin,
         isLearner,
         effectiveRole,
         role:effectiveRole||'learner',
-        can,permissions,
+        can,canForCenter,canAssignRole,permissions,
         viewAs,switchView,exitViewAs,
         reload:async()=>{if(user)await loadProfile(user.id);}
       };
@@ -420,17 +547,17 @@
       const showAsSuperAdmin=!viewAs&&isSuperAdmin;
       
       const menu=[
-        {id:'scorm-tracking',label:'Suivi formation',icon:'BarChart3',show:!showAsLearner&&(can('view_analytics')||can('manage_enrollments'))},
+        {id:'scorm-tracking',label:'Suivi formation',icon:'BarChart3',show:!showAsLearner&&(can('view_analytics')||can('view_learner_progress'))},
         {id:'analytics',label:'Statistiques',icon:'PieChart',show:!showAsLearner&&can('view_analytics')},
         {id:'centers',label:'Centres',icon:'Building2',show:showAsSuperAdmin},
-        {id:'users',label:'Utilisateurs',icon:'Users',show:!viewAs&&can('manage_users')},
-        {id:'videos',label:'Bibliothèque',icon:'Film',show:!viewAs&&can('manage_videos')},
-        {id:'playlists',label:'Cours',icon:'BookOpen',show:showAsAdmin||(viewAs&&(viewAs.role==='center_admin'||viewAs.role==='trainer'))},
-        {id:'paths',label:'Parcours',icon:'Map',show:showAsAdmin||(viewAs&&(viewAs.role==='center_admin'||viewAs.role==='trainer'))},
-        {id:'quizzes',label:'Quiz',icon:'HelpCircle',show:showAsAdmin||(viewAs&&(viewAs.role==='center_admin'||viewAs.role==='trainer'))},
-        {id:'badges',label:'Badges',icon:'Award',show:!viewAs&&can('manage_playlists')},
+        {id:'users',label:'Utilisateurs',icon:'Users',show:!viewAs&&(can('create_users')||can('edit_users'))},
+        {id:'videos',label:'Bibliothèque',icon:'Film',show:!viewAs&&(can('manage_videos')||can('view_videos'))},
+        {id:'playlists',label:'Cours',icon:'BookOpen',show:showAsAdmin||(viewAs&&(viewAs.role==='center_admin'||viewAs.role==='trainer'))||(can('manage_playlists')||can('view_playlists'))},
+        {id:'paths',label:'Parcours',icon:'Map',show:showAsAdmin||(viewAs&&(viewAs.role==='center_admin'||viewAs.role==='trainer'))||can('manage_paths')},
+        {id:'quizzes',label:'Quiz',icon:'HelpCircle',show:showAsAdmin||(viewAs&&(viewAs.role==='center_admin'||viewAs.role==='trainer'))||(can('manage_quizzes')||can('view_quizzes'))},
+        {id:'badges',label:'Badges',icon:'Award',show:!viewAs&&can('manage_badges')},
         {id:'enrollments',label:'Inscriptions',icon:'UserPlus',show:!viewAs&&can('manage_enrollments')||(viewAs&&(viewAs.role==='center_admin'||viewAs.role==='trainer'))},
-        {id:'emails',label:'Emails',icon:'Mail',show:!viewAs&&can('manage_users')},
+        {id:'emails',label:'Emails',icon:'Mail',show:!viewAs&&(can('send_emails')||can('manage_email_templates'))},
         {id:'permissions',label:'Permissions',icon:'Shield',show:!viewAs&&can('manage_permissions')},
         {id:'my-courses',label:'Mes cours',icon:'GraduationCap',show:showAsLearner},
         {id:'my-progress',label:'Mon suivi',icon:'BarChart3',show:showAsLearner},
@@ -1817,7 +1944,7 @@
 
     // Users
     function UsersPage(){
-      const{profile,center,isSuperAdmin,can}=useAuth();
+      const{profile,center,isSuperAdmin,realRole,can,canAssignRole}=useAuth();
       const[users,setUsers]=useState([]);
       const[centers,setCenters]=useState([]);
       const[loading,setLoading]=useState(true);
@@ -1843,9 +1970,16 @@
       const[importLoading,setImportLoading]=useState(false);
       const[importResult,setImportResult]=useState(null);
       const fileInputRef=useRef(null);
+      
+      // Rôles que l'utilisateur courant peut assigner
+      const assignableRoles=Object.entries(ROLE_LABELS).filter(([r])=>{
+        if(isSuperAdmin)return true;
+        return canAssignRole(r);
+      });
 
       const load=useCallback(async()=>{
         let q=supabase.from('profiles').select('*,centers(name)').order('created_at',{ascending:false});
+        // Filtrage par centre pour non-super-admin
         if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);
         const{data:u}=await q;setUsers(u||[]);
         const{data:c}=await supabase.from('centers').select('id,name');setCenters(c||[]);
@@ -1863,7 +1997,7 @@
 
       // Suppression par lot
       const handleBulkDelete=async()=>{
-        if(!selectedUsers.length)return;
+        if(!selectedUsers.length||!can('delete_users'))return;
         setDeleting(true);
         try{
           for(const userId of selectedUsers){
@@ -2125,14 +2259,14 @@
       const selectableUsers=filtered.filter(u=>u.id!==profile?.id&&u.role!=='super_admin');
       const allSelected=selectableUsers.length>0&&selectableUsers.every(u=>selectedUsers.includes(u.id));
 
-      if(!can('manage_users'))return<Empty icon="Lock" title="Accès refusé"/>;
+      if(!can('create_users')&&!can('edit_users')&&!can('delete_users'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
 
       return<div>
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
           <div>
             <h1 className="text-2xl font-bold">Utilisateurs</h1>
-            <p className="text-sm text-gray-400">{users.length} utilisateur{users.length>1?'s':''}</p>
+            <p className="text-sm text-gray-400">{users.length} utilisateur{users.length>1?'s':''}{!isSuperAdmin&&center?' - '+center.name:''}</p>
           </div>
           <div className="flex gap-2">
             {selectedUsers.length>0&&(
@@ -4415,7 +4549,20 @@
 
       const load=useCallback(async()=>{
         const{data}=await supabase.from('role_permissions').select('*').order('role');
-        setRoles(data||[]);
+        // Si pas de données, initialiser avec les défauts
+        if(!data||data.length===0){
+          const defaults=[
+            {role:'center_admin',permissions:DEFAULT_PERMISSIONS.center_admin},
+            {role:'trainer',permissions:DEFAULT_PERMISSIONS.trainer},
+            {role:'learner',permissions:DEFAULT_PERMISSIONS.learner}
+          ];
+          for(const d of defaults){
+            await supabase.from('role_permissions').upsert(d);
+          }
+          setRoles(defaults);
+        }else{
+          setRoles(data);
+        }
         setLoading(false);
       },[]);
       useEffect(()=>{load();},[load]);
@@ -4429,43 +4576,85 @@
         setRoles(roles.map(r=>r.role===role?{...r,permissions:newPermissions}:r));
         setSaving(false);
       };
+      
+      const resetToDefaults=async(role)=>{
+        if(!confirm(`Réinitialiser les permissions de ${ROLE_LABELS[role]} aux valeurs par défaut ?`))return;
+        setSaving(true);
+        const defaultPerms=DEFAULT_PERMISSIONS[role]||{};
+        await supabase.from('role_permissions').update({permissions:defaultPerms}).eq('role',role);
+        setRoles(roles.map(r=>r.role===role?{...r,permissions:defaultPerms}:r));
+        setSaving(false);
+      };
 
       if(!can('manage_permissions'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
 
+      const displayRoles=roles.filter(r=>r.role!=='super_admin');
+
       return<div>
-        <h1 className="text-2xl font-bold mb-6">Gestion des permissions</h1>
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold">Gestion des permissions</h1>
+          <div className="flex gap-2">
+            {displayRoles.map(r=>(
+              <Button key={r.role} size="sm" variant="ghost" onClick={()=>resetToDefaults(r.role)}>
+                Réinit. {ROLE_LABELS[r.role]}
+              </Button>
+            ))}
+          </div>
+        </div>
+        
         <Card>
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-750">
+              <thead className="bg-gray-750 sticky top-0">
                 <tr>
-                  <th className="text-left p-4 font-medium text-gray-400">Permission</th>
-                  {roles.filter(r=>r.role!=='super_admin').map(r=><th key={r.role} className="text-center p-4 font-medium"><RoleBadge role={r.role}/></th>)}
+                  <th className="text-left p-4 font-medium text-gray-400 w-1/2">Permission</th>
+                  {displayRoles.map(r=><th key={r.role} className="text-center p-4 font-medium"><RoleBadge role={r.role}/></th>)}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-700">
-                {Object.entries(PERMISSION_LABELS).map(([perm,label])=>(
-                  <tr key={perm}>
-                    <td className="p-4 font-medium">{label}</td>
-                    {roles.filter(r=>r.role!=='super_admin').map(r=>(
-                      <td key={r.role} className="p-4 text-center">
-                        <input 
-                          type="checkbox" 
-                          checked={r.permissions[perm]||false} 
-                          onChange={()=>togglePermission(r.role,perm)}
-                          disabled={saving||r.role==='super_admin'}
-                          className="w-5 h-5 rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer disabled:opacity-50"
-                        />
-                      </td>
+              <tbody>
+                {Object.entries(PERMISSION_GROUPS).map(([groupKey,group])=>(
+                  <React.Fragment key={groupKey}>
+                    <tr className="bg-gray-800/50">
+                      <td colSpan={displayRoles.length+1} className="p-3 font-semibold text-gray-300">{group.label}</td>
+                    </tr>
+                    {Object.entries(group.permissions).map(([perm,label])=>(
+                      <tr key={perm} className="border-b border-gray-700/50 hover:bg-gray-700/30">
+                        <td className="p-3 pl-6 text-sm">{label}</td>
+                        {displayRoles.map(r=>(
+                          <td key={r.role} className="p-3 text-center">
+                            <input 
+                              type="checkbox" 
+                              checked={r.permissions?.[perm]||false} 
+                              onChange={()=>togglePermission(r.role,perm)}
+                              disabled={saving}
+                              className="w-5 h-5 rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer disabled:opacity-50"
+                            />
+                          </td>
+                        ))}
+                      </tr>
                     ))}
-                  </tr>
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
           </div>
         </Card>
-        <Alert type="info" className="mt-4"><p><Icon name="Info" size={16} className="inline mr-2"/>Les permissions du Super Admin ne peuvent pas être modifiées.</p></Alert>
+        
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+          <Alert type="info">
+            <p className="font-medium mb-1">Super Admin</p>
+            <p className="text-sm">Accès total à toutes les fonctionnalités, tous centres confondus.</p>
+          </Alert>
+          <Alert type="warning">
+            <p className="font-medium mb-1">Admin Centre</p>
+            <p className="text-sm">Limité à son propre centre. Peut créer apprenants et formateurs.</p>
+          </Alert>
+          <Alert type="success">
+            <p className="font-medium mb-1">Formateur</p>
+            <p className="text-sm">Accès en lecture aux contenus. Peut gérer ses cours assignés (Phase 2).</p>
+          </Alert>
+        </div>
       </div>;
     }
 
@@ -6101,7 +6290,7 @@
 
       const statusColors={pending:'bg-yellow-500/20 text-yellow-400',sent:'bg-green-500/20 text-green-400',failed:'bg-red-500/20 text-red-400'};
 
-      if(!can('manage_users'))return<Empty icon="Lock" title="Accès refusé"/>;
+      if(!can('send_emails')&&!can('manage_email_templates'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
 
       return<div>
