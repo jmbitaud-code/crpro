@@ -3451,7 +3451,7 @@
     // Quiz Management - Nouvelle interface
     // ==================== QUIZ & BANQUE DE QUESTIONS ====================
     function QuizzesPage(){
-      const{can,profile}=useAuth();
+      const{can,profile,center,isSuperAdmin}=useAuth();
       const[loading,setLoading]=useState(true);
       const[activeTab,setActiveTab]=useState('questions');
       
@@ -3462,6 +3462,7 @@
       const[categories,setCategories]=useState([]);
       const[themes,setThemes]=useState([]);
       const[subThemes,setSubThemes]=useState([]);
+      const[licensedIds,setLicensedIds]=useState({quizzes:[],hasFullCatalog:false});
       
       // États UI
       const[expandedCats,setExpandedCats]=useState({});
@@ -3524,7 +3525,30 @@
       // ========== CHARGEMENT ==========
       const load=useCallback(async()=>{
         try{
-          const{data:qz}=await supabase.from('quizzes').select('*').order('created_at',{ascending:false});
+          // Charger les licences du centre
+          let licenseInfo={quizzes:[],hasFullCatalog:false};
+          if(!isSuperAdmin&&center?.id){
+            try{
+              const today=new Date().toISOString().split('T')[0];
+              const{data:licenses}=await supabase.from('center_licenses').select('*,content_packs(pack_type)').eq('center_id',center.id).eq('status','active').lte('start_date',today).gte('end_date',today);
+              licenseInfo.hasFullCatalog=(licenses||[]).some(l=>l.license_type==='full_catalog'||l.content_packs?.pack_type==='full_catalog');
+              if(!licenseInfo.hasFullCatalog){
+                const packIds=(licenses||[]).map(l=>l.pack_id).filter(Boolean);
+                if(packIds.length>0){
+                  const{data:items}=await supabase.from('content_pack_items').select('content_type,content_id').in('pack_id',packIds);
+                  (items||[]).forEach(i=>{if(i.content_type==='quiz')licenseInfo.quizzes.push(i.content_id);});
+                }
+              }
+            }catch(e){console.log('Erreur licences:',e);}
+          }
+          setLicensedIds(licenseInfo);
+          
+          // Charger tous les quiz (du centre + catalogue LMS)
+          let qQuery=supabase.from('quizzes').select('*').order('created_at',{ascending:false});
+          if(!isSuperAdmin&&center?.id){
+            qQuery=qQuery.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
+          }
+          const{data:qz}=await qQuery;
           setQuizzes(qz||[]);
           const{data:pl}=await supabase.from('playlists').select('id,title').order('title');
           setPlaylists(pl||[]);
@@ -3577,6 +3601,13 @@
       const countQuestionsForCategory=(catId)=>bankQuestions.filter(q=>q.category_id===catId).length;
       const countQuestionsForTheme=(themeId)=>bankQuestions.filter(q=>q.theme_id===themeId).length;
       const countQuestionsForSubTheme=(stId)=>bankQuestions.filter(q=>q.sub_theme_id===stId).length;
+      
+      // Vérifier si un quiz est sous licence
+      const isQuizLicensed=(quizId)=>{
+        if(isSuperAdmin)return true;
+        if(licensedIds.hasFullCatalog)return true;
+        return licensedIds.quizzes.includes(quizId);
+      };
       
       // ========== GESTION CATÉGORIES/THÈMES/SOUS-THÈMES ==========
       const addCategory=async(name)=>{
@@ -4378,24 +4409,34 @@
             <div className="flex justify-end"><Button icon="Plus" onClick={()=>openQuizModal()}>Créer un quiz</Button></div>
             {quizzes.length===0?<Empty icon="HelpCircle" title="Aucun quiz"/>:(
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {quizzes.map(quiz=>(
-                  <Card key={quiz.id} className="p-4">
+                {quizzes.map(quiz=>{
+                  const licensed=!quiz.is_lms_content||isQuizLicensed(quiz.id);
+                  const isLocked=quiz.is_lms_content&&quiz.is_locked;
+                  const canModify=can('manage_quizzes')&&(!quiz.is_lms_content||isSuperAdmin);
+                  return<Card key={quiz.id} className={`p-4 ${!licensed?'opacity-75':''}`}>
                     <div className="flex items-start justify-between mb-2">
-                      <h3 className="font-semibold">{quiz.title}</h3>
-                      {quiz.is_required&&<span className="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">Obligatoire</span>}
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold">{quiz.title}</h3>
+                        {isLocked&&<Icon name="Lock" size={14} className="text-red-400"/>}
+                      </div>
+                      <div className="flex flex-col gap-1 items-end">
+                        {quiz.is_lms_content&&<span className={`px-2 py-0.5 rounded text-xs ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒'}</span>}
+                        {quiz.is_required&&<span className="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">Obligatoire</span>}
+                      </div>
                     </div>
+                    {quiz.is_lms_content&&!isSuperAdmin&&<div className="mb-2"><span className={`text-xs px-2 py-1 rounded ${licensed?'bg-green-500/20 text-green-400':'bg-red-500/20 text-red-400'}`}>{licensed?'✓ Sous licence':'Consultation'}</span></div>}
                     <div className="flex flex-wrap gap-2 text-xs text-gray-400 mb-3">
                       <span><Icon name="Target" size={12} className="inline mr-1"/>{quiz.passing_score}%</span>
                       {quiz.time_limit>0&&<span><Icon name="Clock" size={12} className="inline mr-1"/>{quiz.time_limit}min</span>}
                       {quiz.max_attempts>0&&<span>{quiz.max_attempts} tentatives</span>}
                     </div>
                     <div className="flex gap-2">
-                      <Button size="sm" variant="ghost" icon="Play" onClick={()=>openPreview(quiz)}>Tester</Button>
-                      <Button size="sm" variant="ghost" icon="Edit2" onClick={()=>openQuizModal(quiz)}/>
-                      <Button size="sm" variant="ghost" icon="Trash2" className="text-red-400" onClick={()=>deleteQuiz(quiz.id)}/>
+                      {licensed&&<Button size="sm" variant="ghost" icon="Play" onClick={()=>openPreview(quiz)}>Tester</Button>}
+                      {canModify&&<Button size="sm" variant="ghost" icon="Edit2" onClick={()=>openQuizModal(quiz)}/>}
+                      {canModify&&<Button size="sm" variant="ghost" icon="Trash2" className="text-red-400" onClick={()=>deleteQuiz(quiz.id)}/>}
+                      {!licensed&&<span className="text-xs text-gray-500 italic">Demandez une licence</span>}
                     </div>
-                  </Card>
-                ))}
+                  </Card>})}
               </div>
             )}
           </div>
