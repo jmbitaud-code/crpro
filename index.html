@@ -3244,7 +3244,6 @@
           {id:'paths',label:`Parcours (${paths.length})`,icon:'Route'},
           ...(isSuperAdmin?[{id:'packs',label:`Packs (${packs.length})`,icon:'Boxes'}]:[])
         ]} active={activeTab} onChange={t=>{setActiveTab(t);clearSelection();}}/>
-        ]} active={activeTab} onChange={setActiveTab}/>
         
         {/* Filtres combinés */}
         <Card className="p-4 mb-4">
