@@ -2555,6 +2555,9 @@
       const[scormZipParsing,setScormZipParsing]=useState(false);
       const[scormZipFile,setScormZipFile]=useState(null);
       const[licensedIds,setLicensedIds]=useState({videos:[],scorm:[],hasFullCatalog:false,hasAnyLicense:false});
+      const[filterSource,setFilterSource]=useState('all'); // all, center, lms, licensed, unlicensed
+      const[requestLicenseModal,setRequestLicenseModal]=useState(null); // contenu pour lequel demander licence
+      const[packs,setPacks]=useState([]);
       const fileInputRef=useRef(null);
       const attachmentFileRef=useRef(null);
       const scormFileRef=useRef(null);
@@ -2721,6 +2724,12 @@
               }
             }
           }catch(e){console.log('Erreur licences:',e);}
+          
+          // Charger les packs disponibles pour les demandes de licence
+          try{
+            const{data:pk}=await supabase.from('content_packs').select('*').eq('is_active',true);
+            setPacks(pk||[]);
+          }catch(e){}
         }
         setLicensedIds(licenseInfo);
         
@@ -2753,6 +2762,34 @@
         if(type==='video')return licensedIds.videos.includes(id);
         if(type==='scorm')return licensedIds.scorm.includes(id);
         return false;
+      };
+      
+      // Obtenir la source d'un contenu
+      const getContentSource=(item)=>{
+        if(!item.is_lms_content)return 'center';
+        if(isLicensed(activeTab==='videos'?'video':'scorm',item.id))return 'licensed';
+        return 'unlicensed';
+      };
+      
+      // Filtrer selon la source
+      const filterBySource=(items,type)=>{
+        if(filterSource==='all')return items;
+        return items.filter(item=>{
+          const source=item.is_lms_content?(isLicensed(type,item.id)?'licensed':'unlicensed'):'center';
+          if(filterSource==='center')return source==='center';
+          if(filterSource==='lms')return item.is_lms_content;
+          if(filterSource==='licensed')return source==='licensed';
+          if(filterSource==='unlicensed')return source==='unlicensed';
+          return true;
+        });
+      };
+      
+      // Trouver les packs contenant un contenu
+      const getPacksForContent=async(contentType,contentId)=>{
+        try{
+          const{data}=await supabase.from('content_pack_items').select('pack_id,content_packs(id,name,description)').eq('content_type',contentType).eq('content_id',contentId);
+          return(data||[]).map(d=>d.content_packs).filter(Boolean);
+        }catch(e){return[];}
       };
       
       const resetForm=()=>setForm({title:'',vimeo_id:'',duration:'',category:'',description:'',sort_order:'',tags:'',theme:'',thumbnail_url:''});
@@ -2948,7 +2985,13 @@
         setChapters(chapters.filter(c=>c.id!==id));
       };
 
-      const filtered=videos.filter(v=>!search||v.title?.toLowerCase().includes(search.toLowerCase()));
+      const filtered=filterBySource(videos.filter(v=>!search||v.title?.toLowerCase().includes(search.toLowerCase())),'video');
+      const filteredScorm=filterBySource(scormModules.filter(m=>!search||m.title?.toLowerCase().includes(search.toLowerCase())),'scorm');
+      
+      // Stats par source
+      const videoStats={total:videos.length,center:videos.filter(v=>!v.is_lms_content).length,lms:videos.filter(v=>v.is_lms_content).length,licensed:videos.filter(v=>v.is_lms_content&&isLicensed('video',v.id)).length};
+      const scormStats={total:scormModules.length,center:scormModules.filter(m=>!m.is_lms_content).length,lms:scormModules.filter(m=>m.is_lms_content).length,licensed:scormModules.filter(m=>m.is_lms_content&&isLicensed('scorm',m.id)).length};
+      
       if(!can('manage_videos')&&!can('view_videos'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
 
@@ -2957,7 +3000,10 @@
 
       return<div>
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-          <h1 className="text-2xl font-bold">Bibliothèque</h1>
+          <div>
+            <h1 className="text-2xl font-bold">Bibliothèque</h1>
+            {!isSuperAdmin&&<p className="text-sm text-gray-400">Vos contenus + Catalogue LMS</p>}
+          </div>
           <div className="flex gap-2">
             {activeTab==='videos'&&canEdit&&<><Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button><Button icon="Plus" onClick={()=>{resetForm();setEditing(null);setModal(true);}}>Ajouter vidéo</Button></>}
             {activeTab==='scorm'&&canEdit&&<Button icon="Plus" onClick={()=>{resetScormForm();setScormEditing(null);setScormModal(true);}}>Ajouter SCORM</Button>}
@@ -2966,38 +3012,59 @@
         
         <Tabs tabs={[{id:'videos',label:`Vidéos (${videos.length})`,icon:'Film'},{id:'scorm',label:`SCORM (${scormModules.length})`,icon:'Package'}]} active={activeTab} onChange={setActiveTab}/>
         
+        {/* Filtres par source */}
+        {!isSuperAdmin&&<Card className="p-4 mb-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="text-sm text-gray-400">Filtrer :</span>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={()=>setFilterSource('all')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='all'?'bg-indigo-600':'bg-gray-700 hover:bg-gray-600'}`}>Tout ({activeTab==='videos'?videoStats.total:scormStats.total})</button>
+              <button onClick={()=>setFilterSource('center')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='center'?'bg-indigo-600':'bg-gray-700 hover:bg-gray-600'}`}>📁 Mes contenus ({activeTab==='videos'?videoStats.center:scormStats.center})</button>
+              <button onClick={()=>setFilterSource('lms')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='lms'?'bg-indigo-600':'bg-gray-700 hover:bg-gray-600'}`}>📦 Catalogue LMS ({activeTab==='videos'?videoStats.lms:scormStats.lms})</button>
+              <button onClick={()=>setFilterSource('licensed')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='licensed'?'bg-green-600':'bg-gray-700 hover:bg-gray-600'}`}>✓ Sous licence ({activeTab==='videos'?videoStats.licensed:scormStats.licensed})</button>
+              <button onClick={()=>setFilterSource('unlicensed')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='unlicensed'?'bg-red-600':'bg-gray-700 hover:bg-gray-600'}`}>🔒 Non licencié ({activeTab==='videos'?videoStats.lms-videoStats.licensed:scormStats.lms-scormStats.licensed})</button>
+            </div>
+          </div>
+        </Card>}
+        
         {/* ONGLET VIDÉOS */}
         {activeTab==='videos'&&<>
           <Card className="p-4 mb-6"><Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/></Card>
-          {filtered.length===0?<Empty icon="Film" title="Aucune vidéo"/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{filtered.map(v=>{const licensed=!v.is_lms_content||isLicensed('video',v.id);return<Card key={v.id} className={`overflow-hidden ${!licensed?'opacity-75':''}`}><div className="aspect-video bg-gray-900 relative">{v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:<iframe src={`https://player.vimeo.com/video/${v.vimeo_id}?background=1`} className="w-full h-full" allow="autoplay"/>}<div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>{v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}{v.is_lms_content&&<div className={`absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒 Non licencié'}</div>}</div><div className="p-4"><h3 className="font-semibold truncate">{v.title}</h3><div className="flex flex-wrap gap-1 mt-2">{v.category&&<span className="px-2 py-1 bg-gray-700 rounded text-xs">{v.category}</span>}{v.theme&&<span className="px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded text-xs">{v.theme}</span>}{v.is_lms_content&&!isSuperAdmin&&<span className={`px-2 py-1 rounded text-xs ${licensed?'bg-green-500/20 text-green-400':'bg-red-500/20 text-red-400'}`}>{licensed?'✓ Sous licence':'Consultation'}</span>}</div><div className="flex flex-wrap gap-2 mt-3">{licensed&&<Button variant="ghost" size="sm" icon="Settings" onClick={()=>openDetailModal(v)}>Ressources</Button>}{canEdit&&(!v.is_lms_content||isSuperAdmin)&&<><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category:v.category||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme:v.theme||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(v.id)}/></>}{!licensed&&<span className="text-xs text-gray-500 italic">Demandez une licence pour utiliser</span>}</div></div></Card>})}</div>}
+          {filtered.length===0?<Empty icon="Film" title="Aucune vidéo" desc={filterSource!=='all'?'Essayez un autre filtre':undefined}/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{filtered.map(v=>{const licensed=!v.is_lms_content||isLicensed('video',v.id);const isOwn=!v.is_lms_content;return<Card key={v.id} className={`overflow-hidden ${!licensed&&!isOwn?'opacity-80':''}`}><div className="aspect-video bg-gray-900 relative">{v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:<iframe src={`https://player.vimeo.com/video/${v.vimeo_id}?background=1`} className="w-full h-full" allow="autoplay"/>}<div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>{v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}{v.is_lms_content?<div className={`absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒 Non licencié'}</div>:<div className="absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium bg-gray-600">📁 Mon contenu</div>}</div><div className="p-4"><h3 className="font-semibold truncate">{v.title}</h3><div className="flex flex-wrap gap-1 mt-2">{v.category&&<span className="px-2 py-1 bg-gray-700 rounded text-xs">{v.category}</span>}{v.theme&&<span className="px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded text-xs">{v.theme}</span>}</div><div className="flex flex-wrap gap-2 mt-3">{(licensed||isOwn)&&<Button variant="ghost" size="sm" icon="Settings" onClick={()=>openDetailModal(v)}>Ressources</Button>}{canEdit&&isOwn&&<><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category:v.category||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme:v.theme||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(v.id)}/></>}{isSuperAdmin&&v.is_lms_content&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category:v.category||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme:v.theme||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button>}{!licensed&&!isOwn&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>setRequestLicenseModal({type:'video',item:v})}>Demander licence</Button>}</div></div></Card>})}</div>}
         </>}
         
         {/* ONGLET SCORM */}
         {activeTab==='scorm'&&<>
-          {scormModules.length===0?<Empty icon="Package" title="Aucun module SCORM" desc="Ajoutez votre premier module de formation interactif"/>:
+          <Card className="p-4 mb-6"><Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/></Card>
+          {filteredScorm.length===0?<Empty icon="Package" title="Aucun module SCORM" desc={filterSource!=='all'?'Essayez un autre filtre':'Ajoutez votre premier module de formation interactif'}/>:
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {scormModules.map(m=>{const licensed=!m.is_lms_content||isLicensed('scorm',m.id);return<Card key={m.id} className={`p-4 ${!licensed?'opacity-75':''}`}>
+            {filteredScorm.map(m=>{const licensed=!m.is_lms_content||isLicensed('scorm',m.id);const isOwn=!m.is_lms_content;return<Card key={m.id} className={`p-4 ${!licensed&&!isOwn?'opacity-80':''}`}>
               <div className="flex items-start gap-3 mb-3">
-                <div className={`w-12 h-12 rounded-lg flex items-center justify-center shrink-0 ${licensed?'bg-orange-500/20':'bg-red-500/20'}`}>
-                  <Icon name="Package" size={24} className={licensed?'text-orange-400':'text-red-400'}/>
+                <div className={`w-12 h-12 rounded-lg flex items-center justify-center shrink-0 ${isOwn?'bg-gray-500/20':licensed?'bg-orange-500/20':'bg-red-500/20'}`}>
+                  <Icon name="Package" size={24} className={isOwn?'text-gray-400':licensed?'text-orange-400':'text-red-400'}/>
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 className="font-semibold truncate">{m.title}</h3>
                   <p className="text-sm text-gray-400">{moduleTypeLabels[m.module_type]||m.module_type}</p>
                 </div>
-                {m.is_lms_content&&<span className={`px-2 py-1 rounded text-xs ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒'}</span>}
+                {m.is_lms_content?<span className={`px-2 py-1 rounded text-xs ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒'}</span>:<span className="px-2 py-1 bg-gray-600 rounded text-xs">📁</span>}
               </div>
-              <div className="flex flex-wrap gap-1 mb-3">{m.category&&<span className="px-2 py-1 bg-purple-500/20 text-purple-300 rounded text-xs">{m.category}</span>}{m.is_lms_content&&!isSuperAdmin&&<span className={`px-2 py-1 rounded text-xs ${licensed?'bg-green-500/20 text-green-400':'bg-red-500/20 text-red-400'}`}>{licensed?'✓ Sous licence':'Non licencié'}</span>}</div>
+              <div className="flex flex-wrap gap-1 mb-3">{m.category&&<span className="px-2 py-1 bg-purple-500/20 text-purple-300 rounded text-xs">{m.category}</span>}</div>
               {m.description&&<p className="text-sm text-gray-400 line-clamp-2 mb-3">{m.description}</p>}
-              <div className="flex gap-2">
-                {canEdit&&(!m.is_lms_content||isSuperAdmin)&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{
+              <div className="flex flex-wrap gap-2">
+                {canEdit&&isOwn&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{
                   setScormEditing(m);
                   setScormForm({title:m.title,description:m.description||'',module_type:m.module_type,package_url:m.package_url||'',entry_point:m.entry_point||'index.html',category:m.category||'',version:m.version||''});
                   setScormModal(true);
                 }}>Modifier</Button>}
-                {licensed&&m.package_url&&<a href={m.package_url} target="_blank" className="inline-flex items-center gap-1 px-3 py-1.5 text-sm hover:bg-gray-700 rounded-lg"><Icon name="ExternalLink" size={14}/>Tester</a>}
-                {canEdit&&(!m.is_lms_content||isSuperAdmin)&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleScormDelete(m.id)}/>}
-                {!licensed&&<span className="text-xs text-gray-500 italic">Demandez une licence</span>}
+                {isSuperAdmin&&m.is_lms_content&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{
+                  setScormEditing(m);
+                  setScormForm({title:m.title,description:m.description||'',module_type:m.module_type,package_url:m.package_url||'',entry_point:m.entry_point||'index.html',category:m.category||'',version:m.version||''});
+                  setScormModal(true);
+                }}>Modifier</Button>}
+                {(licensed||isOwn)&&m.package_url&&<a href={m.package_url} target="_blank" className="inline-flex items-center gap-1 px-3 py-1.5 text-sm hover:bg-gray-700 rounded-lg"><Icon name="ExternalLink" size={14}/>Tester</a>}
+                {canEdit&&isOwn&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleScormDelete(m.id)}/>}
+                {isSuperAdmin&&m.is_lms_content&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleScormDelete(m.id)}/>}
+                {!licensed&&!isOwn&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>setRequestLicenseModal({type:'scorm',item:m})}>Demander licence</Button>}
               </div>
             </Card>})}
           </div>}
@@ -3131,6 +3198,35 @@
               <Button onClick={handleScormSave} loading={scormSaving} disabled={!scormForm.title||!scormForm.package_url}>Enregistrer</Button>
             </div>
           </div>
+        </Modal>
+        
+        {/* Modal demande de licence */}
+        <Modal isOpen={!!requestLicenseModal} onClose={()=>setRequestLicenseModal(null)} title="Demander une licence" size="md">
+          {requestLicenseModal&&<div className="space-y-4">
+            <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-lg p-4">
+              <p className="font-medium">{requestLicenseModal.item?.title}</p>
+              <p className="text-sm text-gray-400 mt-1">Ce contenu fait partie du catalogue LMS et nécessite une licence pour être utilisé.</p>
+            </div>
+            
+            <div>
+              <p className="text-sm text-gray-400 mb-2">Vous pouvez :</p>
+              <ul className="text-sm space-y-2">
+                <li className="flex items-start gap-2">
+                  <Icon name="ChevronRight" size={16} className="text-indigo-400 mt-0.5"/>
+                  <span>Demander une licence pour un <strong>pack spécifique</strong> contenant ce contenu</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <Icon name="ChevronRight" size={16} className="text-indigo-400 mt-0.5"/>
+                  <span>Demander l'accès au <strong>catalogue complet</strong></span>
+                </li>
+              </ul>
+            </div>
+            
+            <div className="flex gap-3">
+              <Button variant="secondary" className="flex-1" onClick={()=>setRequestLicenseModal(null)}>Annuler</Button>
+              <Button className="flex-1" icon="Send" onClick={()=>{setRequestLicenseModal(null);window.location.hash='licenses';}}>Aller aux licences</Button>
+            </div>
+          </div>}
         </Modal>
       </div>;
     }
