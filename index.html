@@ -3093,10 +3093,12 @@
 
     // Playlists
     function PlaylistsPage(){
-      const{center,isSuperAdmin,can,profile}=useAuth();
+      const{center,isSuperAdmin,can,profile,realRole}=useAuth();
       const[playlists,setPlaylists]=useState([]);
       const[videos,setVideos]=useState([]);
       const[scormModules,setScormModules]=useState([]);
+      const[trainers,setTrainers]=useState([]);
+      const[trainerCourses,setTrainerCourses]=useState([]);
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
       const[editing,setEditing]=useState(null);
@@ -3106,21 +3108,39 @@
       const[playlistVideos,setPlaylistVideos]=useState([]);
       const[playlistScorm,setPlaylistScorm]=useState([]);
       const[contentTab,setContentTab]=useState('videos');
+      const[assignModal,setAssignModal]=useState(null);
+      const[assignedTrainers,setAssignedTrainers]=useState([]);
       const sortableRef=useRef(null);
       const sortableInstanceRef=useRef(null);
 
       const load=useCallback(async()=>{
+        // Charger les assignations formateur-cours
+        let tcData=[];
+        try{
+          const{data:tc}=await supabase.from('trainer_courses').select('*');
+          tcData=tc||[];
+          setTrainerCourses(tcData);
+        }catch(e){console.log('trainer_courses table not yet created');}
+        
+        // Pour les formateurs: filtrer par cours assignés
         let q=supabase.from('playlists').select('*,playlist_videos(count)').order('created_at',{ascending:false});
         if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);
         const{data:p}=await q;
-        setPlaylists(p||[]);
+        
+        let filteredPlaylists=p||[];
+        // Si formateur, ne voir que ses cours assignés
+        if(realRole==='trainer'&&profile?.id){
+          const myCoursesIds=tcData.filter(tc=>tc.trainer_id===profile.id).map(tc=>tc.playlist_id);
+          filteredPlaylists=filteredPlaylists.filter(pl=>myCoursesIds.includes(pl.id));
+        }
+        setPlaylists(filteredPlaylists);
         
         let qv=supabase.from('videos').select('*');
         if(!isSuperAdmin&&center?.id)qv=qv.eq('center_id',center.id);
         const{data:v}=await qv;
         setVideos(v||[]);
         
-        // Charger les modules SCORM (avec gestion d'erreur si table n'existe pas)
+        // Charger les modules SCORM
         try {
           let qs=supabase.from('scorm_modules').select('*');
           if(!isSuperAdmin&&center?.id)qs=qs.or(`center_id.eq.${center.id},center_id.is.null`);
@@ -3128,12 +3148,45 @@
           if(!error)setScormModules(scorm||[]);
         } catch(e) { console.log('SCORM tables not yet created'); }
         
+        // Charger les formateurs du centre (pour l'assignation)
+        if(can('manage_playlists')){
+          let qt=supabase.from('profiles').select('id,first_name,last_name,email').eq('role','trainer');
+          if(!isSuperAdmin&&center?.id)qt=qt.eq('center_id',center.id);
+          const{data:t}=await qt;
+          setTrainers(t||[]);
+        }
+        
         setLoading(false);
-      },[isSuperAdmin,center?.id]);
+      },[isSuperAdmin,center?.id,realRole,profile?.id,can]);
       useEffect(()=>{load();},[load]);
 
       const handleSave=async()=>{setSaving(true);const payload={title:form.title,description:form.description,center_id:center?.id,created_by:profile?.id};if(editing)await supabase.from('playlists').update(payload).eq('id',editing.id);else await supabase.from('playlists').insert(payload);await load();setModal(false);setForm({title:'',description:''});setEditing(null);setSaving(false);};
       const handleDelete=async id=>{if(!confirm('Supprimer ?'))return;await supabase.from('playlists').delete().eq('id',id);load();};
+      
+      // Gestion des formateurs assignés
+      const openAssignModal=async(playlist)=>{
+        const assigned=trainerCourses.filter(tc=>tc.playlist_id===playlist.id).map(tc=>tc.trainer_id);
+        setAssignedTrainers(assigned);
+        setAssignModal(playlist);
+      };
+      
+      const toggleTrainerAssignment=async(trainerId)=>{
+        const isAssigned=assignedTrainers.includes(trainerId);
+        if(isAssigned){
+          await supabase.from('trainer_courses').delete().eq('playlist_id',assignModal.id).eq('trainer_id',trainerId);
+          setAssignedTrainers(assignedTrainers.filter(id=>id!==trainerId));
+        }else{
+          await supabase.from('trainer_courses').insert({playlist_id:assignModal.id,trainer_id:trainerId});
+          setAssignedTrainers([...assignedTrainers,trainerId]);
+        }
+        // Mettre à jour le cache local
+        const{data:tc}=await supabase.from('trainer_courses').select('*');
+        setTrainerCourses(tc||[]);
+      };
+      
+      const getAssignedTrainersCount=(playlistId)=>{
+        return trainerCourses.filter(tc=>tc.playlist_id===playlistId).length;
+      };
       
       const openEditContent=async(playlist)=>{
         const{data:pvs}=await supabase.from('playlist_videos').select('*,videos(*)').eq('playlist_id',playlist.id).order('position');
@@ -3195,8 +3248,57 @@
       if(!can('manage_playlists')&&profile?.role!=='trainer')return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
       return<div>
-        <div className="flex items-center justify-between mb-6"><h1 className="text-2xl font-bold">Cours</h1>{can('manage_playlists')&&<Button icon="Plus" onClick={()=>{setForm({title:'',description:''});setEditing(null);setModal(true);}}>Créer</Button>}</div>
-        {playlists.length===0?<Empty icon="BookOpen" title="Aucun cours"/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{playlists.map(p=><Card key={p.id} className="p-4"><div className="flex items-start justify-between mb-3"><div><h3 className="font-semibold">{p.title}</h3><p className="text-sm text-gray-400 mt-1">{p.playlist_videos?.[0]?.count||0} vidéos</p></div><span className={`px-2 py-1 rounded text-xs ${p.is_published?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>{p.is_published?'Publié':'Brouillon'}</span></div><div className="flex flex-wrap gap-2">{can('manage_playlists')&&<><Button variant="ghost" size="sm" icon="Layers" onClick={()=>openEditContent(p)}>Contenu</Button><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(p);setForm({title:p.title,description:p.description||''});setModal(true);}}>Modifier</Button></>}<Button variant="ghost" size="sm" icon={p.is_published?'EyeOff':'Eye'} onClick={()=>togglePublish(p)}>{p.is_published?'Dépublier':'Publier'}</Button>{can('manage_playlists')&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(p.id)}/>}</div></Card>)}</div>}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold">Cours</h1>
+            {realRole==='trainer'&&<p className="text-sm text-gray-400">Vos cours assignés</p>}
+          </div>
+          {can('manage_playlists')&&<Button icon="Plus" onClick={()=>{setForm({title:'',description:''});setEditing(null);setModal(true);}}>Créer</Button>}
+        </div>
+        {playlists.length===0?<Empty icon="BookOpen" title={realRole==='trainer'?'Aucun cours assigné':'Aucun cours'}/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{playlists.map(p=><Card key={p.id} className="p-4">
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <h3 className="font-semibold">{p.title}</h3>
+              <p className="text-sm text-gray-400 mt-1">{p.playlist_videos?.[0]?.count||0} vidéos</p>
+              {can('manage_playlists')&&getAssignedTrainersCount(p.id)>0&&(
+                <p className="text-xs text-indigo-400 mt-1"><Icon name="Users" size={12} className="inline mr-1"/>{getAssignedTrainersCount(p.id)} formateur(s)</p>
+              )}
+            </div>
+            <span className={`px-2 py-1 rounded text-xs ${p.is_published?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>{p.is_published?'Publié':'Brouillon'}</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(can('manage_playlists')||can('assign_content'))&&<Button variant="ghost" size="sm" icon="Layers" onClick={()=>openEditContent(p)}>Contenu</Button>}
+            {can('manage_playlists')&&<>
+              <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(p);setForm({title:p.title,description:p.description||''});setModal(true);}}>Modifier</Button>
+              <Button variant="ghost" size="sm" icon="Users" onClick={()=>openAssignModal(p)}>Formateurs</Button>
+            </>}
+            {can('manage_playlists')&&<Button variant="ghost" size="sm" icon={p.is_published?'EyeOff':'Eye'} onClick={()=>togglePublish(p)}>{p.is_published?'Dépublier':'Publier'}</Button>}
+            {can('manage_playlists')&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(p.id)}/>}
+          </div>
+        </Card>)}</div>}
+        
+        {/* Modal assignation formateurs */}
+        <Modal isOpen={!!assignModal} onClose={()=>setAssignModal(null)} title={`Formateurs: ${assignModal?.title}`} size="md">
+          <p className="text-sm text-gray-400 mb-4">Sélectionnez les formateurs qui auront accès à ce cours :</p>
+          {trainers.length===0?<p className="text-center text-gray-500 py-4">Aucun formateur dans ce centre</p>:(
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {trainers.map(t=>(
+                <label key={t.id} className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer ${assignedTrainers.includes(t.id)?'bg-indigo-500/20 border border-indigo-500':'bg-gray-700 hover:bg-gray-600'}`}>
+                  <input type="checkbox" checked={assignedTrainers.includes(t.id)} onChange={()=>toggleTrainerAssignment(t.id)} className="w-5 h-5 rounded"/>
+                  <div className="flex-1">
+                    <p className="font-medium">{t.first_name} {t.last_name}</p>
+                    <p className="text-xs text-gray-400">{t.email}</p>
+                  </div>
+                  {assignedTrainers.includes(t.id)&&<Icon name="Check" size={18} className="text-indigo-400"/>}
+                </label>
+              ))}
+            </div>
+          )}
+          <div className="flex justify-end mt-4">
+            <Button onClick={()=>setAssignModal(null)}>Fermer</Button>
+          </div>
+        </Modal>
+        
         <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier':'Créer'}><div className="space-y-4"><Input label="Titre" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
         <Modal isOpen={!!editContentModal} onClose={()=>setEditContentModal(null)} title={`Contenu: ${editContentModal?.title}`} size="xl">
           <Tabs tabs={[{id:'videos',label:`Vidéos (${playlistVideos.length})`,icon:'Film'},{id:'scorm',label:`SCORM (${playlistScorm.length})`,icon:'Package'}]} active={contentTab} onChange={setContentTab}/>
