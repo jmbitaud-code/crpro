@@ -4548,20 +4548,39 @@
       const[saving,setSaving]=useState(false);
 
       const load=useCallback(async()=>{
-        const{data}=await supabase.from('role_permissions').select('*').order('role');
-        // Si pas de données, initialiser avec les défauts
-        if(!data||data.length===0){
-          const defaults=[
+        try{
+          const{data,error}=await supabase.from('role_permissions').select('*').order('role');
+          
+          // Liste des rôles attendus (sans super_admin)
+          const expectedRoles=['center_admin','trainer','learner'];
+          const existingRoles=(data||[]).map(r=>r.role);
+          
+          // Créer les rôles manquants
+          const missingRoles=expectedRoles.filter(r=>!existingRoles.includes(r));
+          if(missingRoles.length>0){
+            for(const role of missingRoles){
+              await supabase.from('role_permissions').insert({
+                role:role,
+                permissions:DEFAULT_PERMISSIONS[role]||{}
+              });
+            }
+          }
+          
+          // Recharger après insertion
+          if(missingRoles.length>0){
+            const{data:updated}=await supabase.from('role_permissions').select('*').order('role');
+            setRoles(updated||[]);
+          }else{
+            setRoles(data||[]);
+          }
+        }catch(err){
+          console.error('Erreur chargement permissions:',err);
+          // Fallback: utiliser les défauts localement
+          setRoles([
             {role:'center_admin',permissions:DEFAULT_PERMISSIONS.center_admin},
             {role:'trainer',permissions:DEFAULT_PERMISSIONS.trainer},
             {role:'learner',permissions:DEFAULT_PERMISSIONS.learner}
-          ];
-          for(const d of defaults){
-            await supabase.from('role_permissions').upsert(d);
-          }
-          setRoles(defaults);
-        }else{
-          setRoles(data);
+          ]);
         }
         setLoading(false);
       },[]);
@@ -4570,10 +4589,15 @@
       const togglePermission=async(role,permission)=>{
         setSaving(true);
         const roleData=roles.find(r=>r.role===role);
-        if(!roleData)return;
-        const newPermissions={...roleData.permissions,[permission]:!roleData.permissions[permission]};
-        await supabase.from('role_permissions').update({permissions:newPermissions}).eq('role',role);
-        setRoles(roles.map(r=>r.role===role?{...r,permissions:newPermissions}:r));
+        if(!roleData){setSaving(false);return;}
+        const newPermissions={...(roleData.permissions||{}),[permission]:!(roleData.permissions||{})[permission]};
+        try{
+          await supabase.from('role_permissions').update({permissions:newPermissions}).eq('role',role);
+          setRoles(roles.map(r=>r.role===role?{...r,permissions:newPermissions}:r));
+        }catch(err){
+          console.error('Erreur toggle:',err);
+          alert('Erreur: '+err.message);
+        }
         setSaving(false);
       };
       
@@ -4581,15 +4605,23 @@
         if(!confirm(`Réinitialiser les permissions de ${ROLE_LABELS[role]} aux valeurs par défaut ?`))return;
         setSaving(true);
         const defaultPerms=DEFAULT_PERMISSIONS[role]||{};
-        await supabase.from('role_permissions').update({permissions:defaultPerms}).eq('role',role);
-        setRoles(roles.map(r=>r.role===role?{...r,permissions:defaultPerms}:r));
+        try{
+          await supabase.from('role_permissions').update({permissions:defaultPerms}).eq('role',role);
+          setRoles(roles.map(r=>r.role===role?{...r,permissions:defaultPerms}:r));
+        }catch(err){
+          console.error('Erreur reset:',err);
+        }
         setSaving(false);
       };
 
       if(!can('manage_permissions'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
 
-      const displayRoles=roles.filter(r=>r.role!=='super_admin');
+      // Toujours afficher les 3 rôles, même si pas en base
+      const displayRoles=['center_admin','trainer','learner'].map(role=>{
+        const found=roles.find(r=>r.role===role);
+        return found||{role,permissions:DEFAULT_PERMISSIONS[role]||{}};
+      });
 
       return<div>
         <div className="flex items-center justify-between mb-6">
