@@ -543,27 +543,38 @@
       
       // Menu adapté au rôle effectif (réel ou simulé)
       const showAsLearner=viewAs?.role==='learner'||(profile?.role==='learner'&&!viewAs);
-      const showAsAdmin=!viewAs&&(can('manage_playlists')||profile?.role==='trainer');
+      const showAsTrainer=viewAs?.role==='trainer'||(profile?.role==='trainer'&&!viewAs);
+      const showAsCenterAdmin=viewAs?.role==='center_admin'||(profile?.role==='center_admin'&&!viewAs);
+      const showAsAdmin=showAsCenterAdmin||showAsTrainer||(!viewAs&&isSuperAdmin);
       const showAsSuperAdmin=!viewAs&&isSuperAdmin;
       
+      // Fonction pour vérifier les permissions dans le contexte actuel (mode simulation ou réel)
+      const canInContext=(perm)=>{
+        if(viewAs){
+          const rolePerms=DEFAULT_PERMISSIONS[viewAs.role]||{};
+          return rolePerms[perm]||false;
+        }
+        return can(perm);
+      };
+      
       const menu=[
-        {id:'scorm-tracking',label:'Suivi formation',icon:'BarChart3',show:!showAsLearner&&(can('view_analytics')||can('view_learner_progress'))},
-        {id:'analytics',label:'Statistiques',icon:'PieChart',show:!showAsLearner&&can('view_analytics')},
+        {id:'scorm-tracking',label:'Suivi formation',icon:'BarChart3',show:!showAsLearner&&(canInContext('view_analytics')||canInContext('view_learner_progress'))},
+        {id:'analytics',label:'Statistiques',icon:'PieChart',show:!showAsLearner&&canInContext('view_analytics')},
         {id:'catalog',label:'Catalogue LMS',icon:'Package',show:showAsSuperAdmin},
-        {id:'licenses',label:'Licences',icon:'Key',show:showAsSuperAdmin||(!viewAs&&profile?.role==='center_admin')},
+        {id:'licenses',label:'Licences',icon:'Key',show:showAsSuperAdmin||showAsCenterAdmin},
         {id:'centers',label:'Centres',icon:'Building2',show:showAsSuperAdmin},
-        {id:'users',label:'Utilisateurs',icon:'Users',show:!viewAs&&(can('create_users')||can('edit_users'))},
-        {id:'videos',label:'Bibliothèque',icon:'Film',show:!viewAs&&(can('manage_videos')||can('view_videos'))},
-        {id:'playlists',label:'Cours',icon:'BookOpen',show:showAsAdmin||(viewAs&&(viewAs.role==='center_admin'||viewAs.role==='trainer'))||(can('manage_playlists')||can('view_playlists'))},
-        {id:'paths',label:'Parcours',icon:'Map',show:showAsAdmin||(viewAs&&(viewAs.role==='center_admin'||viewAs.role==='trainer'))||can('manage_paths')},
-        {id:'quizzes',label:'Quiz',icon:'HelpCircle',show:showAsAdmin||(viewAs&&(viewAs.role==='center_admin'||viewAs.role==='trainer'))||(can('manage_quizzes')||can('view_quizzes'))},
-        {id:'badges',label:'Badges',icon:'Award',show:!viewAs&&can('manage_badges')},
-        {id:'enrollments',label:'Inscriptions',icon:'UserPlus',show:!viewAs&&can('manage_enrollments')||(viewAs&&(viewAs.role==='center_admin'||viewAs.role==='trainer'))},
-        {id:'emails',label:'Emails',icon:'Mail',show:!viewAs&&(can('send_emails')||can('manage_email_templates'))},
-        {id:'permissions',label:'Permissions',icon:'Shield',show:!viewAs&&can('manage_permissions')},
+        {id:'users',label:'Utilisateurs',icon:'Users',show:!showAsLearner&&(canInContext('create_users')||canInContext('edit_users'))},
+        {id:'videos',label:'Bibliothèque',icon:'Film',show:!showAsLearner&&(canInContext('manage_videos')||canInContext('view_videos'))},
+        {id:'playlists',label:'Cours',icon:'BookOpen',show:!showAsLearner&&(canInContext('manage_playlists')||canInContext('view_playlists'))},
+        {id:'paths',label:'Parcours',icon:'Route',show:!showAsLearner&&(canInContext('manage_playlists')||canInContext('view_playlists'))},
+        {id:'quizzes',label:'Quiz',icon:'HelpCircle',show:!showAsLearner&&(canInContext('manage_quizzes')||canInContext('view_quizzes'))},
+        {id:'badges',label:'Badges',icon:'Award',show:showAsSuperAdmin||showAsCenterAdmin},
+        {id:'enrollments',label:'Inscriptions',icon:'UserPlus',show:!showAsLearner&&canInContext('manage_enrollments')},
+        {id:'emails',label:'Emails',icon:'Mail',show:!showAsLearner&&(canInContext('send_emails')||canInContext('manage_email_templates'))},
+        {id:'permissions',label:'Permissions',icon:'Shield',show:showAsSuperAdmin},
         {id:'my-courses',label:'Mes cours',icon:'GraduationCap',show:showAsLearner},
         {id:'my-progress',label:'Mon suivi',icon:'BarChart3',show:showAsLearner},
-        {id:'my-paths',label:'Mes parcours',icon:'Map',show:showAsLearner},
+        {id:'my-paths',label:'Mes parcours',icon:'Route',show:showAsLearner},
         {id:'my-badges',label:'Mes badges',icon:'Trophy',show:showAsLearner},
         {id:'my-certificates',label:'Mes certificats',icon:'Award',show:showAsLearner},
         {id:'leaderboard',label:'Classement',icon:'Medal',show:showAsLearner},
@@ -668,7 +679,7 @@
             {page==='users'&&<UsersPage/>}
             {page==='videos'&&<VideosPage/>}
             {page==='playlists'&&<PlaylistsPage/>}
-            {page==='paths'&&<PathsPage/>}
+            {page==='paths'&&<LearningPathsPage/>}
             {page==='quizzes'&&<QuizzesPage/>}
             {page==='badges'&&<BadgesPage/>}
             {page==='enrollments'&&<EnrollmentsPage/>}
@@ -4276,7 +4287,7 @@
       };
       
       // ========== RENDU ==========
-      if(!can('manage_playlists')&&profile?.role!=='trainer')return<Empty icon="Lock" title="Accès refusé"/>;
+      if(!can('manage_quizzes')&&!can('view_quizzes'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
 
       return<div>
@@ -5076,11 +5087,12 @@
       const[scormModules,setScormModules]=useState([]);
       const[quizzes,setQuizzes]=useState([]);
       const[courses,setCourses]=useState([]);
+      const[learningPaths,setLearningPaths]=useState([]);
       const[packs,setPacks]=useState([]);
       const[packModal,setPackModal]=useState(false);
       const[editingPack,setEditingPack]=useState(null);
       const[packForm,setPackForm]=useState({name:'',code:'',description:'',pack_type:'bundle',is_active:true});
-      const[selectedContent,setSelectedContent]=useState({videos:[],scorm:[],quizzes:[],courses:[]});
+      const[selectedContent,setSelectedContent]=useState({videos:[],scorm:[],quizzes:[],courses:[],paths:[]});
       
       const load=useCallback(async()=>{
         try{
@@ -5088,6 +5100,7 @@
           const{data:s}=await supabase.from('scorm_modules').select('*').order('title');setScormModules(s||[]);
           const{data:q}=await supabase.from('quizzes').select('*').order('title');setQuizzes(q||[]);
           const{data:c}=await supabase.from('playlists').select('*').order('title');setCourses(c||[]);
+          try{const{data:lp}=await supabase.from('learning_paths').select('*').order('title');setLearningPaths(lp||[]);}catch(e){setLearningPaths([]);}
           try{const{data:pk}=await supabase.from('content_packs').select('*').order('name');setPacks(pk||[]);}catch(e){setPacks([]);}
         }catch(err){console.error(err);}
         setLoading(false);
@@ -5101,11 +5114,11 @@
         if(pack){
           setEditingPack(pack);setPackForm({name:pack.name,code:pack.code||'',description:pack.description||'',pack_type:pack.pack_type,is_active:pack.is_active});
           supabase.from('content_pack_items').select('*').eq('pack_id',pack.id).then(({data})=>{
-            const sel={videos:[],scorm:[],quizzes:[],courses:[]};
-            (data||[]).forEach(i=>{if(i.content_type==='video')sel.videos.push(i.content_id);else if(i.content_type==='scorm')sel.scorm.push(i.content_id);else if(i.content_type==='quiz')sel.quizzes.push(i.content_id);else if(i.content_type==='course')sel.courses.push(i.content_id);});
+            const sel={videos:[],scorm:[],quizzes:[],courses:[],paths:[]};
+            (data||[]).forEach(i=>{if(i.content_type==='video')sel.videos.push(i.content_id);else if(i.content_type==='scorm')sel.scorm.push(i.content_id);else if(i.content_type==='quiz')sel.quizzes.push(i.content_id);else if(i.content_type==='course')sel.courses.push(i.content_id);else if(i.content_type==='path')sel.paths.push(i.content_id);});
             setSelectedContent(sel);
           });
-        }else{setEditingPack(null);setPackForm({name:'',code:'',description:'',pack_type:'bundle',is_active:true});setSelectedContent({videos:[],scorm:[],quizzes:[],courses:[]});}
+        }else{setEditingPack(null);setPackForm({name:'',code:'',description:'',pack_type:'bundle',is_active:true});setSelectedContent({videos:[],scorm:[],quizzes:[],courses:[],paths:[]});}
         setPackModal(true);
       };
       
@@ -5120,6 +5133,7 @@
           selectedContent.scorm.forEach(id=>items.push({pack_id:packId,content_type:'scorm',content_id:id}));
           selectedContent.quizzes.forEach(id=>items.push({pack_id:packId,content_type:'quiz',content_id:id}));
           selectedContent.courses.forEach(id=>items.push({pack_id:packId,content_type:'course',content_id:id}));
+          selectedContent.paths.forEach(id=>items.push({pack_id:packId,content_type:'path',content_id:id}));
           if(items.length>0)await supabase.from('content_pack_items').insert(items);
           await load();setPackModal(false);
         }catch(err){alert('Erreur: '+err.message);}
@@ -5132,23 +5146,25 @@
       if(!isSuperAdmin)return<Empty icon="Lock" title="Accès Super Admin"/>;
       if(loading)return<Loading/>;
       
-      const lmsV=videos.filter(v=>v.is_lms_content),lmsS=scormModules.filter(s=>s.is_lms_content),lmsQ=quizzes.filter(q=>q.is_lms_content),lmsC=courses.filter(c=>c.is_lms_content);
+      const lmsV=videos.filter(v=>v.is_lms_content),lmsS=scormModules.filter(s=>s.is_lms_content),lmsQ=quizzes.filter(q=>q.is_lms_content),lmsC=courses.filter(c=>c.is_lms_content),lmsP=learningPaths.filter(p=>p.is_lms_content);
       
       return<div>
         <div className="flex items-center justify-between mb-6"><div><h1 className="text-2xl font-bold">Catalogue LMS</h1><p className="text-sm text-gray-400">Contenus et packs distribués aux centres</p></div></div>
         <Tabs tabs={[{id:'content',label:'Contenus LMS',icon:'Film'},{id:'packs',label:`Packs (${packs.length})`,icon:'Package'}]} active={activeTab} onChange={setActiveTab}/>
         
         {activeTab==='content'&&<div className="space-y-6">
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-5 gap-4">
             <Card className="p-4 text-center"><p className="text-2xl font-bold text-indigo-400">{lmsV.length}</p><p className="text-sm text-gray-400">Vidéos</p></Card>
             <Card className="p-4 text-center"><p className="text-2xl font-bold text-purple-400">{lmsS.length}</p><p className="text-sm text-gray-400">SCORM</p></Card>
             <Card className="p-4 text-center"><p className="text-2xl font-bold text-cyan-400">{lmsQ.length}</p><p className="text-sm text-gray-400">Quiz</p></Card>
             <Card className="p-4 text-center"><p className="text-2xl font-bold text-green-400">{lmsC.length}</p><p className="text-sm text-gray-400">Cours</p></Card>
+            <Card className="p-4 text-center"><p className="text-2xl font-bold text-orange-400">{lmsP.length}</p><p className="text-sm text-gray-400">Parcours</p></Card>
           </div>
           <Card className="p-4"><h3 className="font-semibold mb-3">Vidéos ({videos.length})</h3><div className="space-y-2 max-h-60 overflow-y-auto">{videos.map(v=><div key={v.id} className="flex items-center gap-3 p-2 bg-gray-700/50 rounded"><input type="checkbox" checked={v.is_lms_content||false} onChange={()=>toggleLmsContent('videos',v.id,v.is_lms_content)} disabled={saving} className="w-5 h-5"/><span className="flex-1">{v.title}</span>{v.is_lms_content&&<span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded text-xs">LMS</span>}</div>)}</div></Card>
           <Card className="p-4"><h3 className="font-semibold mb-3">SCORM ({scormModules.length})</h3><div className="space-y-2 max-h-60 overflow-y-auto">{scormModules.map(s=><div key={s.id} className="flex items-center gap-3 p-2 bg-gray-700/50 rounded"><input type="checkbox" checked={s.is_lms_content||false} onChange={()=>toggleLmsContent('scorm_modules',s.id,s.is_lms_content)} disabled={saving} className="w-5 h-5"/><span className="flex-1">{s.title}</span>{s.is_lms_content&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">LMS</span>}</div>)}</div></Card>
           <Card className="p-4"><h3 className="font-semibold mb-3">Quiz ({quizzes.length})</h3><div className="space-y-2 max-h-60 overflow-y-auto">{quizzes.map(q=><div key={q.id} className="flex items-center gap-3 p-2 bg-gray-700/50 rounded"><input type="checkbox" checked={q.is_lms_content||false} onChange={()=>toggleLmsContent('quizzes',q.id,q.is_lms_content)} disabled={saving} className="w-5 h-5"/><span className="flex-1">{q.title}</span>{q.is_lms_content&&<span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-400 rounded text-xs">LMS</span>}</div>)}</div></Card>
           <Card className="p-4"><h3 className="font-semibold mb-3">Cours ({courses.length})</h3><div className="space-y-2 max-h-60 overflow-y-auto">{courses.map(c=><div key={c.id} className="flex items-center gap-3 p-2 bg-gray-700/50 rounded"><input type="checkbox" checked={c.is_lms_content||false} onChange={()=>toggleLmsContent('playlists',c.id,c.is_lms_content)} disabled={saving} className="w-5 h-5"/><span className="flex-1">{c.title}</span>{c.is_lms_content&&<><span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs">LMS</span><button onClick={()=>toggleLocked('playlists',c.id,c.is_locked)} className={`px-2 py-0.5 rounded text-xs ${c.is_locked?'bg-red-500/20 text-red-400':'bg-gray-600 text-gray-400'}`}>{c.is_locked?'🔒':'🔓'}</button></>}</div>)}</div></Card>
+          <Card className="p-4"><h3 className="font-semibold mb-3">Parcours ({learningPaths.length})</h3><div className="space-y-2 max-h-60 overflow-y-auto">{learningPaths.map(p=><div key={p.id} className="flex items-center gap-3 p-2 bg-gray-700/50 rounded"><input type="checkbox" checked={p.is_lms_content||false} onChange={()=>toggleLmsContent('learning_paths',p.id,p.is_lms_content)} disabled={saving} className="w-5 h-5"/><span className="flex-1">{p.title}</span>{p.is_lms_content&&<><span className="px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs">LMS</span><button onClick={()=>toggleLocked('learning_paths',p.id,p.is_locked)} className={`px-2 py-0.5 rounded text-xs ${p.is_locked?'bg-red-500/20 text-red-400':'bg-gray-600 text-gray-400'}`}>{p.is_locked?'🔒':'🔓'}</button></>}</div>)}</div></Card>
         </div>}
         
         {activeTab==='packs'&&<div className="space-y-4">
@@ -5165,11 +5181,294 @@
               <Checkbox label="Actif" checked={packForm.is_active} onChange={v=>setPackForm({...packForm,is_active:v})}/>
             </div>
             <div className="space-y-3 max-h-80 overflow-y-auto">
-              <h4 className="font-medium">Contenus ({selectedContent.videos.length+selectedContent.scorm.length+selectedContent.quizzes.length+selectedContent.courses.length})</h4>
-              {[{key:'videos',label:'Vidéos',items:lmsV},{key:'scorm',label:'SCORM',items:lmsS},{key:'quizzes',label:'Quiz',items:lmsQ},{key:'courses',label:'Cours',items:lmsC}].map(g=><div key={g.key} className="border border-gray-700 rounded p-2"><p className="text-xs text-gray-400 mb-1">{g.label} ({selectedContent[g.key].length})</p><div className="max-h-24 overflow-y-auto">{g.items.map(i=><label key={i.id} className="flex items-center gap-2 text-sm p-1 hover:bg-gray-700 rounded cursor-pointer"><input type="checkbox" checked={selectedContent[g.key].includes(i.id)} onChange={()=>toggleSel(g.key,i.id)}/>{i.title}</label>)}</div></div>)}
+              <h4 className="font-medium">Contenus ({selectedContent.videos.length+selectedContent.scorm.length+selectedContent.quizzes.length+selectedContent.courses.length+selectedContent.paths.length})</h4>
+              {[{key:'videos',label:'Vidéos',items:lmsV},{key:'scorm',label:'SCORM',items:lmsS},{key:'quizzes',label:'Quiz',items:lmsQ},{key:'courses',label:'Cours',items:lmsC},{key:'paths',label:'Parcours',items:lmsP}].map(g=><div key={g.key} className="border border-gray-700 rounded p-2"><p className="text-xs text-gray-400 mb-1">{g.label} ({selectedContent[g.key].length})</p><div className="max-h-24 overflow-y-auto">{g.items.map(i=><label key={i.id} className="flex items-center gap-2 text-sm p-1 hover:bg-gray-700 rounded cursor-pointer"><input type="checkbox" checked={selectedContent[g.key].includes(i.id)} onChange={()=>toggleSel(g.key,i.id)}/>{i.title}</label>)}</div></div>)}
             </div>
           </div>
           <div className="flex gap-2 mt-4"><Button variant="secondary" onClick={()=>setPackModal(false)}>Annuler</Button><Button className="flex-1" onClick={savePack} loading={saving}>Enregistrer</Button></div>
+        </Modal>
+      </div>;
+    }
+
+    // ==================== PARCOURS DE FORMATION ====================
+    function LearningPathsPage(){
+      const{center,isSuperAdmin,can,profile}=useAuth();
+      const[paths,setPaths]=useState([]);
+      const[courses,setCourses]=useState([]);
+      const[loading,setLoading]=useState(true);
+      const[modal,setModal]=useState(false);
+      const[editing,setEditing]=useState(null);
+      const[form,setForm]=useState({title:'',description:'',thumbnail_url:'',estimated_duration:''});
+      const[pathCourses,setPathCourses]=useState([]);
+      const[saving,setSaving]=useState(false);
+      const[contentModal,setContentModal]=useState(null);
+      const[licensedIds,setLicensedIds]=useState({paths:[],hasFullCatalog:false});
+      const[filterSource,setFilterSource]=useState('all');
+      const sortableRef=useRef(null);
+      const sortableInstance=useRef(null);
+      
+      const load=useCallback(async()=>{
+        // Charger les licences
+        let licenseInfo={paths:[],hasFullCatalog:false};
+        if(!isSuperAdmin&&center?.id){
+          try{
+            const today=new Date().toISOString().split('T')[0];
+            const{data:licenses}=await supabase.from('center_licenses').select('*,content_packs(pack_type)').eq('center_id',center.id).eq('status','active').lte('start_date',today).gte('end_date',today);
+            licenseInfo.hasFullCatalog=(licenses||[]).some(l=>l.license_type==='full_catalog'||l.content_packs?.pack_type==='full_catalog');
+            if(!licenseInfo.hasFullCatalog){
+              const packIds=(licenses||[]).map(l=>l.pack_id).filter(Boolean);
+              if(packIds.length>0){
+                const{data:items}=await supabase.from('content_pack_items').select('content_type,content_id').in('pack_id',packIds);
+                (items||[]).forEach(i=>{if(i.content_type==='path')licenseInfo.paths.push(i.content_id);});
+              }
+            }
+          }catch(e){}
+        }
+        setLicensedIds(licenseInfo);
+        
+        // Charger les parcours
+        let q=supabase.from('learning_paths').select('*,learning_path_courses(count)').order('created_at',{ascending:false});
+        if(!isSuperAdmin&&center?.id){
+          q=q.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
+        }
+        const{data:p}=await q;
+        setPaths(p||[]);
+        
+        // Charger les cours disponibles
+        let qc=supabase.from('playlists').select('id,title,is_lms_content,is_published').order('title');
+        if(!isSuperAdmin&&center?.id){
+          qc=qc.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
+        }
+        const{data:c}=await qc;
+        setCourses(c||[]);
+        
+        setLoading(false);
+      },[isSuperAdmin,center?.id]);
+      useEffect(()=>{load();},[load]);
+      
+      // Drag & drop
+      useEffect(()=>{
+        if(contentModal&&sortableRef.current&&pathCourses.length>0&&window.Sortable){
+          if(sortableInstance.current){try{sortableInstance.current.destroy();}catch(e){}}
+          sortableInstance.current=window.Sortable.create(sortableRef.current,{
+            animation:150,handle:'.drag-handle',
+            onEnd:(evt)=>{const arr=[...pathCourses];const[m]=arr.splice(evt.oldIndex,1);arr.splice(evt.newIndex,0,m);setPathCourses(arr);}
+          });
+        }
+        return()=>{if(sortableInstance.current){try{sortableInstance.current.destroy();}catch(e){}}};
+      },[contentModal,pathCourses.length]);
+      
+      const isPathLicensed=(pathId)=>{
+        if(isSuperAdmin)return true;
+        if(licensedIds.hasFullCatalog)return true;
+        return licensedIds.paths.includes(pathId);
+      };
+      
+      const filterBySource=(items)=>{
+        if(filterSource==='all')return items;
+        return items.filter(item=>{
+          const isOwn=!item.is_lms_content;
+          const licensed=isPathLicensed(item.id);
+          if(filterSource==='center')return isOwn;
+          if(filterSource==='lms')return item.is_lms_content;
+          if(filterSource==='licensed')return item.is_lms_content&&licensed;
+          if(filterSource==='unlicensed')return item.is_lms_content&&!licensed;
+          return true;
+        });
+      };
+      
+      const stats={
+        total:paths.length,
+        center:paths.filter(p=>!p.is_lms_content).length,
+        lms:paths.filter(p=>p.is_lms_content).length,
+        licensed:paths.filter(p=>p.is_lms_content&&isPathLicensed(p.id)).length
+      };
+      
+      const openModal=(path=null)=>{
+        if(path){
+          setEditing(path);
+          setForm({title:path.title,description:path.description||'',thumbnail_url:path.thumbnail_url||'',estimated_duration:path.estimated_duration||''});
+        }else{
+          setEditing(null);
+          setForm({title:'',description:'',thumbnail_url:'',estimated_duration:''});
+        }
+        setModal(true);
+      };
+      
+      const handleSave=async()=>{
+        if(!form.title.trim()){alert('Titre requis');return;}
+        setSaving(true);
+        try{
+          const payload={...form,estimated_duration:form.estimated_duration?parseInt(form.estimated_duration):null,center_id:center?.id||null};
+          if(editing){
+            await supabase.from('learning_paths').update(payload).eq('id',editing.id);
+          }else{
+            await supabase.from('learning_paths').insert(payload);
+          }
+          await load();setModal(false);
+        }catch(err){alert('Erreur: '+err.message);}
+        setSaving(false);
+      };
+      
+      const handleDelete=async(id)=>{
+        if(!confirm('Supprimer ce parcours ?'))return;
+        await supabase.from('learning_paths').delete().eq('id',id);
+        load();
+      };
+      
+      const togglePublish=async(path)=>{
+        await supabase.from('learning_paths').update({is_published:!path.is_published}).eq('id',path.id);
+        load();
+      };
+      
+      const openContentModal=async(path)=>{
+        const{data}=await supabase.from('learning_path_courses').select('*,playlists(id,title,is_lms_content)').eq('path_id',path.id).order('position');
+        setPathCourses(data||[]);
+        setContentModal(path);
+      };
+      
+      const addCourseToPath=async(courseId)=>{
+        const pos=pathCourses.length;
+        const{data}=await supabase.from('learning_path_courses').insert({path_id:contentModal.id,playlist_id:courseId,position:pos}).select('*,playlists(id,title,is_lms_content)').single();
+        if(data)setPathCourses([...pathCourses,data]);
+      };
+      
+      const removeCourseFromPath=async(id)=>{
+        await supabase.from('learning_path_courses').delete().eq('id',id);
+        setPathCourses(pathCourses.filter(pc=>pc.id!==id));
+      };
+      
+      const saveCoursesOrder=async()=>{
+        for(let i=0;i<pathCourses.length;i++){
+          await supabase.from('learning_path_courses').update({position:i}).eq('id',pathCourses[i].id);
+        }
+        load();
+        setContentModal(null);
+      };
+      
+      if(!can('manage_playlists')&&!can('view_playlists'))return<Empty icon="Lock" title="Accès refusé"/>;
+      if(loading)return<Loading/>;
+      
+      const filtered=filterBySource(paths);
+      
+      return<div>
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold">Parcours de formation</h1>
+            <p className="text-sm text-gray-400">Séquences de cours avec progression</p>
+          </div>
+          {can('manage_playlists')&&<Button icon="Plus" onClick={()=>openModal()}>Créer un parcours</Button>}
+        </div>
+        
+        {/* Filtres */}
+        {!isSuperAdmin&&<Card className="p-4 mb-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="text-sm text-gray-400">Filtrer :</span>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={()=>setFilterSource('all')} className={`px-3 py-1.5 rounded-lg text-sm ${filterSource==='all'?'bg-indigo-600':'bg-gray-700 hover:bg-gray-600'}`}>Tout ({stats.total})</button>
+              <button onClick={()=>setFilterSource('center')} className={`px-3 py-1.5 rounded-lg text-sm ${filterSource==='center'?'bg-indigo-600':'bg-gray-700 hover:bg-gray-600'}`}>📁 Mes parcours ({stats.center})</button>
+              <button onClick={()=>setFilterSource('lms')} className={`px-3 py-1.5 rounded-lg text-sm ${filterSource==='lms'?'bg-indigo-600':'bg-gray-700 hover:bg-gray-600'}`}>📦 Catalogue LMS ({stats.lms})</button>
+              <button onClick={()=>setFilterSource('licensed')} className={`px-3 py-1.5 rounded-lg text-sm ${filterSource==='licensed'?'bg-green-600':'bg-gray-700 hover:bg-gray-600'}`}>✓ Sous licence ({stats.licensed})</button>
+              <button onClick={()=>setFilterSource('unlicensed')} className={`px-3 py-1.5 rounded-lg text-sm ${filterSource==='unlicensed'?'bg-red-600':'bg-gray-700 hover:bg-gray-600'}`}>🔒 Non licencié ({stats.lms-stats.licensed})</button>
+            </div>
+          </div>
+        </Card>}
+        
+        {filtered.length===0?<Empty icon="Route" title="Aucun parcours" desc={filterSource!=='all'?'Essayez un autre filtre':undefined}/>:(
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filtered.map(path=>{
+              const licensed=!path.is_lms_content||isPathLicensed(path.id);
+              const isOwn=!path.is_lms_content;
+              const isLocked=path.is_lms_content&&path.is_locked;
+              const canModify=can('manage_playlists')&&(isOwn||isSuperAdmin)&&!isLocked;
+              const courseCount=path.learning_path_courses?.[0]?.count||0;
+              
+              return<Card key={path.id} className={`overflow-hidden ${!licensed&&!isOwn?'opacity-80':''}`}>
+                {path.thumbnail_url&&<div className="h-32 bg-gray-800"><img src={path.thumbnail_url} className="w-full h-full object-cover"/></div>}
+                <div className="p-4">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold">{path.title}</h3>
+                      {isLocked&&<Icon name="Lock" size={14} className="text-red-400"/>}
+                    </div>
+                    <div className="flex flex-col gap-1 items-end">
+                      {path.is_lms_content?<span className={`px-2 py-0.5 rounded text-xs ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒'}</span>:<span className="px-2 py-0.5 bg-gray-600 rounded text-xs">📁</span>}
+                      <span className={`px-2 py-0.5 rounded text-xs ${path.is_published?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>{path.is_published?'Publié':'Brouillon'}</span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-3 text-sm text-gray-400 mb-3">
+                    <span><Icon name="BookOpen" size={14} className="inline mr-1"/>{courseCount} cours</span>
+                    {path.estimated_duration&&<span><Icon name="Clock" size={14} className="inline mr-1"/>{Math.round(path.estimated_duration/60)}h</span>}
+                  </div>
+                  
+                  {path.description&&<p className="text-sm text-gray-400 line-clamp-2 mb-3">{path.description}</p>}
+                  
+                  <div className="flex flex-wrap gap-2">
+                    {(licensed||isOwn)&&<Button variant="ghost" size="sm" icon="Layers" onClick={()=>openContentModal(path)}>{isLocked?'Voir':'Gérer'} cours</Button>}
+                    {canModify&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>openModal(path)}>Modifier</Button>}
+                    {canModify&&<Button variant="ghost" size="sm" icon={path.is_published?'EyeOff':'Eye'} onClick={()=>togglePublish(path)}/>}
+                    {canModify&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(path.id)}/>}
+                    {!licensed&&!isOwn&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>window.location.hash='licenses'}>Demander licence</Button>}
+                  </div>
+                </div>
+              </Card>;
+            })}
+          </div>
+        )}
+        
+        {/* Modal création/édition */}
+        <Modal isOpen={modal} onClose={()=>setModal(false)} title={editing?'Modifier le parcours':'Créer un parcours'} size="md">
+          <div className="space-y-4">
+            <Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
+            <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div>
+            <Input label="Image URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})} placeholder="https://..."/>
+            <Input label="Durée estimée (minutes)" type="number" value={form.estimated_duration} onChange={e=>setForm({...form,estimated_duration:e.target.value})}/>
+          </div>
+          <div className="flex gap-2 mt-4">
+            <Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button>
+            <Button className="flex-1" onClick={handleSave} loading={saving}>Enregistrer</Button>
+          </div>
+        </Modal>
+        
+        {/* Modal gestion des cours */}
+        <Modal isOpen={!!contentModal} onClose={()=>setContentModal(null)} title={`Cours du parcours: ${contentModal?.title}`} size="xl">
+          {contentModal?.is_locked&&!isSuperAdmin&&<Alert type="info" className="mb-4"><Icon name="Lock" size={14} className="inline mr-2"/>Ce parcours LMS est verrouillé. Vous ne pouvez pas modifier la séquence des cours.</Alert>}
+          
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div>
+              <h4 className="font-medium mb-3">Cours du parcours ({pathCourses.length}){!contentModal?.is_locked&&<span className="text-gray-500 text-sm font-normal ml-2">- Glissez pour réorganiser</span>}</h4>
+              <div ref={sortableRef} className="space-y-2 max-h-80 overflow-y-auto">
+                {pathCourses.map((pc,i)=><div key={pc.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg">
+                  {!contentModal?.is_locked&&<div className="drag-handle cursor-grab p-1 hover:bg-gray-600 rounded"><Icon name="GripVertical" size={16} className="text-gray-400"/></div>}
+                  <span className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{i+1}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium truncate text-sm">{pc.playlists?.title}</p>
+                  </div>
+                  {pc.playlists?.is_lms_content&&<span className="px-1.5 py-0.5 bg-indigo-500/20 text-indigo-400 rounded text-xs">LMS</span>}
+                  {!contentModal?.is_locked&&<button onClick={()=>removeCourseFromPath(pc.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button>}
+                </div>)}
+                {pathCourses.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucun cours</p>}
+              </div>
+            </div>
+            
+            {!contentModal?.is_locked&&<div>
+              <h4 className="font-medium mb-3">Cours disponibles</h4>
+              <div className="space-y-2 max-h-80 overflow-y-auto">
+                {courses.filter(c=>!pathCourses.find(pc=>pc.playlist_id===c.id)).map(c=><div key={c.id} className="flex items-center gap-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 cursor-pointer" onClick={()=>addCourseToPath(c.id)}>
+                  <Icon name="Plus" size={16} className="text-indigo-400"/>
+                  <div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{c.title}</p></div>
+                  {c.is_lms_content&&<span className="px-1.5 py-0.5 bg-indigo-500/20 text-indigo-400 rounded text-xs">LMS</span>}
+                </div>)}
+                {courses.filter(c=>!pathCourses.find(pc=>pc.playlist_id===c.id)).length===0&&<p className="text-gray-500 text-sm text-center py-4">Tous les cours ajoutés</p>}
+              </div>
+            </div>}
+          </div>
+          
+          <div className="flex gap-2 mt-4">
+            <Button variant="secondary" onClick={()=>setContentModal(null)}>Fermer</Button>
+            {!contentModal?.is_locked&&<Button className="flex-1" onClick={saveCoursesOrder}>Enregistrer l'ordre</Button>}
+          </div>
         </Modal>
       </div>;
     }
