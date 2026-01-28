@@ -3291,7 +3291,10 @@
       // Drag & Drop pour vidéos
       useEffect(()=>{
         if(!editContentModal||!sortableRef.current||contentTab!=='videos')return;
-        if(sortableInstanceRef.current)sortableInstanceRef.current.destroy();
+        if(sortableInstanceRef.current){
+          try{sortableInstanceRef.current.destroy();}catch(e){}
+          sortableInstanceRef.current=null;
+        }
         
         sortableInstanceRef.current=new Sortable(sortableRef.current,{
           animation:150,
@@ -3312,7 +3315,7 @@
         
         return()=>{
           if(sortableInstanceRef.current){
-            sortableInstanceRef.current.destroy();
+            try{sortableInstanceRef.current.destroy();}catch(e){}
             sortableInstanceRef.current=null;
           }
         };
@@ -3582,13 +3585,21 @@
       // Drag & drop quiz
       useEffect(()=>{
         if(sortableRef.current&&quizQuestions.length>0&&window.Sortable){
-          if(sortableInstance.current)sortableInstance.current.destroy();
+          if(sortableInstance.current){
+            try{sortableInstance.current.destroy();}catch(e){}
+            sortableInstance.current=null;
+          }
           sortableInstance.current=window.Sortable.create(sortableRef.current,{
             animation:150,handle:'.drag-handle',
             onEnd:(evt)=>{const arr=[...quizQuestions];const[m]=arr.splice(evt.oldIndex,1);arr.splice(evt.newIndex,0,m);setQuizQuestions(arr);}
           });
         }
-        return()=>{if(sortableInstance.current)sortableInstance.current.destroy();};
+        return()=>{
+          if(sortableInstance.current){
+            try{sortableInstance.current.destroy();}catch(e){}
+            sortableInstance.current=null;
+          }
+        };
       },[quizQuestions]);
       
       // ========== HELPERS HIÉRARCHIE ==========
