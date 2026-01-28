@@ -3154,10 +3154,29 @@
       const[contentTab,setContentTab]=useState('videos');
       const[assignModal,setAssignModal]=useState(null);
       const[assignedTrainers,setAssignedTrainers]=useState([]);
+      const[licensedIds,setLicensedIds]=useState({courses:[],hasFullCatalog:false});
       const sortableRef=useRef(null);
       const sortableInstanceRef=useRef(null);
 
       const load=useCallback(async()=>{
+        // Charger les licences du centre
+        let licenseInfo={courses:[],hasFullCatalog:false};
+        if(!isSuperAdmin&&center?.id){
+          try{
+            const today=new Date().toISOString().split('T')[0];
+            const{data:licenses}=await supabase.from('center_licenses').select('*,content_packs(pack_type)').eq('center_id',center.id).eq('status','active').lte('start_date',today).gte('end_date',today);
+            licenseInfo.hasFullCatalog=(licenses||[]).some(l=>l.license_type==='full_catalog'||l.content_packs?.pack_type==='full_catalog');
+            if(!licenseInfo.hasFullCatalog){
+              const packIds=(licenses||[]).map(l=>l.pack_id).filter(Boolean);
+              if(packIds.length>0){
+                const{data:items}=await supabase.from('content_pack_items').select('content_type,content_id').in('pack_id',packIds);
+                (items||[]).forEach(i=>{if(i.content_type==='course')licenseInfo.courses.push(i.content_id);});
+              }
+            }
+          }catch(e){console.log('Erreur licences:',e);}
+        }
+        setLicensedIds(licenseInfo);
+        
         // Charger les assignations formateur-cours
         let tcData=[];
         try{
@@ -3166,9 +3185,11 @@
           setTrainerCourses(tcData);
         }catch(e){console.log('trainer_courses table not yet created');}
         
-        // Pour les formateurs: filtrer par cours assignés
+        // Charger les cours (du centre + catalogue LMS)
         let q=supabase.from('playlists').select('*,playlist_videos(count)').order('created_at',{ascending:false});
-        if(!isSuperAdmin&&center?.id)q=q.eq('center_id',center.id);
+        if(!isSuperAdmin&&center?.id){
+          q=q.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
+        }
         const{data:p}=await q;
         
         let filteredPlaylists=p||[];
@@ -3179,15 +3200,16 @@
         }
         setPlaylists(filteredPlaylists);
         
+        // Charger les vidéos sous licence ou du centre
         let qv=supabase.from('videos').select('*');
-        if(!isSuperAdmin&&center?.id)qv=qv.eq('center_id',center.id);
+        if(!isSuperAdmin&&center?.id)qv=qv.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
         const{data:v}=await qv;
         setVideos(v||[]);
         
         // Charger les modules SCORM
         try {
           let qs=supabase.from('scorm_modules').select('*');
-          if(!isSuperAdmin&&center?.id)qs=qs.or(`center_id.eq.${center.id},center_id.is.null`);
+          if(!isSuperAdmin&&center?.id)qs=qs.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
           const{data:scorm,error}=await qs;
           if(!error)setScormModules(scorm||[]);
         } catch(e) { console.log('SCORM tables not yet created'); }
@@ -3230,6 +3252,13 @@
       
       const getAssignedTrainersCount=(playlistId)=>{
         return trainerCourses.filter(tc=>tc.playlist_id===playlistId).length;
+      };
+      
+      // Vérifier si un cours est sous licence
+      const isCourseLicensed=(courseId)=>{
+        if(isSuperAdmin)return true;
+        if(licensedIds.hasFullCatalog)return true;
+        return licensedIds.courses.includes(courseId);
       };
       
       const openEditContent=async(playlist)=>{
@@ -3299,27 +3328,40 @@
           </div>
           {can('manage_playlists')&&<Button icon="Plus" onClick={()=>{setForm({title:'',description:''});setEditing(null);setModal(true);}}>Créer</Button>}
         </div>
-        {playlists.length===0?<Empty icon="BookOpen" title={realRole==='trainer'?'Aucun cours assigné':'Aucun cours'}/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{playlists.map(p=><Card key={p.id} className="p-4">
+        {playlists.length===0?<Empty icon="BookOpen" title={realRole==='trainer'?'Aucun cours assigné':'Aucun cours'}/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{playlists.map(p=>{
+          const licensed=!p.is_lms_content||isCourseLicensed(p.id);
+          const isLocked=p.is_lms_content&&p.is_locked;
+          const canModify=can('manage_playlists')&&(!p.is_lms_content||isSuperAdmin)&&!isLocked;
+          return<Card key={p.id} className={`p-4 ${!licensed?'opacity-75':''}`}>
           <div className="flex items-start justify-between mb-3">
             <div>
-              <h3 className="font-semibold">{p.title}</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold">{p.title}</h3>
+                {isLocked&&<Icon name="Lock" size={14} className="text-red-400"/>}
+              </div>
               <p className="text-sm text-gray-400 mt-1">{p.playlist_videos?.[0]?.count||0} vidéos</p>
               {can('manage_playlists')&&getAssignedTrainersCount(p.id)>0&&(
                 <p className="text-xs text-indigo-400 mt-1"><Icon name="Users" size={12} className="inline mr-1"/>{getAssignedTrainersCount(p.id)} formateur(s)</p>
               )}
             </div>
-            <span className={`px-2 py-1 rounded text-xs ${p.is_published?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>{p.is_published?'Publié':'Brouillon'}</span>
+            <div className="flex flex-col gap-1 items-end">
+              {p.is_lms_content&&<span className={`px-2 py-0.5 rounded text-xs ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒 Non licencié'}</span>}
+              <span className={`px-2 py-1 rounded text-xs ${p.is_published?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>{p.is_published?'Publié':'Brouillon'}</span>
+            </div>
           </div>
+          {p.is_lms_content&&!isSuperAdmin&&<div className="mb-3"><span className={`text-xs px-2 py-1 rounded ${licensed?'bg-green-500/20 text-green-400':'bg-red-500/20 text-red-400'}`}>{licensed?'✓ Sous licence':(isLocked?'Consultation seule':'Non licencié')}</span>{isLocked&&licensed&&<span className="text-xs text-gray-500 ml-2">• Non modifiable</span>}</div>}
           <div className="flex flex-wrap gap-2">
-            {(can('manage_playlists')||can('assign_content'))&&<Button variant="ghost" size="sm" icon="Layers" onClick={()=>openEditContent(p)}>Contenu</Button>}
-            {can('manage_playlists')&&<>
+            {licensed&&(can('manage_playlists')||can('assign_content'))&&!isLocked&&<Button variant="ghost" size="sm" icon="Layers" onClick={()=>openEditContent(p)}>Contenu</Button>}
+            {licensed&&isLocked&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>openEditContent(p)}>Voir contenu</Button>}
+            {canModify&&<>
               <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(p);setForm({title:p.title,description:p.description||''});setModal(true);}}>Modifier</Button>
               <Button variant="ghost" size="sm" icon="Users" onClick={()=>openAssignModal(p)}>Formateurs</Button>
             </>}
-            {can('manage_playlists')&&<Button variant="ghost" size="sm" icon={p.is_published?'EyeOff':'Eye'} onClick={()=>togglePublish(p)}>{p.is_published?'Dépublier':'Publier'}</Button>}
-            {can('manage_playlists')&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(p.id)}/>}
+            {canModify&&<Button variant="ghost" size="sm" icon={p.is_published?'EyeOff':'Eye'} onClick={()=>togglePublish(p)}>{p.is_published?'Dépublier':'Publier'}</Button>}
+            {canModify&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(p.id)}/>}
+            {!licensed&&<span className="text-xs text-gray-500 italic">Demandez une licence</span>}
           </div>
-        </Card>)}</div>}
+        </Card>})}</div>}
         
         {/* Modal assignation formateurs */}
         <Modal isOpen={!!assignModal} onClose={()=>setAssignModal(null)} title={`Formateurs: ${assignModal?.title}`} size="md">
