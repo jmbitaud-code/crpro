@@ -560,7 +560,6 @@
       const menu=[
         {id:'scorm-tracking',label:'Suivi formation',icon:'BarChart3',show:!showAsLearner&&(canInContext('view_analytics')||canInContext('view_learner_progress'))},
         {id:'analytics',label:'Statistiques',icon:'PieChart',show:!showAsLearner&&canInContext('view_analytics')},
-        {id:'catalog',label:'Catalogue LMS',icon:'Package',show:showAsSuperAdmin},
         {id:'licenses',label:'Licences',icon:'Key',show:showAsSuperAdmin||showAsCenterAdmin},
         {id:'centers',label:'Centres',icon:'Building2',show:showAsSuperAdmin},
         {id:'users',label:'Utilisateurs',icon:'Users',show:!showAsLearner&&(canInContext('create_users')||canInContext('edit_users'))},
@@ -673,7 +672,6 @@
           <div className="p-4 lg:p-6">
             {page==='analytics'&&<AnalyticsPage/>}
             {page==='scorm-tracking'&&<ScormTrackingPage/>}
-            {page==='catalog'&&<CatalogPage/>}
             {page==='licenses'&&<LicensesPage/>}
             {page==='centers'&&<CentersPage/>}
             {page==='users'&&<UsersPage/>}
@@ -2543,13 +2541,16 @@
       const[activeTab,setActiveTab]=useState('videos');
       const[videos,setVideos]=useState([]);
       const[scormModules,setScormModules]=useState([]);
+      const[quizzes,setQuizzes]=useState([]);
+      const[courses,setCourses]=useState([]);
+      const[paths,setPaths]=useState([]);
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
       const[importModal,setImportModal]=useState(false);
       const[detailModal,setDetailModal]=useState(null);
       const[editing,setEditing]=useState(null);
       const[search,setSearch]=useState('');
-      const[form,setForm]=useState({title:'',vimeo_id:'',duration:'',category:'',description:'',sort_order:'',tags:'',theme:'',thumbnail_url:''});
+      const[form,setForm]=useState({title:'',vimeo_id:'',duration:'',category_id:'',description:'',sort_order:'',tags:'',theme_id:'',sub_theme_id:'',thumbnail_url:''});
       const[saving,setSaving]=useState(false);
       const[importData,setImportData]=useState([]);
       const[importLoading,setImportLoading]=useState(false);
@@ -2561,14 +2562,30 @@
       const[uploading,setUploading]=useState(false);
       const[scormModal,setScormModal]=useState(false);
       const[scormEditing,setScormEditing]=useState(null);
-      const[scormForm,setScormForm]=useState({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'sco_0.html',category:'',version:'',remote_url:''});
+      const[scormForm,setScormForm]=useState({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'sco_0.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:''});
       const[scormSaving,setScormSaving]=useState(false);
       const[scormZipParsing,setScormZipParsing]=useState(false);
       const[scormZipFile,setScormZipFile]=useState(null);
-      const[licensedIds,setLicensedIds]=useState({videos:[],scorm:[],hasFullCatalog:false,hasAnyLicense:false});
-      const[filterSource,setFilterSource]=useState('all'); // all, center, lms, licensed, unlicensed
-      const[requestLicenseModal,setRequestLicenseModal]=useState(null); // contenu pour lequel demander licence
+      const[licensedIds,setLicensedIds]=useState({videos:[],scorm:[],quizzes:[],courses:[],paths:[],hasFullCatalog:false,hasAnyLicense:false});
+      const[filterSource,setFilterSource]=useState('all');
+      const[requestLicenseModal,setRequestLicenseModal]=useState(null);
       const[packs,setPacks]=useState([]);
+      const[packItems,setPackItems]=useState([]);
+      // Taxonomie
+      const[categories,setCategories]=useState([]);
+      const[themes,setThemes]=useState([]);
+      const[subThemes,setSubThemes]=useState([]);
+      const[filterCategory,setFilterCategory]=useState('');
+      const[filterTheme,setFilterTheme]=useState('');
+      const[showTaxonomyPanel,setShowTaxonomyPanel]=useState(false);
+      const[taxonomyModal,setTaxonomyModal]=useState(null);
+      const[taxonomyForm,setTaxonomyForm]=useState({name:'',description:'',color:'#6366f1',icon:'Folder',parent_id:''});
+      // Gestion LMS (Super Admin)
+      const[selectedItems,setSelectedItems]=useState([]);
+      const[packModal,setPackModal]=useState(false);
+      const[editingPack,setEditingPack]=useState(null);
+      const[packForm,setPackForm]=useState({name:'',code:'',description:'',pack_type:'bundle'});
+      const[packContents,setPackContents]=useState({videos:[],scorm:[],quizzes:[],courses:[],paths:[]});
       const fileInputRef=useRef(null);
       const attachmentFileRef=useRef(null);
       const scormFileRef=useRef(null);
@@ -2716,8 +2733,18 @@
       };
 
       const load=useCallback(async()=>{
+        // Charger la taxonomie
+        try{
+          const{data:cats}=await supabase.from('content_categories').select('*').order('position').order('name');
+          setCategories(cats||[]);
+          const{data:ths}=await supabase.from('content_themes').select('*').order('position').order('name');
+          setThemes(ths||[]);
+          const{data:sths}=await supabase.from('content_sub_themes').select('*').order('position').order('name');
+          setSubThemes(sths||[]);
+        }catch(e){console.log('Taxonomie non disponible');}
+        
         // Charger les licences du centre
-        let licenseInfo={videos:[],scorm:[],hasFullCatalog:false,hasAnyLicense:false};
+        let licenseInfo={videos:[],scorm:[],quizzes:[],hasFullCatalog:false,hasAnyLicense:false};
         if(!isSuperAdmin&&center?.id){
           try{
             const today=new Date().toISOString().split('T')[0];
@@ -2731,12 +2758,12 @@
                 (items||[]).forEach(i=>{
                   if(i.content_type==='video')licenseInfo.videos.push(i.content_id);
                   else if(i.content_type==='scorm')licenseInfo.scorm.push(i.content_id);
+                  else if(i.content_type==='quiz')licenseInfo.quizzes.push(i.content_id);
                 });
               }
             }
           }catch(e){console.log('Erreur licences:',e);}
           
-          // Charger les packs disponibles pour les demandes de licence
           try{
             const{data:pk}=await supabase.from('content_packs').select('*').eq('is_active',true);
             setPacks(pk||[]);
@@ -2744,8 +2771,8 @@
         }
         setLicensedIds(licenseInfo);
         
-        // Charger TOUTES les videos (centre + catalogue LMS pour consultation)
-        let q=supabase.from('videos').select('*').order('sort_order',{ascending:true,nullsFirst:false}).order('created_at',{ascending:false});
+        // Charger TOUTES les videos
+        let q=supabase.from('videos').select('*,content_categories(id,name,color)').order('sort_order',{ascending:true,nullsFirst:false}).order('created_at',{ascending:false});
         if(!isSuperAdmin&&center?.id){
           q=q.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
         }
@@ -2754,7 +2781,7 @@
         
         // Charger TOUS les modules SCORM
         try {
-          let qs=supabase.from('scorm_modules').select('*').order('created_at',{ascending:false});
+          let qs=supabase.from('scorm_modules').select('*,content_categories(id,name,color)').order('created_at',{ascending:false});
           if(!isSuperAdmin&&center?.id){
             qs=qs.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
           }
@@ -2762,38 +2789,87 @@
           if(!error)setScormModules(scorm||[]);
         } catch(e) { console.log('SCORM tables not yet created'); }
         
+        // Charger les Quiz
+        try {
+          let qq=supabase.from('quizzes').select('*,content_categories(id,name,color)').order('created_at',{ascending:false});
+          if(!isSuperAdmin&&center?.id){
+            qq=qq.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
+          }
+          const{data:qz,error}=await qq;
+          if(!error)setQuizzes(qz||[]);
+        } catch(e) { console.log('Quiz error'); }
+        
+        // Charger les Cours (playlists)
+        try {
+          let qc=supabase.from('playlists').select('*,content_categories(id,name,color)').order('created_at',{ascending:false});
+          if(!isSuperAdmin&&center?.id){
+            qc=qc.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
+          }
+          const{data:co,error}=await qc;
+          if(!error)setCourses(co||[]);
+        } catch(e) { console.log('Courses error'); }
+        
+        // Charger les Parcours
+        try {
+          let qp=supabase.from('learning_paths').select('*,content_categories(id,name,color),learning_path_courses(count)').order('created_at',{ascending:false});
+          if(!isSuperAdmin&&center?.id){
+            qp=qp.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
+          }
+          const{data:pa,error}=await qp;
+          if(!error)setPaths(pa||[]);
+        } catch(e) { console.log('Paths error'); }
+        
+        // Charger les Packs (Super Admin)
+        if(isSuperAdmin){
+          try{
+            const{data:pk}=await supabase.from('content_packs').select('*').order('name');
+            setPacks(pk||[]);
+            const{data:pi}=await supabase.from('content_pack_items').select('*');
+            setPackItems(pi||[]);
+          }catch(e){}
+        }
+        
         setLoading(false);
       },[isSuperAdmin,center?.id]);
       useEffect(()=>{load();},[load]);
       
-      // Verifier si un contenu est sous licence
+      // Vérifier si un contenu est sous licence
       const isLicensed=(type,id)=>{
         if(isSuperAdmin)return true;
         if(licensedIds.hasFullCatalog)return true;
         if(type==='video')return licensedIds.videos.includes(id);
         if(type==='scorm')return licensedIds.scorm.includes(id);
+        if(type==='quiz')return licensedIds.quizzes.includes(id);
+        if(type==='course')return licensedIds.courses.includes(id);
+        if(type==='path')return licensedIds.paths.includes(id);
         return false;
       };
       
-      // Obtenir la source d'un contenu
-      const getContentSource=(item)=>{
-        if(!item.is_lms_content)return 'center';
-        if(isLicensed(activeTab==='videos'?'video':'scorm',item.id))return 'licensed';
-        return 'unlicensed';
+      // Filtrer selon la source ET la taxonomie
+      const filterBySource=(items,type)=>{
+        let result=items;
+        if(filterSource!=='all'){
+          result=result.filter(item=>{
+            const source=item.is_lms_content?(isLicensed(type,item.id)?'licensed':'unlicensed'):'center';
+            if(filterSource==='center')return source==='center';
+            if(filterSource==='lms')return item.is_lms_content;
+            if(filterSource==='licensed')return source==='licensed';
+            if(filterSource==='unlicensed')return source==='unlicensed';
+            return true;
+          });
+        }
+        if(filterCategory){result=result.filter(item=>item.category_id===filterCategory);}
+        if(filterTheme){result=result.filter(item=>item.theme_id===filterTheme);}
+        if(search){const s=search.toLowerCase();result=result.filter(item=>item.title?.toLowerCase().includes(s));}
+        return result;
       };
       
-      // Filtrer selon la source
-      const filterBySource=(items,type)=>{
-        if(filterSource==='all')return items;
-        return items.filter(item=>{
-          const source=item.is_lms_content?(isLicensed(type,item.id)?'licensed':'unlicensed'):'center';
-          if(filterSource==='center')return source==='center';
-          if(filterSource==='lms')return item.is_lms_content;
-          if(filterSource==='licensed')return source==='licensed';
-          if(filterSource==='unlicensed')return source==='unlicensed';
-          return true;
-        });
-      };
+      // Obtenir le nom de la catégorie
+      const getCategoryName=(catId)=>{const cat=categories.find(c=>c.id===catId);return cat?.name||'';};
+      
+      // Thèmes filtrés par catégorie sélectionnée
+      const getThemesForCategory=(catId)=>themes.filter(t=>t.category_id===catId);
+      const getSubThemesForTheme=(themeId)=>subThemes.filter(st=>st.theme_id===themeId);
       
       // Trouver les packs contenant un contenu
       const getPacksForContent=async(contentType,contentId)=>{
@@ -2803,8 +2879,125 @@
         }catch(e){return[];}
       };
       
-      const resetForm=()=>setForm({title:'',vimeo_id:'',duration:'',category:'',description:'',sort_order:'',tags:'',theme:'',thumbnail_url:''});
-      const resetScormForm=()=>{setScormForm({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'sco_0.html',category:'',version:'',remote_url:''});setScormZipFile(null);};
+      // === GESTION LMS (Super Admin) ===
+      
+      // Toggle LMS pour un contenu
+      const toggleLMS=async(type,item)=>{
+        const table=type==='video'?'videos':type==='scorm'?'scorm_modules':type==='quiz'?'quizzes':type==='course'?'playlists':'learning_paths';
+        const newValue=!item.is_lms_content;
+        await supabase.from(table).update({is_lms_content:newValue}).eq('id',item.id);
+        load();
+      };
+      
+      // Toggle verrouillé pour cours/parcours
+      const toggleLocked=async(type,item)=>{
+        const table=type==='course'?'playlists':'learning_paths';
+        const newValue=!item.is_locked;
+        await supabase.from(table).update({is_locked:newValue}).eq('id',item.id);
+        load();
+      };
+      
+      // Sélection multiple
+      const toggleSelection=(type,id)=>{
+        const key=`${type}:${id}`;
+        setSelectedItems(prev=>prev.includes(key)?prev.filter(k=>k!==key):[...prev,key]);
+      };
+      const isSelected=(type,id)=>selectedItems.includes(`${type}:${id}`);
+      const clearSelection=()=>setSelectedItems([]);
+      
+      // Actions groupées
+      const bulkSetLMS=async(value)=>{
+        for(const key of selectedItems){
+          const[type,id]=key.split(':');
+          const table=type==='video'?'videos':type==='scorm'?'scorm_modules':type==='quiz'?'quizzes':type==='course'?'playlists':'learning_paths';
+          await supabase.from(table).update({is_lms_content:value}).eq('id',id);
+        }
+        clearSelection();
+        load();
+      };
+      
+      // === GESTION DES PACKS ===
+      
+      const openPackModal=(pack=null)=>{
+        if(pack){
+          setEditingPack(pack);
+          setPackForm({name:pack.name,code:pack.code||'',description:pack.description||'',pack_type:pack.pack_type||'bundle'});
+          // Charger les contenus du pack
+          const items=packItems.filter(i=>i.pack_id===pack.id);
+          setPackContents({
+            videos:items.filter(i=>i.content_type==='video').map(i=>i.content_id),
+            scorm:items.filter(i=>i.content_type==='scorm').map(i=>i.content_id),
+            quizzes:items.filter(i=>i.content_type==='quiz').map(i=>i.content_id),
+            courses:items.filter(i=>i.content_type==='course').map(i=>i.content_id),
+            paths:items.filter(i=>i.content_type==='path').map(i=>i.content_id)
+          });
+        }else{
+          setEditingPack(null);
+          setPackForm({name:'',code:'',description:'',pack_type:'bundle'});
+          setPackContents({videos:[],scorm:[],quizzes:[],courses:[],paths:[]});
+        }
+        setPackModal(true);
+      };
+      
+      const togglePackContent=(type,id)=>{
+        const key=type==='video'?'videos':type==='scorm'?'scorm':type==='quiz'?'quizzes':type==='course'?'courses':'paths';
+        setPackContents(prev=>({
+          ...prev,
+          [key]:prev[key].includes(id)?prev[key].filter(i=>i!==id):[...prev[key],id]
+        }));
+      };
+      
+      const isInPack=(type,id)=>{
+        const key=type==='video'?'videos':type==='scorm'?'scorm':type==='quiz'?'quizzes':type==='course'?'courses':'paths';
+        return packContents[key].includes(id);
+      };
+      
+      const savePack=async()=>{
+        setSaving(true);
+        try{
+          let packId=editingPack?.id;
+          if(editingPack){
+            await supabase.from('content_packs').update({name:packForm.name,code:packForm.code||null,description:packForm.description,pack_type:packForm.pack_type}).eq('id',packId);
+            await supabase.from('content_pack_items').delete().eq('pack_id',packId);
+          }else{
+            const{data}=await supabase.from('content_packs').insert({name:packForm.name,code:packForm.code||null,description:packForm.description,pack_type:packForm.pack_type}).select().single();
+            packId=data.id;
+          }
+          // Insérer les contenus
+          const items=[];
+          packContents.videos.forEach(id=>items.push({pack_id:packId,content_type:'video',content_id:id}));
+          packContents.scorm.forEach(id=>items.push({pack_id:packId,content_type:'scorm',content_id:id}));
+          packContents.quizzes.forEach(id=>items.push({pack_id:packId,content_type:'quiz',content_id:id}));
+          packContents.courses.forEach(id=>items.push({pack_id:packId,content_type:'course',content_id:id}));
+          packContents.paths.forEach(id=>items.push({pack_id:packId,content_type:'path',content_id:id}));
+          if(items.length>0)await supabase.from('content_pack_items').insert(items);
+          setPackModal(false);
+          load();
+        }catch(e){console.error(e);}
+        setSaving(false);
+      };
+      
+      const deletePack=async(id)=>{
+        if(!confirm('Supprimer ce pack ?'))return;
+        await supabase.from('content_packs').delete().eq('id',id);
+        load();
+      };
+      
+      // Compter les contenus d'un pack
+      const getPackStats=(packId)=>{
+        const items=packItems.filter(i=>i.pack_id===packId);
+        return{
+          videos:items.filter(i=>i.content_type==='video').length,
+          scorm:items.filter(i=>i.content_type==='scorm').length,
+          quizzes:items.filter(i=>i.content_type==='quiz').length,
+          courses:items.filter(i=>i.content_type==='course').length,
+          paths:items.filter(i=>i.content_type==='path').length,
+          total:items.length
+        };
+      };
+      
+      const resetForm=()=>setForm({title:'',vimeo_id:'',duration:'',category_id:'',description:'',sort_order:'',tags:'',theme_id:'',sub_theme_id:'',thumbnail_url:''});
+      const resetScormForm=()=>{setScormForm({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'sco_0.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:''});setScormZipFile(null);};
 
       // Gestion SCORM
       const handleScormSave=async()=>{
@@ -2996,51 +3189,136 @@
         setChapters(chapters.filter(c=>c.id!==id));
       };
 
-      const filtered=filterBySource(videos.filter(v=>!search||v.title?.toLowerCase().includes(search.toLowerCase())),'video');
-      const filteredScorm=filterBySource(scormModules.filter(m=>!search||m.title?.toLowerCase().includes(search.toLowerCase())),'scorm');
+      const filtered=filterBySource(videos,'video');
+      const filteredScorm=filterBySource(scormModules,'scorm');
+      const filteredQuizzes=filterBySource(quizzes,'quiz');
+      const filteredCourses=filterBySource(courses,'course');
+      const filteredPaths=filterBySource(paths,'path');
       
       // Stats par source
       const videoStats={total:videos.length,center:videos.filter(v=>!v.is_lms_content).length,lms:videos.filter(v=>v.is_lms_content).length,licensed:videos.filter(v=>v.is_lms_content&&isLicensed('video',v.id)).length};
       const scormStats={total:scormModules.length,center:scormModules.filter(m=>!m.is_lms_content).length,lms:scormModules.filter(m=>m.is_lms_content).length,licensed:scormModules.filter(m=>m.is_lms_content&&isLicensed('scorm',m.id)).length};
+      const quizStats={total:quizzes.length,center:quizzes.filter(q=>!q.is_lms_content).length,lms:quizzes.filter(q=>q.is_lms_content).length,licensed:quizzes.filter(q=>q.is_lms_content&&isLicensed('quiz',q.id)).length};
+      const courseStats={total:courses.length,center:courses.filter(c=>!c.is_lms_content).length,lms:courses.filter(c=>c.is_lms_content).length,licensed:courses.filter(c=>c.is_lms_content&&isLicensed('course',c.id)).length};
+      const pathStats={total:paths.length,center:paths.filter(p=>!p.is_lms_content).length,lms:paths.filter(p=>p.is_lms_content).length,licensed:paths.filter(p=>p.is_lms_content&&isLicensed('path',p.id)).length};
+      
+      // Stats actives selon onglet
+      const activeStats=activeTab==='videos'?videoStats:activeTab==='scorm'?scormStats:activeTab==='quizzes'?quizStats:activeTab==='courses'?courseStats:activeTab==='paths'?pathStats:{total:0};
       
       if(!can('manage_videos')&&!can('view_videos'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
 
       const moduleTypeLabels={scorm12:'SCORM 1.2',scorm2004:'SCORM 2004',xapi:'xAPI (Tin Can)',cmi5:'cmi5'};
       const canEdit=can('manage_videos');
+      const canEditQuiz=can('manage_quizzes');
+      const canEditCourse=can('manage_playlists');
 
       return<div>
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
           <div>
             <h1 className="text-2xl font-bold">Bibliothèque</h1>
             {!isSuperAdmin&&<p className="text-sm text-gray-400">Vos contenus + Catalogue LMS</p>}
+            {isSuperAdmin&&<p className="text-sm text-gray-400">Gestion complète des contenus et du catalogue LMS</p>}
           </div>
           <div className="flex gap-2">
+            {isSuperAdmin&&selectedItems.length>0&&<>
+              <span className="px-3 py-1.5 bg-indigo-600 rounded-lg text-sm">{selectedItems.length} sélectionné(s)</span>
+              <Button variant="secondary" size="sm" onClick={()=>bulkSetLMS(true)}>📦 Marquer LMS</Button>
+              <Button variant="secondary" size="sm" onClick={()=>bulkSetLMS(false)}>Retirer LMS</Button>
+              <Button variant="ghost" size="sm" onClick={clearSelection}>✕</Button>
+            </>}
+            {categories.length>0&&<Button variant="secondary" icon="FolderTree" onClick={()=>setShowTaxonomyPanel(!showTaxonomyPanel)}>{showTaxonomyPanel?'Masquer':'Catégories'}</Button>}
             {activeTab==='videos'&&canEdit&&<><Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button><Button icon="Plus" onClick={()=>{resetForm();setEditing(null);setModal(true);}}>Ajouter vidéo</Button></>}
             {activeTab==='scorm'&&canEdit&&<Button icon="Plus" onClick={()=>{resetScormForm();setScormEditing(null);setScormModal(true);}}>Ajouter SCORM</Button>}
+            {activeTab==='quizzes'&&<Button icon="ExternalLink" onClick={()=>window.location.hash='quizzes'}>Gérer les Quiz</Button>}
+            {activeTab==='courses'&&canEditCourse&&<Button icon="ExternalLink" onClick={()=>window.location.hash='playlists'}>Gérer les Cours</Button>}
+            {activeTab==='paths'&&canEditCourse&&<Button icon="ExternalLink" onClick={()=>window.location.hash='paths'}>Gérer les Parcours</Button>}
           </div>
         </div>
         
-        <Tabs tabs={[{id:'videos',label:`Vidéos (${videos.length})`,icon:'Film'},{id:'scorm',label:`SCORM (${scormModules.length})`,icon:'Package'}]} active={activeTab} onChange={setActiveTab}/>
+        <Tabs tabs={[
+          {id:'videos',label:`Vidéos (${videos.length})`,icon:'Film'},
+          {id:'scorm',label:`SCORM (${scormModules.length})`,icon:'Package'},
+          {id:'quizzes',label:`Quiz (${quizzes.length})`,icon:'HelpCircle'},
+          {id:'courses',label:`Cours (${courses.length})`,icon:'BookOpen'},
+          {id:'paths',label:`Parcours (${paths.length})`,icon:'Route'},
+          ...(isSuperAdmin?[{id:'packs',label:`Packs (${packs.length})`,icon:'Boxes'}]:[])
+        ]} active={activeTab} onChange={t=>{setActiveTab(t);clearSelection();}}/>
+        ]} active={activeTab} onChange={setActiveTab}/>
         
-        {/* Filtres par source */}
-        {!isSuperAdmin&&<Card className="p-4 mb-4">
+        {/* Filtres combinés */}
+        <Card className="p-4 mb-4">
           <div className="flex flex-wrap items-center gap-4">
-            <span className="text-sm text-gray-400">Filtrer :</span>
-            <div className="flex flex-wrap gap-2">
-              <button onClick={()=>setFilterSource('all')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='all'?'bg-indigo-600':'bg-gray-700 hover:bg-gray-600'}`}>Tout ({activeTab==='videos'?videoStats.total:scormStats.total})</button>
-              <button onClick={()=>setFilterSource('center')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='center'?'bg-indigo-600':'bg-gray-700 hover:bg-gray-600'}`}>📁 Mes contenus ({activeTab==='videos'?videoStats.center:scormStats.center})</button>
-              <button onClick={()=>setFilterSource('lms')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='lms'?'bg-indigo-600':'bg-gray-700 hover:bg-gray-600'}`}>📦 Catalogue LMS ({activeTab==='videos'?videoStats.lms:scormStats.lms})</button>
-              <button onClick={()=>setFilterSource('licensed')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='licensed'?'bg-green-600':'bg-gray-700 hover:bg-gray-600'}`}>✓ Sous licence ({activeTab==='videos'?videoStats.licensed:scormStats.licensed})</button>
-              <button onClick={()=>setFilterSource('unlicensed')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='unlicensed'?'bg-red-600':'bg-gray-700 hover:bg-gray-600'}`}>🔒 Non licencié ({activeTab==='videos'?videoStats.lms-videoStats.licensed:scormStats.lms-scormStats.licensed})</button>
+            {/* Filtre par source */}
+            {!isSuperAdmin&&<>
+              <span className="text-sm text-gray-400">Source :</span>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={()=>setFilterSource('all')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='all'?'bg-indigo-600':'bg-gray-700 hover:bg-gray-600'}`}>Tout ({activeStats.total})</button>
+                <button onClick={()=>setFilterSource('center')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='center'?'bg-indigo-600':'bg-gray-700 hover:bg-gray-600'}`}>📁 Mes contenus</button>
+                <button onClick={()=>setFilterSource('lms')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='lms'?'bg-indigo-600':'bg-gray-700 hover:bg-gray-600'}`}>📦 Catalogue LMS</button>
+                <button onClick={()=>setFilterSource('licensed')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='licensed'?'bg-green-600':'bg-gray-700 hover:bg-gray-600'}`}>✓ Sous licence</button>
+                <button onClick={()=>setFilterSource('unlicensed')} className={`px-3 py-1.5 rounded-lg text-sm transition ${filterSource==='unlicensed'?'bg-red-600':'bg-gray-700 hover:bg-gray-600'}`}>🔒 Non licencié</button>
+              </div>
+            </>}
+            
+            {/* Filtre par catégorie */}
+            {categories.length>0&&<>
+              <span className="text-sm text-gray-400 ml-4">Catégorie :</span>
+              <select value={filterCategory} onChange={e=>{setFilterCategory(e.target.value);setFilterTheme('');}} className="px-3 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-sm">
+                <option value="">Toutes</option>
+                {categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {filterCategory&&getThemesForCategory(filterCategory).length>0&&<>
+                <span className="text-sm text-gray-400">Thème :</span>
+                <select value={filterTheme} onChange={e=>setFilterTheme(e.target.value)} className="px-3 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-sm">
+                  <option value="">Tous</option>
+                  {getThemesForCategory(filterCategory).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </>}
+              {(filterCategory||filterTheme)&&<button onClick={()=>{setFilterCategory('');setFilterTheme('');}} className="text-xs text-gray-400 hover:text-white">✕ Effacer</button>}
+            </>}
+            
+            {/* Recherche */}
+            <div className="flex-1 min-w-48">
+              <Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)} className="!py-1.5"/>
             </div>
           </div>
-        </Card>}
+        </Card>
+        
+        <div className="flex gap-4">
+          {/* Panel latéral taxonomie */}
+          {showTaxonomyPanel&&<div className="w-64 shrink-0">
+            <Card className="p-3 sticky top-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-sm">Catégories</h3>
+                {(isSuperAdmin||can('manage_videos'))&&<button onClick={()=>setTaxonomyModal({type:'category'})} className="p-1 hover:bg-gray-700 rounded"><Icon name="Plus" size={14}/></button>}
+              </div>
+              <div className="space-y-1 max-h-96 overflow-y-auto">
+                <button onClick={()=>{setFilterCategory('');setFilterTheme('');}} className={`w-full text-left px-2 py-1.5 rounded text-sm ${!filterCategory?'bg-indigo-600':'hover:bg-gray-700'}`}>Toutes les catégories</button>
+                {categories.map(cat=>{
+                  const catThemes=getThemesForCategory(cat.id);
+                  const isExpanded=filterCategory===cat.id;
+                  return<div key={cat.id}>
+                    <button onClick={()=>setFilterCategory(isExpanded?'':cat.id)} className={`w-full text-left px-2 py-1.5 rounded text-sm flex items-center gap-2 ${filterCategory===cat.id?'bg-indigo-600':'hover:bg-gray-700'}`}>
+                      <span className="w-2 h-2 rounded-full" style={{backgroundColor:cat.color||'#6366f1'}}/>
+                      <span className="flex-1 truncate">{cat.name}</span>
+                      {catThemes.length>0&&<Icon name={isExpanded?'ChevronDown':'ChevronRight'} size={12}/>}
+                    </button>
+                    {isExpanded&&catThemes.length>0&&<div className="ml-4 mt-1 space-y-1">
+                      {catThemes.map(th=><button key={th.id} onClick={()=>setFilterTheme(filterTheme===th.id?'':th.id)} className={`w-full text-left px-2 py-1 rounded text-xs ${filterTheme===th.id?'bg-indigo-500':'hover:bg-gray-700'}`}>{th.name}</button>)}
+                    </div>}
+                  </div>;
+                })}
+              </div>
+            </Card>
+          </div>}
+          
+          {/* Contenu principal */}
+          <div className="flex-1 min-w-0">
         
         {/* ONGLET VIDÉOS */}
         {activeTab==='videos'&&<>
-          <Card className="p-4 mb-6"><Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)}/></Card>
-          {filtered.length===0?<Empty icon="Film" title="Aucune vidéo" desc={filterSource!=='all'?'Essayez un autre filtre':undefined}/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{filtered.map(v=>{const licensed=!v.is_lms_content||isLicensed('video',v.id);const isOwn=!v.is_lms_content;return<Card key={v.id} className={`overflow-hidden ${!licensed&&!isOwn?'opacity-80':''}`}><div className="aspect-video bg-gray-900 relative">{v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:<iframe src={`https://player.vimeo.com/video/${v.vimeo_id}?background=1`} className="w-full h-full" allow="autoplay"/>}<div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>{v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}{v.is_lms_content?<div className={`absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒 Non licencié'}</div>:<div className="absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium bg-gray-600">📁 Mon contenu</div>}</div><div className="p-4"><h3 className="font-semibold truncate">{v.title}</h3><div className="flex flex-wrap gap-1 mt-2">{v.category&&<span className="px-2 py-1 bg-gray-700 rounded text-xs">{v.category}</span>}{v.theme&&<span className="px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded text-xs">{v.theme}</span>}</div><div className="flex flex-wrap gap-2 mt-3">{(licensed||isOwn)&&<Button variant="ghost" size="sm" icon="Settings" onClick={()=>openDetailModal(v)}>Ressources</Button>}{canEdit&&isOwn&&<><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category:v.category||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme:v.theme||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(v.id)}/></>}{isSuperAdmin&&v.is_lms_content&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category:v.category||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme:v.theme||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button>}{!licensed&&!isOwn&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>setRequestLicenseModal({type:'video',item:v})}>Demander licence</Button>}</div></div></Card>})}</div>}
+          {filtered.length===0?<Empty icon="Film" title="Aucune vidéo" desc={filterSource!=='all'||filterCategory?'Essayez d\'autres filtres':undefined}/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{filtered.map(v=>{const licensed=!v.is_lms_content||isLicensed('video',v.id);const isOwn=!v.is_lms_content;return<Card key={v.id} className={`overflow-hidden ${!licensed&&!isOwn?'opacity-80':''}`}><div className="aspect-video bg-gray-900 relative">{v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:<iframe src={`https://player.vimeo.com/video/${v.vimeo_id}?background=1`} className="w-full h-full" allow="autoplay"/>}<div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>{v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}{v.is_lms_content?<div className={`absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒 Non licencié'}</div>:<div className="absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium bg-gray-600">📁 Mon contenu</div>}</div><div className="p-4"><h3 className="font-semibold truncate">{v.title}</h3><div className="flex flex-wrap gap-1 mt-2">{v.content_categories?.name&&<span className="px-2 py-1 rounded text-xs" style={{backgroundColor:(v.content_categories?.color||'#6366f1')+'30',color:v.content_categories?.color||'#6366f1'}}>{v.content_categories.name}</span>}{v.category&&!v.content_categories&&<span className="px-2 py-1 bg-gray-700 rounded text-xs">{v.category}</span>}{v.theme&&<span className="px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded text-xs">{v.theme}</span>}</div><div className="flex flex-wrap gap-2 mt-3">{(licensed||isOwn)&&<Button variant="ghost" size="sm" icon="Settings" onClick={()=>openDetailModal(v)}>Ressources</Button>}{canEdit&&isOwn&&<><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category_id:v.category_id||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme_id:v.theme_id||'',sub_theme_id:v.sub_theme_id||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(v.id)}/></>}{isSuperAdmin&&v.is_lms_content&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category_id:v.category_id||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme_id:v.theme_id||'',sub_theme_id:v.sub_theme_id||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button>}{!licensed&&!isOwn&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>setRequestLicenseModal({type:'video',item:v})}>Demander licence</Button>}</div></div></Card>})}</div>}
         </>}
         
         {/* ONGLET SCORM */}
@@ -3081,11 +3359,196 @@
           </div>}
         </>}
         
+        {/* ONGLET QUIZ */}
+        {activeTab==='quizzes'&&<>
+          {filteredQuizzes.length===0?<Empty icon="HelpCircle" title="Aucun quiz" desc={filterSource!=='all'||filterCategory?'Essayez d\'autres filtres':'Créez des quiz dans la page Quiz'}/>:
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredQuizzes.map(q=>{const licensed=!q.is_lms_content||isLicensed('quiz',q.id);const isOwn=!q.is_lms_content;return<Card key={q.id} className={`p-4 ${!licensed&&!isOwn?'opacity-80':''}`}>
+              {isSuperAdmin&&<div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-700">
+                <label className="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={q.is_lms_content} onChange={()=>toggleLMS('quiz',q)} className="rounded"/>📦 LMS</label>
+                <label className="flex items-center gap-2 text-xs cursor-pointer ml-auto"><input type="checkbox" checked={isSelected('quiz',q.id)} onChange={()=>toggleSelection('quiz',q.id)} className="rounded bg-indigo-600"/>Sélect.</label>
+              </div>}
+              <div className="flex items-start gap-3 mb-3">
+                <div className={`w-12 h-12 rounded-lg flex items-center justify-center shrink-0 ${isOwn?'bg-cyan-500/20':licensed?'bg-cyan-500/20':'bg-red-500/20'}`}>
+                  <Icon name="HelpCircle" size={24} className={isOwn?'text-cyan-400':licensed?'text-cyan-400':'text-red-400'}/>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold truncate">{q.title}</h3>
+                  <p className="text-sm text-gray-400">{q.passing_score||70}% pour réussir</p>
+                </div>
+                {!isSuperAdmin&&(q.is_lms_content?<span className={`px-2 py-1 rounded text-xs ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒'}</span>:<span className="px-2 py-1 bg-gray-600 rounded text-xs">📁</span>)}
+              </div>
+              <div className="flex flex-wrap gap-1 mb-3">
+                {q.content_categories?.name&&<span className="px-2 py-1 rounded text-xs" style={{backgroundColor:(q.content_categories?.color||'#06b6d4')+'30',color:q.content_categories?.color||'#06b6d4'}}>{q.content_categories.name}</span>}
+                {q.time_limit>0&&<span className="px-2 py-1 bg-gray-700 rounded text-xs"><Icon name="Clock" size={10} className="inline mr-1"/>{q.time_limit} min</span>}
+              </div>
+              {q.description&&<p className="text-sm text-gray-400 line-clamp-2 mb-3">{q.description}</p>}
+              <div className="flex flex-wrap gap-2">
+                {(licensed||isOwn||isSuperAdmin)&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>window.location.hash='quizzes'}>Voir détails</Button>}
+                {!licensed&&!isOwn&&!isSuperAdmin&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>setRequestLicenseModal({type:'quiz',item:q})}>Demander licence</Button>}
+              </div>
+            </Card>})}
+          </div>}
+        </>}
+        
+        {/* ONGLET COURS */}
+        {activeTab==='courses'&&<>
+          {filteredCourses.length===0?<Empty icon="BookOpen" title="Aucun cours" desc={filterSource!=='all'||filterCategory?'Essayez d\'autres filtres':'Créez des cours dans la page Cours'}/>:
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredCourses.map(c=>{const licensed=!c.is_lms_content||isLicensed('course',c.id);const isOwn=!c.is_lms_content;const isLocked=c.is_lms_content&&c.is_locked;return<Card key={c.id} className={`p-4 ${!licensed&&!isOwn?'opacity-80':''}`}>
+              {isSuperAdmin&&<div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-700">
+                <label className="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={c.is_lms_content} onChange={()=>toggleLMS('course',c)} className="rounded"/>📦 LMS</label>
+                {c.is_lms_content&&<label className="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={c.is_locked} onChange={()=>toggleLocked('course',c)} className="rounded"/>🔒 Verrouillé</label>}
+                <label className="flex items-center gap-2 text-xs cursor-pointer ml-auto"><input type="checkbox" checked={isSelected('course',c.id)} onChange={()=>toggleSelection('course',c.id)} className="rounded bg-indigo-600"/>Sélect.</label>
+              </div>}
+              <div className="flex items-start gap-3 mb-3">
+                <div className={`w-12 h-12 rounded-lg flex items-center justify-center shrink-0 ${isOwn?'bg-green-500/20':licensed?'bg-green-500/20':'bg-red-500/20'}`}>
+                  <Icon name="BookOpen" size={24} className={isOwn?'text-green-400':licensed?'text-green-400':'text-red-400'}/>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold truncate">{c.title}</h3>
+                  <p className="text-sm text-gray-400">{c.is_published?'Publié':'Brouillon'}</p>
+                </div>
+                {!isSuperAdmin&&(c.is_lms_content?<span className={`px-2 py-1 rounded text-xs ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?(isLocked?'📦🔒':'📦 LMS'):'🔒'}</span>:<span className="px-2 py-1 bg-gray-600 rounded text-xs">📁</span>)}
+              </div>
+              <div className="flex flex-wrap gap-1 mb-3">
+                {c.content_categories?.name&&<span className="px-2 py-1 rounded text-xs" style={{backgroundColor:(c.content_categories?.color||'#22c55e')+'30',color:c.content_categories?.color||'#22c55e'}}>{c.content_categories.name}</span>}
+              </div>
+              {c.description&&<p className="text-sm text-gray-400 line-clamp-2 mb-3">{c.description}</p>}
+              <div className="flex flex-wrap gap-2">
+                {(licensed||isOwn||isSuperAdmin)&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>window.location.hash='playlists'}>Voir détails</Button>}
+                {!licensed&&!isOwn&&!isSuperAdmin&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>setRequestLicenseModal({type:'course',item:c})}>Demander licence</Button>}
+              </div>
+            </Card>})}
+          </div>}
+        </>}
+        
+        {/* ONGLET PARCOURS */}
+        {activeTab==='paths'&&<>
+          {filteredPaths.length===0?<Empty icon="Route" title="Aucun parcours" desc={filterSource!=='all'||filterCategory?'Essayez d\'autres filtres':'Créez des parcours dans la page Parcours'}/>:
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredPaths.map(p=>{const licensed=!p.is_lms_content||isLicensed('path',p.id);const isOwn=!p.is_lms_content;const isLocked=p.is_lms_content&&p.is_locked;const courseCount=p.learning_path_courses?.[0]?.count||0;return<Card key={p.id} className={`p-4 ${!licensed&&!isOwn?'opacity-80':''}`}>
+              {isSuperAdmin&&<div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-700">
+                <label className="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={p.is_lms_content} onChange={()=>toggleLMS('path',p)} className="rounded"/>📦 LMS</label>
+                {p.is_lms_content&&<label className="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={p.is_locked} onChange={()=>toggleLocked('path',p)} className="rounded"/>🔒 Verrouillé</label>}
+                <label className="flex items-center gap-2 text-xs cursor-pointer ml-auto"><input type="checkbox" checked={isSelected('path',p.id)} onChange={()=>toggleSelection('path',p.id)} className="rounded bg-indigo-600"/>Sélect.</label>
+              </div>}
+              <div className="flex items-start gap-3 mb-3">
+                <div className={`w-12 h-12 rounded-lg flex items-center justify-center shrink-0 ${isOwn?'bg-purple-500/20':licensed?'bg-purple-500/20':'bg-red-500/20'}`}>
+                  <Icon name="Route" size={24} className={isOwn?'text-purple-400':licensed?'text-purple-400':'text-red-400'}/>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold truncate">{p.title}</h3>
+                  <p className="text-sm text-gray-400">{courseCount} cours • {p.is_published?'Publié':'Brouillon'}</p>
+                </div>
+                {!isSuperAdmin&&(p.is_lms_content?<span className={`px-2 py-1 rounded text-xs ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?(isLocked?'📦🔒':'📦 LMS'):'🔒'}</span>:<span className="px-2 py-1 bg-gray-600 rounded text-xs">📁</span>)}
+              </div>
+              <div className="flex flex-wrap gap-1 mb-3">
+                {p.content_categories?.name&&<span className="px-2 py-1 rounded text-xs" style={{backgroundColor:(p.content_categories?.color||'#a855f7')+'30',color:p.content_categories?.color||'#a855f7'}}>{p.content_categories.name}</span>}
+                {p.estimated_duration&&<span className="px-2 py-1 bg-gray-700 rounded text-xs"><Icon name="Clock" size={10} className="inline mr-1"/>{Math.round(p.estimated_duration/60)}h</span>}
+              </div>
+              {p.description&&<p className="text-sm text-gray-400 line-clamp-2 mb-3">{p.description}</p>}
+              <div className="flex flex-wrap gap-2">
+                {(licensed||isOwn||isSuperAdmin)&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>window.location.hash='paths'}>Voir détails</Button>}
+                {!licensed&&!isOwn&&!isSuperAdmin&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>setRequestLicenseModal({type:'path',item:p})}>Demander licence</Button>}
+              </div>
+            </Card>})}
+          </div>}
+        </>}
+        
+        {/* ONGLET PACKS (Super Admin) */}
+        {activeTab==='packs'&&isSuperAdmin&&<>
+          <div className="flex justify-end mb-4">
+            <Button icon="Plus" onClick={()=>openPackModal()}>Créer un pack</Button>
+          </div>
+          {packs.length===0?<Empty icon="Boxes" title="Aucun pack" desc="Créez des packs pour regrouper vos contenus LMS"/>:
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {packs.map(p=>{const stats=getPackStats(p.id);return<Card key={p.id} className="p-4">
+              <div className="flex items-start gap-3 mb-3">
+                <div className="w-12 h-12 bg-indigo-500/20 rounded-lg flex items-center justify-center shrink-0">
+                  <Icon name="Boxes" size={24} className="text-indigo-400"/>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold truncate">{p.name}</h3>
+                  <p className="text-sm text-gray-400">{p.code||'Sans code'} • {p.pack_type}</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 mb-3 text-xs">
+                {stats.videos>0&&<span className="px-2 py-1 bg-gray-700 rounded">{stats.videos} vidéos</span>}
+                {stats.scorm>0&&<span className="px-2 py-1 bg-gray-700 rounded">{stats.scorm} SCORM</span>}
+                {stats.quizzes>0&&<span className="px-2 py-1 bg-gray-700 rounded">{stats.quizzes} quiz</span>}
+                {stats.courses>0&&<span className="px-2 py-1 bg-gray-700 rounded">{stats.courses} cours</span>}
+                {stats.paths>0&&<span className="px-2 py-1 bg-gray-700 rounded">{stats.paths} parcours</span>}
+                {stats.total===0&&<span className="px-2 py-1 bg-red-500/20 text-red-400 rounded">Vide</span>}
+              </div>
+              {p.description&&<p className="text-sm text-gray-400 line-clamp-2 mb-3">{p.description}</p>}
+              <div className="flex flex-wrap gap-2">
+                <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>openPackModal(p)}>Modifier</Button>
+                <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>deletePack(p.id)}/>
+              </div>
+            </Card>})}
+          </div>}
+        </>}
+        
+          </div>{/* Fin contenu principal */}
+        </div>{/* Fin flex container */}
+        
         {/* Modal édition vidéo */}
-        <Modal isOpen={modal} onClose={()=>{setModal(false);resetForm();setEditing(null);}} title={editing?'Modifier':'Ajouter'} size="lg"><div className="space-y-4"><div className="grid grid-cols-2 gap-4"><Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><Input label="ID Vimeo *" value={form.vimeo_id} onChange={e=>setForm({...form,vimeo_id:e.target.value})} placeholder="123456789"/></div><div className="grid grid-cols-3 gap-4"><Input label="Durée" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="5:30"/><Input label="Ordre" type="number" value={form.sort_order} onChange={e=>setForm({...form,sort_order:e.target.value})}/><Input label="Catégorie" value={form.category} onChange={e=>setForm({...form,category:e.target.value})}/></div><div className="grid grid-cols-2 gap-4"><Input label="Thème" value={form.theme} onChange={e=>setForm({...form,theme:e.target.value})}/><Input label="Tags" value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="tag1, tag2"/></div><Input label="Miniature URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setModal(false);resetForm();setEditing(null);}}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
+        <Modal isOpen={modal} onClose={()=>{setModal(false);resetForm();setEditing(null);}} title={editing?'Modifier':'Ajouter'} size="lg"><div className="space-y-4"><div className="grid grid-cols-2 gap-4"><Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><Input label="ID Vimeo *" value={form.vimeo_id} onChange={e=>setForm({...form,vimeo_id:e.target.value})} placeholder="123456789"/></div><div className="grid grid-cols-3 gap-4"><Input label="Durée" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="5:30"/><Input label="Ordre" type="number" value={form.sort_order} onChange={e=>setForm({...form,sort_order:e.target.value})}/><Select label="Catégorie" value={form.category_id} onChange={e=>{setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''});}} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/></div><div className="grid grid-cols-2 gap-4"><Select label="Thème" value={form.theme_id} onChange={e=>{setForm({...form,theme_id:e.target.value,sub_theme_id:''});}} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]}/><Input label="Tags" value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="tag1, tag2"/></div><Input label="Miniature URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setModal(false);resetForm();setEditing(null);}}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
         
         {/* Modal import */}
         <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer" size="lg"><div className="space-y-4"><div className="bg-gray-700/50 rounded-lg p-4"><p className="text-sm text-gray-400 mb-2">Colonnes : Titre*, ID Vimeo*, Durée, Ordre, Tags, Catégorie, Thème</p><Button variant="ghost" size="sm" icon="Download" onClick={downloadTemplate}>Template</Button></div><div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center"><input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".xlsx,.xls,.csv" className="hidden"/><Icon name="Film" size={48} className="mx-auto text-gray-500 mb-4"/><Button variant="secondary" onClick={()=>fileInputRef.current?.click()}>Parcourir</Button></div>{importData.length>0&&!importResult&&<div className="max-h-48 overflow-y-auto bg-gray-700/50 rounded-lg p-2">{importData.filter(d=>d._valid).map((row,i)=><div key={i} className="text-sm py-1">{row.title}</div>)}</div>}{importResult&&<Alert type={importResult.errors>0?'warning':'success'}>{importResult.created>0&&<span className="text-green-400">✅ {importResult.created} créée(s) </span>}{importResult.updated>0&&<span className="text-blue-400">🔄 {importResult.updated} mise(s) à jour </span>}{importResult.errors>0&&<span className="text-red-400">❌ {importResult.errors} erreur(s)</span>}</Alert>}<div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>{importData.length>0&&!importResult&&<Button icon="Upload" onClick={handleImport} loading={importLoading}>Importer {importData.filter(d=>d._valid).length}</Button>}</div></div></Modal>
+        
+        {/* Modal gestion pack */}
+        <Modal isOpen={packModal} onClose={()=>setPackModal(false)} title={editingPack?'Modifier le pack':'Créer un pack'} size="xl">
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-4">
+              <Input label="Nom *" value={packForm.name} onChange={e=>setPackForm({...packForm,name:e.target.value})}/>
+              <Input label="Code" value={packForm.code} onChange={e=>setPackForm({...packForm,code:e.target.value})} placeholder="PACK_001"/>
+              <Select label="Type" value={packForm.pack_type} onChange={e=>setPackForm({...packForm,pack_type:e.target.value})} options={[{value:'bundle',label:'Bundle'},{value:'custom',label:'Personnalisé'}]}/>
+            </div>
+            <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={packForm.description} onChange={e=>setPackForm({...packForm,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div>
+            
+            <div className="border-t border-gray-700 pt-4">
+              <h4 className="font-semibold mb-3">Contenus du pack (cliquez pour ajouter/retirer)</h4>
+              <Tabs tabs={[
+                {id:'pk-videos',label:`Vidéos (${packContents.videos.length})`,icon:'Film'},
+                {id:'pk-scorm',label:`SCORM (${packContents.scorm.length})`,icon:'Package'},
+                {id:'pk-quizzes',label:`Quiz (${packContents.quizzes.length})`,icon:'HelpCircle'},
+                {id:'pk-courses',label:`Cours (${packContents.courses.length})`,icon:'BookOpen'},
+                {id:'pk-paths',label:`Parcours (${packContents.paths.length})`,icon:'Route'}
+              ]} active={activeTab.startsWith('pk-')?activeTab:'pk-videos'} onChange={setActiveTab}/>
+              
+              <div className="max-h-64 overflow-y-auto mt-3 space-y-1">
+                {activeTab==='pk-videos'&&videos.filter(v=>v.is_lms_content).map(v=><label key={v.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer ${isInPack('video',v.id)?'bg-indigo-600/30':'hover:bg-gray-700'}`}>
+                  <input type="checkbox" checked={isInPack('video',v.id)} onChange={()=>togglePackContent('video',v.id)} className="rounded"/>
+                  <Icon name="Film" size={16}/><span className="truncate">{v.title}</span>
+                </label>)}
+                {activeTab==='pk-scorm'&&scormModules.filter(m=>m.is_lms_content).map(m=><label key={m.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer ${isInPack('scorm',m.id)?'bg-indigo-600/30':'hover:bg-gray-700'}`}>
+                  <input type="checkbox" checked={isInPack('scorm',m.id)} onChange={()=>togglePackContent('scorm',m.id)} className="rounded"/>
+                  <Icon name="Package" size={16}/><span className="truncate">{m.title}</span>
+                </label>)}
+                {activeTab==='pk-quizzes'&&quizzes.filter(q=>q.is_lms_content).map(q=><label key={q.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer ${isInPack('quiz',q.id)?'bg-indigo-600/30':'hover:bg-gray-700'}`}>
+                  <input type="checkbox" checked={isInPack('quiz',q.id)} onChange={()=>togglePackContent('quiz',q.id)} className="rounded"/>
+                  <Icon name="HelpCircle" size={16}/><span className="truncate">{q.title}</span>
+                </label>)}
+                {activeTab==='pk-courses'&&courses.filter(c=>c.is_lms_content).map(c=><label key={c.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer ${isInPack('course',c.id)?'bg-indigo-600/30':'hover:bg-gray-700'}`}>
+                  <input type="checkbox" checked={isInPack('course',c.id)} onChange={()=>togglePackContent('course',c.id)} className="rounded"/>
+                  <Icon name="BookOpen" size={16}/><span className="truncate">{c.title}</span>
+                </label>)}
+                {activeTab==='pk-paths'&&paths.filter(p=>p.is_lms_content).map(p=><label key={p.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer ${isInPack('path',p.id)?'bg-indigo-600/30':'hover:bg-gray-700'}`}>
+                  <input type="checkbox" checked={isInPack('path',p.id)} onChange={()=>togglePackContent('path',p.id)} className="rounded"/>
+                  <Icon name="Route" size={16}/><span className="truncate">{p.title}</span>
+                </label>)}
+              </div>
+            </div>
+            
+            <div className="flex justify-end gap-3 pt-4 border-t border-gray-700">
+              <Button variant="secondary" onClick={()=>setPackModal(false)}>Annuler</Button>
+              <Button onClick={savePack} loading={saving} disabled={!packForm.name}>Enregistrer</Button>
+            </div>
+          </div>
+        </Modal>
         
         {/* Modal ressources (documents + chapitres) */}
         <Modal isOpen={!!detailModal} onClose={()=>setDetailModal(null)} title={`Ressources: ${detailModal?.title}`} size="xl">
