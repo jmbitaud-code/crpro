@@ -3127,8 +3127,9 @@
 
     // Quiz Management avec types de questions variés
     // Quiz Management - Nouvelle interface
+    // ==================== QUIZ & BANQUE DE QUESTIONS ====================
     function QuizzesPage(){
-      const{center,isSuperAdmin,can,profile}=useAuth();
+      const{can,profile}=useAuth();
       const[loading,setLoading]=useState(true);
       const[activeTab,setActiveTab]=useState('questions');
       
@@ -3140,160 +3141,193 @@
       const[themes,setThemes]=useState([]);
       const[subThemes,setSubThemes]=useState([]);
       
-      // Catégories
-      const[newCategory,setNewCategory]=useState('');
-      const[newTheme,setNewTheme]=useState('');
-      const[newSubTheme,setNewSubTheme]=useState({theme:'',name:''});
-      
-      // Questions - Formulaire
+      // États UI
+      const[expandedCats,setExpandedCats]=useState({});
+      const[expandedThemes,setExpandedThemes]=useState({});
       const[editingQuestion,setEditingQuestion]=useState(null);
       const[uploadingMedia,setUploadingMedia]=useState(false);
-      const[bankFilter,setBankFilter]=useState({category:'all',theme:'all',sub_theme:'all',difficulty:'all',search:''});
+      const[saving,setSaving]=useState(false);
+      const[showStats,setShowStats]=useState(false);
+      
+      // Filtres arborescence (checkboxes)
+      const[filterChecked,setFilterChecked]=useState({categories:{},themes:{},subThemes:{}});
+      const[filterSearch,setFilterSearch]=useState('');
+      const[filterDifficulty,setFilterDifficulty]=useState('all');
+      const[showFilterPanel,setShowFilterPanel]=useState(false);
+      
+      // Mini-modals pour création à la volée
+      const[quickAdd,setQuickAdd]=useState(null); // {type:'category'|'theme'|'subtheme', parentId?}
+      const[quickAddValue,setQuickAddValue]=useState('');
       
       // Quiz
       const[quizModal,setQuizModal]=useState(false);
       const[editingQuiz,setEditingQuiz]=useState(null);
-      const[quizForm,setQuizForm]=useState({
-        title:'',description:'',playlist_id:'',passing_score:70,is_required:false,
-        max_attempts:0,time_limit:0,shuffle_questions:false,shuffle_answers:false,
-        show_answers:true,show_feedback:true,allow_review:true
-      });
-      const[selectedQuestions,setSelectedQuestions]=useState([]);
+      const[quizForm,setQuizForm]=useState({title:'',description:'',playlist_id:'',passing_score:70,is_required:false,max_attempts:0,time_limit:0,shuffle_questions:false,shuffle_answers:false,show_answers:true,show_feedback:true,allow_review:true});
       const[quizQuestions,setQuizQuestions]=useState([]);
+      const[selectedQuestions,setSelectedQuestions]=useState([]);
       const[previewQuiz,setPreviewQuiz]=useState(null);
       const[previewAnswers,setPreviewAnswers]=useState({});
       const[previewSubmitted,setPreviewSubmitted]=useState(false);
-      const[saving,setSaving]=useState(false);
+      
+      // Pioche intelligente
+      const[showPickerModal,setShowPickerModal]=useState(false);
+      const[pickerConfig,setPickerConfig]=useState({mode:'branch',categoryId:'',themeId:'',count:10,balance:false});
+      
       const sortableRef=useRef(null);
       const sortableInstance=useRef(null);
       
-      const DIFFICULTIES=[
-        {value:'easy',label:'Facile',color:'green'},
-        {value:'medium',label:'Moyen',color:'yellow'},
-        {value:'hard',label:'Difficile',color:'red'}
-      ];
-      
+      const DIFFICULTIES=[{value:'easy',label:'Facile',color:'green'},{value:'medium',label:'Moyen',color:'yellow'},{value:'hard',label:'Difficile',color:'red'}];
       const QUESTION_TYPES={
-        single:{label:'Choix unique',icon:'CircleDot',desc:'Une seule bonne réponse'},
-        multiple:{label:'Choix multiple',icon:'CheckSquare',desc:'Plusieurs bonnes réponses possibles'},
-        true_false:{label:'Vrai / Faux',icon:'ToggleLeft',desc:'Question binaire'},
-        text:{label:'Texte libre',icon:'Type',desc:'Réponse courte avec mots-clés'},
-        matching:{label:'Correspondance',icon:'GitMerge',desc:'Associer des paires'},
-        ordering:{label:'Ordonnancement',icon:'ListOrdered',desc:'Remettre dans le bon ordre'}
+        single:{label:'Choix unique',icon:'CircleDot'},
+        multiple:{label:'Choix multiple',icon:'CheckSquare'},
+        true_false:{label:'Vrai/Faux',icon:'ToggleLeft'},
+        text:{label:'Texte libre',icon:'Type'},
+        matching:{label:'Correspondance',icon:'GitMerge'},
+        ordering:{label:'Ordonnancement',icon:'ListOrdered'}
       };
       
       const getEmptyQuestion=(type='single')=>{
-        const base={
-          question_text:'',question_type:type,category:'',theme:'',sub_theme:'',difficulty:'medium',
-          points:1,time_limit:0,image_url:'',audio_url:'',vimeo_id:'',
-          feedback_correct:'',feedback_incorrect:'',
-          answers:[],keywords:[],pairs:[],items:[]
-        };
+        const base={question_text:'',question_type:type,category_id:'',theme_id:'',sub_theme_id:'',difficulty:'medium',points:1,time_limit:0,image_url:'',audio_url:'',vimeo_id:'',feedback_correct:'',feedback_incorrect:'',answers:[],keywords:[],pairs:[],items:[]};
         switch(type){
-          case 'true_false':return{...base,answers:[{text:'Vrai',is_correct:true},{text:'Faux',is_correct:false}]};
-          case 'text':return{...base,answers:[{text:'',is_correct:true}]};
-          case 'matching':return{...base,pairs:[{left:'',right:''},{left:'',right:''}]};
-          case 'ordering':return{...base,items:['','']};
-          case 'multiple':return{...base,answers:[{text:'',is_correct:false},{text:'',is_correct:false}]};
+          case'true_false':return{...base,answers:[{text:'Vrai',is_correct:true},{text:'Faux',is_correct:false}]};
+          case'text':return{...base,answers:[{text:'',is_correct:true}]};
+          case'matching':return{...base,pairs:[{left:'',right:''},{left:'',right:''}]};
+          case'ordering':return{...base,items:['','']};
           default:return{...base,answers:[{text:'',is_correct:false},{text:'',is_correct:false}]};
         }
       };
       
       const[questionForm,setQuestionForm]=useState(getEmptyQuestion());
       
-      // Chargement des données
+      // ========== CHARGEMENT ==========
       const load=useCallback(async()=>{
         try{
           const{data:qz}=await supabase.from('quizzes').select('*').order('created_at',{ascending:false});
-          const playlistIds=(qz||[]).filter(q=>q.playlist_id).map(q=>q.playlist_id);
-          let playlistsInfo={};
-          if(playlistIds.length>0){
-            const{data:pInfo}=await supabase.from('playlists').select('id,title').in('id',playlistIds);
-            (pInfo||[]).forEach(p=>playlistsInfo[p.id]=p);
-          }
-          setQuizzes((qz||[]).map(q=>({...q,playlists:playlistsInfo[q.playlist_id]||null})));
-          
+          setQuizzes(qz||[]);
           const{data:pl}=await supabase.from('playlists').select('id,title').order('title');
           setPlaylists(pl||[]);
           
-          try{const{data:bank}=await supabase.from('question_bank').select('*,question_bank_answers(*)').order('created_at',{ascending:false});setBankQuestions(bank||[]);}catch(e){setBankQuestions([]);}
-          try{const{data:cats}=await supabase.from('question_categories').select('*').order('name');setCategories(cats||[]);}catch(e){setCategories([]);}
-          try{const{data:th}=await supabase.from('question_themes').select('*').order('name');setThemes(th||[]);}catch(e){setThemes([]);}
-          try{const{data:sth}=await supabase.from('question_sub_themes').select('*').order('name');setSubThemes(sth||[]);}catch(e){setSubThemes([]);}
+          // Charger avec la nouvelle structure (category_id dans themes)
+          try{
+            const{data:cats}=await supabase.from('question_categories').select('*').order('name');
+            setCategories(cats||[]);
+          }catch(e){setCategories([]);}
+          
+          try{
+            const{data:th}=await supabase.from('question_themes').select('*').order('name');
+            setThemes(th||[]);
+          }catch(e){setThemes([]);}
+          
+          try{
+            const{data:sth}=await supabase.from('question_sub_themes').select('*').order('name');
+            setSubThemes(sth||[]);
+          }catch(e){setSubThemes([]);}
+          
+          try{
+            const{data:bank}=await supabase.from('question_bank').select('*,question_bank_answers(*)').order('created_at',{ascending:false});
+            setBankQuestions(bank||[]);
+          }catch(e){setBankQuestions([]);}
         }catch(err){console.error('Erreur chargement:',err);}
         setLoading(false);
       },[]);
       
       useEffect(()=>{load();},[load]);
       
-      // Drag & drop pour réorganiser les questions du quiz
+      // Drag & drop quiz
       useEffect(()=>{
         if(sortableRef.current&&quizQuestions.length>0&&window.Sortable){
           if(sortableInstance.current)sortableInstance.current.destroy();
           sortableInstance.current=window.Sortable.create(sortableRef.current,{
             animation:150,handle:'.drag-handle',
-            onEnd:(evt)=>{
-              const newOrder=[...quizQuestions];
-              const[moved]=newOrder.splice(evt.oldIndex,1);
-              newOrder.splice(evt.newIndex,0,moved);
-              setQuizQuestions(newOrder);
-            }
+            onEnd:(evt)=>{const arr=[...quizQuestions];const[m]=arr.splice(evt.oldIndex,1);arr.splice(evt.newIndex,0,m);setQuizQuestions(arr);}
           });
         }
         return()=>{if(sortableInstance.current)sortableInstance.current.destroy();};
       },[quizQuestions]);
       
-      // === CATÉGORIES ===
-      const addCategory=async()=>{
-        if(!newCategory.trim()||categories.some(c=>c.name.toLowerCase()===newCategory.trim().toLowerCase()))return;
-        const{data}=await supabase.from('question_categories').insert({name:newCategory.trim()}).select().single();
-        if(data)setCategories([...categories,data]);
-        setNewCategory('');
+      // ========== HELPERS HIÉRARCHIE ==========
+      const getThemesForCategory=(catId)=>themes.filter(t=>t.category_id===catId);
+      const getSubThemesForTheme=(themeId)=>subThemes.filter(st=>st.theme_id===themeId);
+      const getCategoryName=(id)=>categories.find(c=>c.id===id)?.name||'';
+      const getThemeName=(id)=>themes.find(t=>t.id===id)?.name||'';
+      const getSubThemeName=(id)=>subThemes.find(st=>st.id===id)?.name||'';
+      
+      const countQuestionsForCategory=(catId)=>bankQuestions.filter(q=>q.category_id===catId).length;
+      const countQuestionsForTheme=(themeId)=>bankQuestions.filter(q=>q.theme_id===themeId).length;
+      const countQuestionsForSubTheme=(stId)=>bankQuestions.filter(q=>q.sub_theme_id===stId).length;
+      
+      // ========== GESTION CATÉGORIES/THÈMES/SOUS-THÈMES ==========
+      const addCategory=async(name)=>{
+        if(!name?.trim())return null;
+        const{data}=await supabase.from('question_categories').insert({name:name.trim()}).select().single();
+        if(data)setCategories(prev=>[...prev,data]);
+        return data;
       };
       
       const deleteCategory=async(id)=>{
-        const cat=categories.find(c=>c.id===id);
-        const count=bankQuestions.filter(q=>q.category===cat?.name).length;
-        if(count>0&&!confirm(`${count} question(s) utilisent cette catégorie. Continuer ?`))return;
-        if(count>0)await supabase.from('question_bank').update({category:null}).eq('category',cat.name);
+        const count=countQuestionsForCategory(id);
+        if(count>0&&!confirm(`${count} question(s) dans cette catégorie. Supprimer quand même ?`))return;
+        // Supprimer les thèmes et sous-thèmes associés
+        const themeIds=themes.filter(t=>t.category_id===id).map(t=>t.id);
+        if(themeIds.length>0){
+          await supabase.from('question_sub_themes').delete().in('theme_id',themeIds);
+          await supabase.from('question_themes').delete().eq('category_id',id);
+        }
+        await supabase.from('question_bank').update({category_id:null,theme_id:null,sub_theme_id:null}).eq('category_id',id);
         await supabase.from('question_categories').delete().eq('id',id);
-        setCategories(categories.filter(c=>c.id!==id));
         load();
       };
       
-      const addTheme=async()=>{
-        if(!newTheme.trim()||themes.some(t=>t.name.toLowerCase()===newTheme.trim().toLowerCase()))return;
-        const{data}=await supabase.from('question_themes').insert({name:newTheme.trim()}).select().single();
-        if(data)setThemes([...themes,data]);
-        setNewTheme('');
+      const addTheme=async(name,categoryId)=>{
+        if(!name?.trim()||!categoryId)return null;
+        const{data}=await supabase.from('question_themes').insert({name:name.trim(),category_id:categoryId}).select().single();
+        if(data)setThemes(prev=>[...prev,data]);
+        return data;
       };
       
       const deleteTheme=async(id)=>{
-        const theme=themes.find(t=>t.id===id);
-        const count=bankQuestions.filter(q=>q.theme===theme?.name).length;
-        if(count>0&&!confirm(`${count} question(s) utilisent ce thème. Continuer ?`))return;
+        const count=countQuestionsForTheme(id);
+        if(count>0&&!confirm(`${count} question(s) dans ce thème. Supprimer quand même ?`))return;
         await supabase.from('question_sub_themes').delete().eq('theme_id',id);
+        await supabase.from('question_bank').update({theme_id:null,sub_theme_id:null}).eq('theme_id',id);
         await supabase.from('question_themes').delete().eq('id',id);
-        setThemes(themes.filter(t=>t.id!==id));
-        setSubThemes(subThemes.filter(st=>st.theme_id!==id));
         load();
       };
       
-      const addSubTheme=async()=>{
-        if(!newSubTheme.theme||!newSubTheme.name.trim())return;
-        const theme=themes.find(t=>t.name===newSubTheme.theme);
-        if(!theme)return;
-        const{data}=await supabase.from('question_sub_themes').insert({theme_id:theme.id,name:newSubTheme.name.trim()}).select().single();
-        if(data)setSubThemes([...subThemes,data]);
-        setNewSubTheme({theme:newSubTheme.theme,name:''});
+      const addSubTheme=async(name,themeId)=>{
+        if(!name?.trim()||!themeId)return null;
+        const{data}=await supabase.from('question_sub_themes').insert({name:name.trim(),theme_id:themeId}).select().single();
+        if(data)setSubThemes(prev=>[...prev,data]);
+        return data;
       };
       
       const deleteSubTheme=async(id)=>{
+        const count=countQuestionsForSubTheme(id);
+        if(count>0&&!confirm(`${count} question(s) dans ce sous-thème. Supprimer quand même ?`))return;
+        await supabase.from('question_bank').update({sub_theme_id:null}).eq('sub_theme_id',id);
         await supabase.from('question_sub_themes').delete().eq('id',id);
-        setSubThemes(subThemes.filter(st=>st.id!==id));
+        load();
       };
       
-      // === QUESTIONS - Médias ===
+      // Création rapide (depuis le formulaire)
+      const handleQuickAdd=async()=>{
+        if(!quickAddValue.trim()){setQuickAdd(null);return;}
+        let result=null;
+        if(quickAdd.type==='category'){
+          result=await addCategory(quickAddValue);
+          if(result)setQuestionForm(f=>({...f,category_id:result.id}));
+        }else if(quickAdd.type==='theme'&&quickAdd.parentId){
+          result=await addTheme(quickAddValue,quickAdd.parentId);
+          if(result)setQuestionForm(f=>({...f,theme_id:result.id}));
+        }else if(quickAdd.type==='subtheme'&&quickAdd.parentId){
+          result=await addSubTheme(quickAddValue,quickAdd.parentId);
+          if(result)setQuestionForm(f=>({...f,sub_theme_id:result.id}));
+        }
+        setQuickAdd(null);
+        setQuickAddValue('');
+      };
+      
+      // ========== MÉDIAS ==========
       const uploadMedia=async(file,type)=>{
         if(!file)return null;
         setUploadingMedia(true);
@@ -3304,71 +3338,52 @@
           const{error}=await supabase.storage.from('media').upload(`${folder}/${fileName}`,file);
           if(error)throw error;
           const{data:{publicUrl}}=supabase.storage.from('media').getPublicUrl(`${folder}/${fileName}`);
-          setUploadingMedia(false);
           return publicUrl;
-        }catch(err){alert('Erreur upload: '+err.message);setUploadingMedia(false);return null;}
+        }catch(err){alert('Erreur upload: '+err.message);return null;}
+        finally{setUploadingMedia(false);}
       };
       
       const handleImageChange=async(e)=>{
-        const file=e.target.files[0];
-        if(!file)return;
-        if(!file.type.startsWith('image/')){alert('Sélectionnez une image');return;}
+        const file=e.target.files[0];if(!file)return;
+        if(!file.type.startsWith('image/')){alert('Image requise');return;}
         if(file.size>5*1024*1024){alert('Max 5 Mo');return;}
         const url=await uploadMedia(file,'image');
-        if(url)setQuestionForm({...questionForm,image_url:url});
+        if(url)setQuestionForm(f=>({...f,image_url:url}));
       };
       
       const handleAudioChange=async(e)=>{
-        const file=e.target.files[0];
-        if(!file)return;
-        if(!file.type.startsWith('audio/')){alert('Sélectionnez un fichier audio');return;}
+        const file=e.target.files[0];if(!file)return;
+        if(!file.type.startsWith('audio/')){alert('Audio requis');return;}
         if(file.size>20*1024*1024){alert('Max 20 Mo');return;}
         const url=await uploadMedia(file,'audio');
-        if(url)setQuestionForm({...questionForm,audio_url:url});
+        if(url)setQuestionForm(f=>({...f,audio_url:url}));
       };
       
-      const extractVimeoId=(url)=>{
-        if(!url)return'';
-        const match=url.match(/(?:vimeo\.com\/)(\d+)/);
-        return match?match[1]:url;
-      };
+      const extractVimeoId=(url)=>{if(!url)return'';const m=url.match(/(?:vimeo\.com\/)(\d+)/);return m?m[1]:url;};
       
-      // === QUESTIONS - CRUD ===
+      // ========== QUESTIONS CRUD ==========
       const changeQuestionType=(type)=>{
-        const newQ=getEmptyQuestion(type);
-        setQuestionForm({...newQ,question_text:questionForm.question_text,category:questionForm.category,theme:questionForm.theme,sub_theme:questionForm.sub_theme,difficulty:questionForm.difficulty,points:questionForm.points,time_limit:questionForm.time_limit,image_url:questionForm.image_url,audio_url:questionForm.audio_url,vimeo_id:questionForm.vimeo_id,feedback_correct:questionForm.feedback_correct,feedback_incorrect:questionForm.feedback_incorrect});
+        const nq=getEmptyQuestion(type);
+        setQuestionForm({...nq,question_text:questionForm.question_text,category_id:questionForm.category_id,theme_id:questionForm.theme_id,sub_theme_id:questionForm.sub_theme_id,difficulty:questionForm.difficulty,points:questionForm.points,time_limit:questionForm.time_limit,image_url:questionForm.image_url,audio_url:questionForm.audio_url,vimeo_id:questionForm.vimeo_id,feedback_correct:questionForm.feedback_correct,feedback_incorrect:questionForm.feedback_incorrect});
       };
       
       const updateAnswer=(idx,field,value)=>{
-        const answers=[...questionForm.answers];
-        if(field==='is_correct'&&questionForm.question_type==='single'){
-          answers.forEach((a,i)=>a.is_correct=i===idx);
-        }else if(field==='is_correct'&&questionForm.question_type==='true_false'){
-          answers[0].is_correct=idx===0;
-          answers[1].is_correct=idx===1;
-        }else{
-          answers[idx][field]=value;
-        }
-        setQuestionForm({...questionForm,answers});
+        const arr=[...questionForm.answers];
+        if(field==='is_correct'&&questionForm.question_type==='single'){arr.forEach((a,i)=>a.is_correct=i===idx);}
+        else if(field==='is_correct'&&questionForm.question_type==='true_false'){arr[0].is_correct=idx===0;arr[1].is_correct=idx===1;}
+        else{arr[idx][field]=value;}
+        setQuestionForm({...questionForm,answers:arr});
       };
       
       const addAnswerOption=()=>{if(questionForm.answers.length<8)setQuestionForm({...questionForm,answers:[...questionForm.answers,{text:'',is_correct:false}]});};
       const removeAnswerOption=(idx)=>{if(questionForm.answers.length>2)setQuestionForm({...questionForm,answers:questionForm.answers.filter((_,i)=>i!==idx)});};
-      
-      const updatePair=(idx,field,value)=>{const pairs=[...questionForm.pairs];pairs[idx][field]=value;setQuestionForm({...questionForm,pairs});};
+      const updatePair=(idx,f,v)=>{const p=[...questionForm.pairs];p[idx][f]=v;setQuestionForm({...questionForm,pairs:p});};
       const addPair=()=>{if((questionForm.pairs||[]).length<8)setQuestionForm({...questionForm,pairs:[...questionForm.pairs,{left:'',right:''}]});};
       const removePair=(idx)=>{if((questionForm.pairs||[]).length>2)setQuestionForm({...questionForm,pairs:questionForm.pairs.filter((_,i)=>i!==idx)});};
-      
-      const updateItem=(idx,value)=>{const items=[...questionForm.items];items[idx]=value;setQuestionForm({...questionForm,items});};
+      const updateItem=(idx,v)=>{const it=[...questionForm.items];it[idx]=v;setQuestionForm({...questionForm,items:it});};
       const addItem=()=>{if((questionForm.items||[]).length<10)setQuestionForm({...questionForm,items:[...questionForm.items,'']});};
       const removeItem=(idx)=>{if((questionForm.items||[]).length>2)setQuestionForm({...questionForm,items:questionForm.items.filter((_,i)=>i!==idx)});};
-      
-      const addKeyword=()=>{
-        const kw=questionForm.answers[0]?.text?.trim();
-        if(kw&&!questionForm.keywords.includes(kw)){
-          setQuestionForm({...questionForm,keywords:[...questionForm.keywords,kw],answers:[{text:'',is_correct:true}]});
-        }
-      };
+      const addKeyword=()=>{const kw=questionForm.answers[0]?.text?.trim();if(kw&&!questionForm.keywords.includes(kw)){setQuestionForm({...questionForm,keywords:[...questionForm.keywords,kw],answers:[{text:'',is_correct:true}]});}};
       const removeKeyword=(kw)=>setQuestionForm({...questionForm,keywords:questionForm.keywords.filter(k=>k!==kw)});
       
       const validateQuestion=()=>{
@@ -3376,10 +3391,10 @@
         switch(questionForm.question_type){
           case'single':case'multiple':
             if(questionForm.answers.filter(a=>a.text.trim()).length<2){alert('Min 2 réponses');return false;}
-            if(!questionForm.answers.some(a=>a.is_correct)){alert('Cochez au moins une bonne réponse');return false;}
+            if(!questionForm.answers.some(a=>a.is_correct)){alert('Cochez une bonne réponse');return false;}
             return true;
-          case'text':return questionForm.keywords.length>0||(alert('Ajoutez au moins un mot-clé'),false);
-          case'matching':return(questionForm.pairs||[]).filter(p=>p.left.trim()&&p.right.trim()).length>=2||(alert('Min 2 paires complètes'),false);
+          case'text':return questionForm.keywords.length>0||(alert('Ajoutez un mot-clé'),false);
+          case'matching':return(questionForm.pairs||[]).filter(p=>p.left.trim()&&p.right.trim()).length>=2||(alert('Min 2 paires'),false);
           case'ordering':return(questionForm.items||[]).filter(i=>i.trim()).length>=2||(alert('Min 2 éléments'),false);
           default:return true;
         }
@@ -3398,12 +3413,12 @@
         if(!validateQuestion())return;
         setSaving(true);
         try{
-          const questionData={
+          const data={
             question_text:questionForm.question_text.trim(),
             question_type:questionForm.question_type,
-            category:questionForm.category||null,
-            theme:questionForm.theme||null,
-            sub_theme:questionForm.sub_theme||null,
+            category_id:questionForm.category_id||null,
+            theme_id:questionForm.theme_id||null,
+            sub_theme_id:questionForm.sub_theme_id||null,
             difficulty:questionForm.difficulty||'medium',
             points:questionForm.points||1,
             time_limit:questionForm.time_limit||0,
@@ -3414,18 +3429,18 @@
             feedback_incorrect:questionForm.feedback_incorrect||null
           };
           
-          let questionId;
+          let qId;
           if(editingQuestion){
-            await supabase.from('question_bank').update(questionData).eq('id',editingQuestion.id);
+            await supabase.from('question_bank').update(data).eq('id',editingQuestion.id);
             await supabase.from('question_bank_answers').delete().eq('question_id',editingQuestion.id);
-            questionId=editingQuestion.id;
+            qId=editingQuestion.id;
           }else{
-            const{data:q}=await supabase.from('question_bank').insert(questionData).select().single();
-            questionId=q.id;
+            const{data:q}=await supabase.from('question_bank').insert(data).select().single();
+            qId=q.id;
           }
           
-          const answersData=prepareAnswersData().map(a=>({...a,question_id:questionId}));
-          if(answersData.length>0)await supabase.from('question_bank_answers').insert(answersData);
+          const answers=prepareAnswersData().map(a=>({...a,question_id:qId}));
+          if(answers.length>0)await supabase.from('question_bank_answers').insert(answers);
           
           await load();
           setQuestionForm(getEmptyQuestion());
@@ -3435,58 +3450,178 @@
       };
       
       const editQuestion=(q)=>{
-        const answers=q.question_bank_answers||[];
-        let formData={...getEmptyQuestion(q.question_type),
-          question_text:q.question_text,category:q.category||'',theme:q.theme||'',sub_theme:q.sub_theme||'',
+        const ans=q.question_bank_answers||[];
+        let form={...getEmptyQuestion(q.question_type),
+          question_text:q.question_text,category_id:q.category_id||'',theme_id:q.theme_id||'',sub_theme_id:q.sub_theme_id||'',
           difficulty:q.difficulty||'medium',points:q.points||1,time_limit:q.time_limit||0,
           image_url:q.image_url||'',audio_url:q.audio_url||'',vimeo_id:q.vimeo_id||'',
           feedback_correct:q.feedback_correct||'',feedback_incorrect:q.feedback_incorrect||''
         };
         switch(q.question_type){
-          case'matching':formData.pairs=answers.map(a=>{try{return JSON.parse(a.answer_text);}catch{return{left:'',right:''};}});break;
-          case'ordering':formData.items=answers.sort((a,b)=>a.sort_order-b.sort_order).map(a=>a.answer_text);break;
-          case'text':formData.keywords=answers.map(a=>a.answer_text);formData.answers=[{text:'',is_correct:true}];break;
-          default:formData.answers=answers.map(a=>({text:a.answer_text,is_correct:a.is_correct}));
+          case'matching':form.pairs=ans.map(a=>{try{return JSON.parse(a.answer_text);}catch{return{left:'',right:''};}});break;
+          case'ordering':form.items=ans.sort((a,b)=>a.sort_order-b.sort_order).map(a=>a.answer_text);break;
+          case'text':form.keywords=ans.map(a=>a.answer_text);form.answers=[{text:'',is_correct:true}];break;
+          default:form.answers=ans.map(a=>({text:a.answer_text,is_correct:a.is_correct}));
         }
-        setQuestionForm(formData);
+        setQuestionForm(form);
         setEditingQuestion(q);
       };
       
       const deleteQuestion=async(id)=>{
         if(!confirm('Supprimer cette question ?'))return;
         await supabase.from('question_bank').delete().eq('id',id);
-        setBankQuestions(bankQuestions.filter(q=>q.id!==id));
+        setBankQuestions(prev=>prev.filter(q=>q.id!==id));
+        if(editingQuestion?.id===id){setEditingQuestion(null);setQuestionForm(getEmptyQuestion());}
       };
       
       const cancelEdit=()=>{setQuestionForm(getEmptyQuestion());setEditingQuestion(null);};
       
-      // Filtrage des questions
+      // ========== FILTRAGE QUESTIONS ==========
+      const isFilterActive=()=>{
+        return Object.values(filterChecked.categories).some(v=>v)||Object.values(filterChecked.themes).some(v=>v)||Object.values(filterChecked.subThemes).some(v=>v)||filterDifficulty!=='all'||filterSearch;
+      };
+      
+      const clearFilters=()=>{
+        setFilterChecked({categories:{},themes:{},subThemes:{}});
+        setFilterDifficulty('all');
+        setFilterSearch('');
+      };
+      
+      const toggleFilterCategory=(catId)=>{
+        const checked=!filterChecked.categories[catId];
+        const newCats={...filterChecked.categories,[catId]:checked};
+        const newThemes={...filterChecked.themes};
+        const newSubs={...filterChecked.subThemes};
+        // Si on coche/décoche une catégorie, on coche/décoche ses thèmes et sous-thèmes
+        getThemesForCategory(catId).forEach(t=>{
+          newThemes[t.id]=checked;
+          getSubThemesForTheme(t.id).forEach(st=>{newSubs[st.id]=checked;});
+        });
+        setFilterChecked({categories:newCats,themes:newThemes,subThemes:newSubs});
+      };
+      
+      const toggleFilterTheme=(themeId)=>{
+        const checked=!filterChecked.themes[themeId];
+        const newThemes={...filterChecked.themes,[themeId]:checked};
+        const newSubs={...filterChecked.subThemes};
+        getSubThemesForTheme(themeId).forEach(st=>{newSubs[st.id]=checked;});
+        setFilterChecked({...filterChecked,themes:newThemes,subThemes:newSubs});
+      };
+      
+      const toggleFilterSubTheme=(stId)=>{
+        setFilterChecked({...filterChecked,subThemes:{...filterChecked.subThemes,[stId]:!filterChecked.subThemes[stId]}});
+      };
+      
       const filteredQuestions=useMemo(()=>{
         return bankQuestions.filter(q=>{
-          if(bankFilter.category!=='all'&&q.category!==bankFilter.category)return false;
-          if(bankFilter.theme!=='all'&&q.theme!==bankFilter.theme)return false;
-          if(bankFilter.sub_theme!=='all'&&q.sub_theme!==bankFilter.sub_theme)return false;
-          if(bankFilter.difficulty!=='all'&&q.difficulty!==bankFilter.difficulty)return false;
-          if(bankFilter.search&&!q.question_text.toLowerCase().includes(bankFilter.search.toLowerCase()))return false;
+          // Recherche texte
+          if(filterSearch&&!q.question_text.toLowerCase().includes(filterSearch.toLowerCase()))return false;
+          // Difficulté
+          if(filterDifficulty!=='all'&&q.difficulty!==filterDifficulty)return false;
+          // Hiérarchie (si au moins un filtre actif)
+          const hasHierarchyFilter=Object.values(filterChecked.categories).some(v=>v)||Object.values(filterChecked.themes).some(v=>v)||Object.values(filterChecked.subThemes).some(v=>v);
+          if(hasHierarchyFilter){
+            // La question passe si son sub_theme, theme ou category est coché
+            if(q.sub_theme_id&&filterChecked.subThemes[q.sub_theme_id])return true;
+            if(q.theme_id&&filterChecked.themes[q.theme_id])return true;
+            if(q.category_id&&filterChecked.categories[q.category_id])return true;
+            return false;
+          }
           return true;
         });
-      },[bankQuestions,bankFilter]);
+      },[bankQuestions,filterSearch,filterDifficulty,filterChecked]);
       
-      // === QUIZ ===
+      // ========== STATISTIQUES ==========
+      const stats=useMemo(()=>{
+        const total=bankQuestions.length;
+        const byCat={};categories.forEach(c=>{byCat[c.id]={name:c.name,count:0};});
+        const orphans=bankQuestions.filter(q=>!q.category_id);
+        const withTheme=bankQuestions.filter(q=>q.theme_id).length;
+        const withSubTheme=bankQuestions.filter(q=>q.sub_theme_id).length;
+        bankQuestions.forEach(q=>{if(q.category_id&&byCat[q.category_id])byCat[q.category_id].count++;});
+        return{total,byCat:Object.values(byCat),orphans:orphans.length,withTheme,withSubTheme,catCount:categories.length,themeCount:themes.length,subThemeCount:subThemes.length};
+      },[bankQuestions,categories,themes,subThemes]);
+      
+      // ========== EXPORT/IMPORT EXCEL ==========
+      const exportBankTemplate=()=>{
+        const wb=XLSX.utils.book_new();
+        const data=[
+          ['Question','Type','Catégorie','Thème','Sous-thème','Difficulté','Points','Temps(sec)','Réponse 1','Correct 1','Réponse 2','Correct 2','Réponse 3','Correct 3','Réponse 4','Correct 4','Feedback correct','Feedback incorrect'],
+          ['Quelle est la capitale ?','single','Géographie','Europe','Capitales','medium','1','0','Paris','TRUE','Lyon','FALSE','','','','','Bravo !','Réponse: Paris'],
+        ];
+        const ws=XLSX.utils.aoa_to_sheet(data);
+        XLSX.utils.book_append_sheet(wb,ws,'Template');
+        XLSX.writeFile(wb,'template_questions.xlsx');
+      };
+      
+      const exportBank=()=>{
+        if(bankQuestions.length===0){alert('Aucune question');return;}
+        const data=[['Question','Type','Catégorie','Thème','Sous-thème','Difficulté','Points','Temps','R1','C1','R2','C2','R3','C3','R4','C4','Feedback+','Feedback-']];
+        bankQuestions.forEach(q=>{
+          const ans=q.question_bank_answers||[];
+          const row=[q.question_text,q.question_type,getCategoryName(q.category_id),getThemeName(q.theme_id),getSubThemeName(q.sub_theme_id),q.difficulty,q.points,q.time_limit];
+          for(let i=0;i<4;i++)row.push(ans[i]?.answer_text||'',ans[i]?.is_correct?'TRUE':'FALSE');
+          row.push(q.feedback_correct||'',q.feedback_incorrect||'');
+          data.push(row);
+        });
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(data),'Questions');
+        XLSX.writeFile(wb,`banque_${new Date().toISOString().split('T')[0]}.xlsx`);
+      };
+      
+      const importFromExcel=async(e)=>{
+        const file=e.target.files[0];if(!file)return;
+        const reader=new FileReader();
+        reader.onload=async(evt)=>{
+          try{
+            const wb=XLSX.read(new Uint8Array(evt.target.result),{type:'array'});
+            const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1});
+            let imported=0;
+            for(let i=1;i<rows.length;i++){
+              const r=rows[i];if(!r[0])continue;
+              // Auto-créer catégorie/thème/sous-thème si besoin
+              let catId=null,themeId=null,subThemeId=null;
+              if(r[2]){
+                let cat=categories.find(c=>c.name.toLowerCase()===r[2].toLowerCase());
+                if(!cat){cat=await addCategory(r[2]);}
+                catId=cat?.id;
+                if(r[3]&&catId){
+                  let th=themes.find(t=>t.name.toLowerCase()===r[3].toLowerCase()&&t.category_id===catId);
+                  if(!th){th=await addTheme(r[3],catId);}
+                  themeId=th?.id;
+                  if(r[4]&&themeId){
+                    let st=subThemes.find(s=>s.name.toLowerCase()===r[4].toLowerCase()&&s.theme_id===themeId);
+                    if(!st){st=await addSubTheme(r[4],themeId);}
+                    subThemeId=st?.id;
+                  }
+                }
+              }
+              const{data:q}=await supabase.from('question_bank').insert({
+                question_text:r[0],question_type:r[1]||'single',category_id:catId,theme_id:themeId,sub_theme_id:subThemeId,
+                difficulty:r[5]||'medium',points:parseInt(r[6])||1,time_limit:parseInt(r[7])||0,
+                feedback_correct:r[16]||null,feedback_incorrect:r[17]||null
+              }).select().single();
+              if(q){
+                const answers=[];
+                for(let j=0;j<4;j++){if(r[8+j*2])answers.push({question_id:q.id,answer_text:String(r[8+j*2]),is_correct:String(r[9+j*2]).toUpperCase()==='TRUE',sort_order:j});}
+                if(answers.length)await supabase.from('question_bank_answers').insert(answers);
+                imported++;
+              }
+            }
+            alert(`${imported} question(s) importée(s)`);
+            load();
+          }catch(err){alert('Erreur: '+err.message);}
+        };
+        reader.readAsArrayBuffer(file);
+        e.target.value='';
+      };
+      
+      // ========== QUIZ ==========
       const openQuizModal=(quiz=null)=>{
         if(quiz){
           setEditingQuiz(quiz);
-          setQuizForm({
-            title:quiz.title,description:quiz.description||'',playlist_id:quiz.playlist_id||'',
-            passing_score:quiz.passing_score||70,is_required:quiz.is_required||false,
-            max_attempts:quiz.max_attempts||0,time_limit:quiz.time_limit||0,
-            shuffle_questions:quiz.shuffle_questions||false,shuffle_answers:quiz.shuffle_answers||false,
-            show_answers:quiz.show_answers!==false,show_feedback:quiz.show_feedback!==false,allow_review:quiz.allow_review!==false
-          });
-          // Charger les questions du quiz
-          supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('quiz_id',quiz.id).order('sort_order').then(({data})=>{
-            setQuizQuestions(data||[]);
-          });
+          setQuizForm({title:quiz.title,description:quiz.description||'',playlist_id:quiz.playlist_id||'',passing_score:quiz.passing_score||70,is_required:quiz.is_required||false,max_attempts:quiz.max_attempts||0,time_limit:quiz.time_limit||0,shuffle_questions:quiz.shuffle_questions||false,shuffle_answers:quiz.shuffle_answers||false,show_answers:quiz.show_answers!==false,show_feedback:quiz.show_feedback!==false,allow_review:quiz.allow_review!==false});
+          supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('quiz_id',quiz.id).order('sort_order').then(({data})=>setQuizQuestions(data||[]));
         }else{
           setEditingQuiz(null);
           setQuizForm({title:'',description:'',playlist_id:'',passing_score:70,is_required:false,max_attempts:0,time_limit:0,shuffle_questions:false,shuffle_answers:false,show_answers:true,show_feedback:true,allow_review:true});
@@ -3497,66 +3632,30 @@
       };
       
       const saveQuiz=async()=>{
-        if(!quizForm.title.trim()){alert('Entrez un titre');return;}
+        if(!quizForm.title.trim()){alert('Titre requis');return;}
         setSaving(true);
         try{
-          const payload={
-            title:quizForm.title.trim(),
-            description:quizForm.description||null,
-            playlist_id:quizForm.playlist_id||null,
-            passing_score:parseInt(quizForm.passing_score)||70,
-            is_required:quizForm.is_required,
-            max_attempts:quizForm.max_attempts||0,
-            time_limit:quizForm.time_limit||0,
-            shuffle_questions:quizForm.shuffle_questions,
-            shuffle_answers:quizForm.shuffle_answers,
-            show_answers:quizForm.show_answers,
-            show_feedback:quizForm.show_feedback,
-            allow_review:quizForm.allow_review
-          };
-          
+          const payload={...quizForm,passing_score:parseInt(quizForm.passing_score)||70};
           let quizId;
           if(editingQuiz){
             await supabase.from('quizzes').update(payload).eq('id',editingQuiz.id);
             quizId=editingQuiz.id;
-            // Supprimer les anciennes questions
             await supabase.from('quiz_questions').delete().eq('quiz_id',quizId);
           }else{
-            const{data:newQuiz}=await supabase.from('quizzes').insert(payload).select().single();
-            quizId=newQuiz.id;
+            const{data:nq}=await supabase.from('quizzes').insert(payload).select().single();
+            quizId=nq.id;
           }
-          
-          // Insérer les questions sélectionnées
           for(let i=0;i<quizQuestions.length;i++){
             const q=quizQuestions[i];
-            const isFromBank=q.question_bank_answers!==undefined;
-            
+            const isBank=!!q.question_bank_answers;
             const{data:newQ}=await supabase.from('quiz_questions').insert({
-              quiz_id:quizId,
-              question_text:q.question_text,
-              question_type:q.question_type,
-              sort_order:i,
-              points:q.points||1,
-              time_limit:q.time_limit||0,
-              image_url:q.image_url,
-              audio_url:q.audio_url,
-              vimeo_id:q.vimeo_id,
-              feedback_correct:q.feedback_correct,
-              feedback_incorrect:q.feedback_incorrect
+              quiz_id:quizId,question_text:q.question_text,question_type:q.question_type,sort_order:i,
+              points:q.points||1,time_limit:q.time_limit||0,image_url:q.image_url,audio_url:q.audio_url,vimeo_id:q.vimeo_id,
+              feedback_correct:q.feedback_correct,feedback_incorrect:q.feedback_incorrect
             }).select().single();
-            
-            // Copier les réponses
-            const answers=isFromBank?q.question_bank_answers:q.quiz_answers;
-            if(newQ&&answers?.length>0){
-              await supabase.from('quiz_answers').insert(answers.map((a,j)=>({
-                question_id:newQ.id,
-                answer_text:a.answer_text,
-                is_correct:a.is_correct,
-                sort_order:j
-              })));
-            }
+            const answers=isBank?q.question_bank_answers:q.quiz_answers;
+            if(newQ&&answers?.length)await supabase.from('quiz_answers').insert(answers.map((a,j)=>({question_id:newQ.id,answer_text:a.answer_text,is_correct:a.is_correct,sort_order:j})));
           }
-          
           await load();
           setQuizModal(false);
         }catch(err){alert('Erreur: '+err.message);}
@@ -3564,310 +3663,231 @@
       };
       
       const deleteQuiz=async(id)=>{
-        if(!confirm('Supprimer ce quiz et toutes ses questions ?'))return;
+        if(!confirm('Supprimer ce quiz ?'))return;
         await supabase.from('quizzes').delete().eq('id',id);
-        setQuizzes(quizzes.filter(q=>q.id!==id));
+        setQuizzes(prev=>prev.filter(q=>q.id!==id));
       };
       
-      // Ajouter des questions de la banque au quiz
       const addQuestionsToQuiz=()=>{
         const toAdd=bankQuestions.filter(q=>selectedQuestions.includes(q.id)&&!quizQuestions.some(qq=>qq.id===q.id||qq.bank_id===q.id));
         setQuizQuestions([...quizQuestions,...toAdd.map(q=>({...q,bank_id:q.id}))]);
         setSelectedQuestions([]);
       };
       
-      // Pioche aléatoire
-      const randomPick=(count)=>{
-        let available=filteredQuestions.filter(q=>!quizQuestions.some(qq=>qq.id===q.id||qq.bank_id===q.id));
-        const shuffled=[...available].sort(()=>Math.random()-0.5);
-        const picked=shuffled.slice(0,Math.min(count,shuffled.length));
-        setQuizQuestions([...quizQuestions,...picked.map(q=>({...q,bank_id:q.id}))]);
-      };
+      const removeFromQuiz=(idx)=>setQuizQuestions(quizQuestions.filter((_,i)=>i!==idx));
       
-      const removeFromQuiz=(idx)=>{
-        setQuizQuestions(quizQuestions.filter((_,i)=>i!==idx));
+      // Pioche intelligente
+      const executePicker=()=>{
+        let pool=bankQuestions.filter(q=>!quizQuestions.some(qq=>qq.id===q.id||qq.bank_id===q.id));
+        if(pickerConfig.mode==='branch'){
+          if(pickerConfig.themeId){
+            pool=pool.filter(q=>q.theme_id===pickerConfig.themeId);
+          }else if(pickerConfig.categoryId){
+            pool=pool.filter(q=>q.category_id===pickerConfig.categoryId);
+          }
+        }else if(pickerConfig.mode==='balance'){
+          // Équilibrage par catégorie
+          const perCat=Math.ceil(pickerConfig.count/categories.length);
+          let picked=[];
+          categories.forEach(cat=>{
+            const catPool=pool.filter(q=>q.category_id===cat.id).sort(()=>Math.random()-0.5);
+            picked=[...picked,...catPool.slice(0,perCat)];
+          });
+          pool=picked;
+        }
+        const shuffled=[...pool].sort(()=>Math.random()-0.5);
+        const picked=shuffled.slice(0,Math.min(pickerConfig.count,shuffled.length));
+        setQuizQuestions([...quizQuestions,...picked.map(q=>({...q,bank_id:q.id}))]);
+        setShowPickerModal(false);
       };
       
       // Prévisualisation
       const openPreview=(quiz)=>{
         supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('quiz_id',quiz.id).order('sort_order').then(({data})=>{
-          let questions=data||[];
-          if(quiz.shuffle_questions)questions=[...questions].sort(()=>Math.random()-0.5);
-          if(quiz.shuffle_answers)questions=questions.map(q=>({...q,quiz_answers:(q.quiz_answers||[]).sort(()=>Math.random()-0.5)}));
-          setPreviewQuiz({...quiz,questions});
+          let qs=data||[];
+          if(quiz.shuffle_questions)qs=[...qs].sort(()=>Math.random()-0.5);
+          if(quiz.shuffle_answers)qs=qs.map(q=>({...q,quiz_answers:(q.quiz_answers||[]).sort(()=>Math.random()-0.5)}));
+          setPreviewQuiz({...quiz,questions:qs});
           setPreviewAnswers({});
           setPreviewSubmitted(false);
         });
       };
       
-      const calculateScore=()=>{
-        if(!previewQuiz)return{score:0,total:0,percent:0};
+      const calcScore=()=>{
+        if(!previewQuiz)return{score:0,total:0,pct:0};
         let score=0,total=0;
         previewQuiz.questions.forEach(q=>{
           const pts=q.points||1;total+=pts;
-          const userAns=previewAnswers[q.id];
           const correct=(q.quiz_answers||[]).filter(a=>a.is_correct).map(a=>a.id);
-          if(q.question_type==='single'||q.question_type==='true_false'){
-            if(correct.includes(userAns))score+=pts;
-          }else if(q.question_type==='multiple'){
-            const arr=userAns||[];
-            if(correct.every(id=>arr.includes(id))&&arr.every(id=>correct.includes(id)))score+=pts;
-          }
+          const ans=previewAnswers[q.id];
+          if(q.question_type==='single'||q.question_type==='true_false'){if(correct.includes(ans))score+=pts;}
+          else if(q.question_type==='multiple'){const arr=ans||[];if(correct.every(id=>arr.includes(id))&&arr.every(id=>correct.includes(id)))score+=pts;}
         });
-        return{score,total,percent:total>0?Math.round(score/total*100):0};
+        return{score,total,pct:total>0?Math.round(score/total*100):0};
       };
       
-      // === EXPORT/IMPORT EXCEL ===
-      const exportBankTemplate=()=>{
-        const wb=XLSX.utils.book_new();
-        const templateData=[
-          ['Question','Type','Catégorie','Thème','Sous-thème','Difficulté','Points','Temps(sec)','Réponse 1','Correct 1','Réponse 2','Correct 2','Réponse 3','Correct 3','Réponse 4','Correct 4','Feedback correct','Feedback incorrect'],
-          ['Quelle est la capitale de la France ?','single','Géographie','','','medium','1','0','Paris','TRUE','Lyon','FALSE','Marseille','FALSE','','','Bravo !','La bonne réponse était Paris'],
-          ['Quels sont des nombres premiers ?','multiple','Mathématiques','','','medium','2','30','2','TRUE','3','TRUE','4','FALSE','5','TRUE','',''],
-          ['Le soleil tourne autour de la terre','true_false','Sciences','','','easy','1','0','','FALSE','','','','','','','','La Terre tourne autour du Soleil']
-        ];
-        const ws=XLSX.utils.aoa_to_sheet(templateData);
-        ws['!cols']=[{wch:40},{wch:12},{wch:15},{wch:15},{wch:15},{wch:10},{wch:8},{wch:10},{wch:20},{wch:10},{wch:20},{wch:10},{wch:20},{wch:10},{wch:20},{wch:10},{wch:30},{wch:30}];
-        XLSX.utils.book_append_sheet(wb,ws,'Questions');
-        
-        const instructionsData=[
-          ['=== INSTRUCTIONS ==='],
-          [''],
-          ['Types disponibles: single, multiple, true_false, text, matching, ordering'],
-          [''],
-          ['Pour true_false: Réponse 1 = TRUE ou FALSE (la bonne réponse)'],
-          ['Pour text: Réponses = mots-clés acceptés'],
-          ['Pour matching: Réponse 1 = "gauche|droite", Réponse 2 = "gauche|droite"...'],
-          ['Pour ordering: Réponses dans l\'ordre correct'],
-          [''],
-          ['Difficultés: easy, medium, hard'],
-          ['Correct: TRUE ou FALSE']
-        ];
-        const ws2=XLSX.utils.aoa_to_sheet(instructionsData);
-        XLSX.utils.book_append_sheet(wb,ws2,'Instructions');
-        
-        XLSX.writeFile(wb,'template_banque_questions.xlsx');
-      };
-      
-      const exportBank=()=>{
-        if(bankQuestions.length===0){alert('Aucune question à exporter');return;}
-        const data=[['Question','Type','Catégorie','Thème','Sous-thème','Difficulté','Points','Temps','Réponse 1','Correct 1','Réponse 2','Correct 2','Réponse 3','Correct 3','Réponse 4','Correct 4','Feedback correct','Feedback incorrect']];
-        
-        bankQuestions.forEach(q=>{
-          const answers=q.question_bank_answers||[];
-          const row=[q.question_text,q.question_type,q.category||'',q.theme||'',q.sub_theme||'',q.difficulty||'medium',q.points||1,q.time_limit||0];
-          for(let i=0;i<4;i++){
-            if(answers[i]){
-              row.push(answers[i].answer_text,answers[i].is_correct?'TRUE':'FALSE');
-            }else{
-              row.push('','');
-            }
-          }
-          row.push(q.feedback_correct||'',q.feedback_incorrect||'');
-          data.push(row);
-        });
-        
-        const wb=XLSX.utils.book_new();
-        const ws=XLSX.utils.aoa_to_sheet(data);
-        XLSX.utils.book_append_sheet(wb,ws,'Banque');
-        XLSX.writeFile(wb,`banque_questions_${new Date().toISOString().split('T')[0]}.xlsx`);
-      };
-      
-      const importFromExcel=async(e)=>{
-        const file=e.target.files[0];
-        if(!file)return;
-        
-        const reader=new FileReader();
-        reader.onload=async(evt)=>{
-          try{
-            const data=new Uint8Array(evt.target.result);
-            const workbook=XLSX.read(data,{type:'array'});
-            const sheet=workbook.Sheets[workbook.SheetNames[0]];
-            const rows=XLSX.utils.sheet_to_json(sheet,{header:1});
-            
-            let imported=0;
-            for(let i=1;i<rows.length;i++){
-              const row=rows[i];
-              if(!row[0])continue;
-              
-              const questionData={
-                question_text:row[0],
-                question_type:row[1]||'single',
-                category:row[2]||null,
-                theme:row[3]||null,
-                sub_theme:row[4]||null,
-                difficulty:row[5]||'medium',
-                points:parseInt(row[6])||1,
-                time_limit:parseInt(row[7])||0,
-                feedback_correct:row[16]||null,
-                feedback_incorrect:row[17]||null
-              };
-              
-              const{data:q}=await supabase.from('question_bank').insert(questionData).select().single();
-              if(q){
-                const answers=[];
-                for(let j=0;j<4;j++){
-                  const ansText=row[8+j*2];
-                  const ansCorrect=row[9+j*2];
-                  if(ansText){
-                    answers.push({
-                      question_id:q.id,
-                      answer_text:String(ansText),
-                      is_correct:String(ansCorrect).toUpperCase()==='TRUE',
-                      sort_order:j
-                    });
-                  }
-                }
-                if(answers.length>0){
-                  await supabase.from('question_bank_answers').insert(answers);
-                }
-                imported++;
-              }
-            }
-            
-            alert(`${imported} question(s) importée(s)`);
-            load();
-          }catch(err){
-            alert('Erreur import: '+err.message);
-          }
-        };
-        reader.readAsArrayBuffer(file);
-        e.target.value='';
-      };
-      
-      // Rendu des réponses
-      const renderAnswers=(q)=>{
-        const answers=q.question_bank_answers||q.quiz_answers||[];
-        switch(q.question_type){
-          case'matching':return answers.map((a,i)=>{try{const p=JSON.parse(a.answer_text);return<p key={i} className="text-xs text-gray-400">{p.left} ↔ {p.right}</p>;}catch{return null;}});
-          case'ordering':return<div className="flex flex-wrap gap-1">{answers.sort((a,b)=>a.sort_order-b.sort_order).map((a,i)=><span key={i} className="text-xs bg-gray-600 px-2 py-0.5 rounded">{i+1}. {a.answer_text}</span>)}</div>;
-          case'text':return<p className="text-xs text-gray-400">Mots-clés: {answers.map(a=>a.answer_text).join(', ')}</p>;
-          default:return answers.map((a,i)=><p key={i} className={`text-xs ${a.is_correct?'text-green-400':'text-gray-500'}`}>{a.is_correct?'✓':'○'} {a.answer_text}</p>);
-        }
-      };
-
+      // ========== RENDU ==========
       if(!can('manage_playlists')&&profile?.role!=='trainer')return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
 
       return<div>
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">Quiz & Banque de questions</h1>
-          {activeTab==='questions'&&(
-            <div className="flex gap-2">
+          <div className="flex gap-2">
+            {activeTab==='questions'&&<>
               <Button variant="secondary" size="sm" icon="Download" onClick={exportBankTemplate}>Template</Button>
               <Button variant="secondary" size="sm" icon="FileDown" onClick={exportBank}>Exporter</Button>
-              <label className="cursor-pointer">
-                <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition">
-                  <Icon name="Upload" size={16}/>Importer
-                </span>
-                <input type="file" accept=".xlsx,.xls" className="hidden" onChange={importFromExcel}/>
-              </label>
-            </div>
-          )}
+              <label className="cursor-pointer"><span className="inline-flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium"><Icon name="Upload" size={16}/>Importer</span><input type="file" accept=".xlsx,.xls" className="hidden" onChange={importFromExcel}/></label>
+              <Button variant="secondary" size="sm" icon="BarChart2" onClick={()=>setShowStats(true)}>Stats</Button>
+            </>}
+          </div>
         </div>
         
-        <Tabs tabs={[
-          {id:'categories',label:`Catégories`,icon:'Tag'},
-          {id:'questions',label:`Questions (${bankQuestions.length})`,icon:'Database'},
-          {id:'quizzes',label:`Quiz (${quizzes.length})`,icon:'HelpCircle'}
-        ]} active={activeTab} onChange={setActiveTab}/>
+        <Tabs tabs={[{id:'categories',label:'Catégories',icon:'FolderTree'},{id:'questions',label:`Questions (${bankQuestions.length})`,icon:'Database'},{id:'quizzes',label:`Quiz (${quizzes.length})`,icon:'HelpCircle'}]} active={activeTab} onChange={setActiveTab}/>
         
-        {/* === ONGLET CATÉGORIES === */}
+        {/* ==================== ONGLET CATÉGORIES ==================== */}
         {activeTab==='categories'&&(
-          <div className="space-y-6">
-            {/* Catégories */}
-            <Card className="p-6">
-              <h3 className="font-semibold mb-4"><Icon name="Tag" size={20} className="inline mr-2 text-indigo-400"/>Catégories</h3>
-              <div className="flex gap-2 mb-4">
-                <Input className="flex-1" placeholder="Nouvelle catégorie..." value={newCategory} onChange={e=>setNewCategory(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addCategory()}/>
-                <Button icon="Plus" onClick={addCategory} disabled={!newCategory.trim()}>Ajouter</Button>
-              </div>
-              {categories.length===0?<p className="text-gray-500 text-center py-4">Aucune catégorie</p>:(
-                <div className="flex flex-wrap gap-2">
-                  {categories.map(cat=>(
-                    <div key={cat.id} className="flex items-center gap-2 px-3 py-2 bg-gray-700 rounded-lg">
-                      <span>{cat.name}</span>
-                      <span className="text-xs text-gray-400">({bankQuestions.filter(q=>q.category===cat.name).length})</span>
-                      <button onClick={()=>deleteCategory(cat.id)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={14} className="text-red-400"/></button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Card>
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-lg">Arborescence des catégories</h3>
+              <div className="text-sm text-gray-400">{stats.catCount} catégories • {stats.themeCount} thèmes • {stats.subThemeCount} sous-thèmes</div>
+            </div>
             
-            {/* Thèmes */}
-            <Card className="p-6">
-              <h3 className="font-semibold mb-4"><Icon name="Folder" size={20} className="inline mr-2 text-purple-400"/>Thèmes</h3>
-              <div className="flex gap-2 mb-4">
-                <Input className="flex-1" placeholder="Nouveau thème..." value={newTheme} onChange={e=>setNewTheme(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addTheme()}/>
-                <Button icon="Plus" onClick={addTheme} disabled={!newTheme.trim()}>Ajouter</Button>
-              </div>
-              {themes.length===0?<p className="text-gray-500 text-center py-4">Aucun thème</p>:(
-                <div className="space-y-3">
-                  {themes.map(theme=>(
-                    <div key={theme.id} className="p-3 bg-gray-700 rounded-lg">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <Icon name="Folder" size={18} className="text-purple-400"/>
-                          <span className="font-medium">{theme.name}</span>
-                          <span className="text-xs text-gray-400">({bankQuestions.filter(q=>q.theme===theme.name).length})</span>
-                        </div>
-                        <button onClick={()=>deleteTheme(theme.id)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="Trash2" size={14} className="text-red-400"/></button>
-                      </div>
-                      <div className="ml-6 space-y-1">
-                        {subThemes.filter(st=>st.theme_id===theme.id).map(st=>(
-                          <div key={st.id} className="flex items-center justify-between py-1 px-2 bg-gray-600/50 rounded">
-                            <span className="text-sm">{st.name}</span>
-                            <button onClick={()=>deleteSubTheme(st.id)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={12} className="text-red-400"/></button>
-                          </div>
-                        ))}
-                        <div className="flex gap-2 mt-2">
-                          <Input size="sm" className="flex-1" placeholder="Nouveau sous-thème..." value={newSubTheme.theme===theme.name?newSubTheme.name:''} onChange={e=>setNewSubTheme({theme:theme.name,name:e.target.value})}/>
-                          <Button size="sm" variant="ghost" icon="Plus" onClick={()=>{if(newSubTheme.theme===theme.name)addSubTheme();}} disabled={newSubTheme.theme!==theme.name||!newSubTheme.name.trim()}/>
-                        </div>
-                      </div>
+            {/* Ajouter catégorie */}
+            <div className="flex gap-2 mb-4">
+              <Input className="flex-1" placeholder="Nouvelle catégorie..." value={quickAddValue} onChange={e=>setQuickAddValue(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&quickAddValue.trim()){addCategory(quickAddValue);setQuickAddValue('');}}}/>
+              <Button icon="Plus" onClick={()=>{if(quickAddValue.trim()){addCategory(quickAddValue);setQuickAddValue('');}}}>Catégorie</Button>
+            </div>
+            
+            {categories.length===0?<p className="text-gray-500 text-center py-8">Aucune catégorie. Créez-en une pour organiser vos questions.</p>:(
+              <div className="space-y-2">
+                {categories.map(cat=>{
+                  const catThemes=getThemesForCategory(cat.id);
+                  const isExpanded=expandedCats[cat.id];
+                  const catCount=countQuestionsForCategory(cat.id);
+                  return<div key={cat.id} className="border border-gray-700 rounded-lg overflow-hidden">
+                    {/* Catégorie header */}
+                    <div className="flex items-center gap-2 p-3 bg-gray-800 hover:bg-gray-700 cursor-pointer" onClick={()=>setExpandedCats({...expandedCats,[cat.id]:!isExpanded})}>
+                      <Icon name={isExpanded?'ChevronDown':'ChevronRight'} size={18} className="text-gray-400"/>
+                      <Icon name="Folder" size={18} className="text-indigo-400"/>
+                      <span className="font-medium flex-1">{cat.name}</span>
+                      <span className="text-sm text-gray-400">{catCount} questions • {catThemes.length} thèmes</span>
+                      <button onClick={e=>{e.stopPropagation();deleteCategory(cat.id);}} className="p-1 hover:bg-red-500/20 rounded"><Icon name="Trash2" size={14} className="text-red-400"/></button>
                     </div>
-                  ))}
-                </div>
-              )}
-            </Card>
-          </div>
+                    
+                    {/* Thèmes */}
+                    {isExpanded&&(
+                      <div className="p-2 pl-8 space-y-2 bg-gray-800/50">
+                        {catThemes.map(theme=>{
+                          const themeSubs=getSubThemesForTheme(theme.id);
+                          const themeExpanded=expandedThemes[theme.id];
+                          const themeCount=countQuestionsForTheme(theme.id);
+                          return<div key={theme.id} className="border border-gray-600 rounded-lg overflow-hidden">
+                            <div className="flex items-center gap-2 p-2 bg-gray-700 hover:bg-gray-600 cursor-pointer" onClick={()=>setExpandedThemes({...expandedThemes,[theme.id]:!themeExpanded})}>
+                              <Icon name={themeExpanded?'ChevronDown':'ChevronRight'} size={16} className="text-gray-400"/>
+                              <Icon name="Tag" size={16} className="text-purple-400"/>
+                              <span className="flex-1">{theme.name}</span>
+                              <span className="text-xs text-gray-400">{themeCount} q • {themeSubs.length} sous</span>
+                              <button onClick={e=>{e.stopPropagation();deleteTheme(theme.id);}} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={12} className="text-red-400"/></button>
+                            </div>
+                            
+                            {themeExpanded&&(
+                              <div className="p-2 pl-6 space-y-1 bg-gray-700/50">
+                                {themeSubs.map(st=>(
+                                  <div key={st.id} className="flex items-center gap-2 p-1.5 rounded hover:bg-gray-600">
+                                    <Icon name="Circle" size={8} className="text-cyan-400"/>
+                                    <span className="flex-1 text-sm">{st.name}</span>
+                                    <span className="text-xs text-gray-500">{countQuestionsForSubTheme(st.id)} q</span>
+                                    <button onClick={()=>deleteSubTheme(st.id)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={12} className="text-red-400"/></button>
+                                  </div>
+                                ))}
+                                <div className="flex gap-2 mt-1">
+                                  <Input size="sm" placeholder="+ Sous-thème..." onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){addSubTheme(e.target.value,theme.id);e.target.value='';}}}/>
+                                </div>
+                              </div>
+                            )}
+                          </div>;
+                        })}
+                        <div className="flex gap-2 mt-2">
+                          <Input size="sm" placeholder="+ Nouveau thème..." onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){addTheme(e.target.value,cat.id);e.target.value='';}}}/>
+                        </div>
+                      </div>
+                    )}
+                  </div>;
+                })}
+              </div>
+            )}
+          </Card>
         )}
         
-        {/* === ONGLET QUESTIONS (Banque + Formulaire) === */}
+        {/* ==================== ONGLET QUESTIONS ==================== */}
         {activeTab==='questions'&&(
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Colonne gauche : Liste des questions */}
+            {/* Colonne gauche : Liste */}
             <div className="space-y-4">
-              {/* Filtres */}
-              <Card className="p-4">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                  <Input size="sm" icon="Search" placeholder="Rechercher..." value={bankFilter.search} onChange={e=>setBankFilter({...bankFilter,search:e.target.value})}/>
-                  <Select size="sm" value={bankFilter.category} onChange={e=>setBankFilter({...bankFilter,category:e.target.value})} options={[{value:'all',label:'Catégorie'},...categories.map(c=>({value:c.name,label:c.name}))]}/>
-                  <Select size="sm" value={bankFilter.theme} onChange={e=>setBankFilter({...bankFilter,theme:e.target.value,sub_theme:'all'})} options={[{value:'all',label:'Thème'},...themes.map(t=>({value:t.name,label:t.name}))]}/>
-                  <Select size="sm" value={bankFilter.difficulty} onChange={e=>setBankFilter({...bankFilter,difficulty:e.target.value})} options={[{value:'all',label:'Difficulté'},...DIFFICULTIES.map(d=>({value:d.value,label:d.label}))]}/>
+              {/* Barre de filtres */}
+              <Card className="p-3">
+                <div className="flex items-center gap-2">
+                  <Input size="sm" icon="Search" placeholder="Rechercher..." value={filterSearch} onChange={e=>setFilterSearch(e.target.value)} className="flex-1"/>
+                  <Select size="sm" value={filterDifficulty} onChange={e=>setFilterDifficulty(e.target.value)} options={[{value:'all',label:'Difficulté'},...DIFFICULTIES.map(d=>({value:d.value,label:d.label}))]}/>
+                  <Button size="sm" variant={showFilterPanel?'primary':'secondary'} icon="Filter" onClick={()=>setShowFilterPanel(!showFilterPanel)}>{isFilterActive()?'Filtres actifs':'Filtres'}</Button>
+                  {isFilterActive()&&<Button size="sm" variant="ghost" icon="X" onClick={clearFilters}/>}
                 </div>
+                
+                {/* Panel filtres arborescence */}
+                {showFilterPanel&&(
+                  <div className="mt-3 p-3 bg-gray-700/50 rounded-lg max-h-60 overflow-y-auto">
+                    <p className="text-xs text-gray-400 mb-2">Cocher les catégories/thèmes à afficher :</p>
+                    {categories.map(cat=>{
+                      const catThemes=getThemesForCategory(cat.id);
+                      return<div key={cat.id} className="mb-2">
+                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-600 p-1 rounded">
+                          <input type="checkbox" checked={!!filterChecked.categories[cat.id]} onChange={()=>toggleFilterCategory(cat.id)} className="w-4 h-4 rounded"/>
+                          <Icon name="Folder" size={14} className="text-indigo-400"/>
+                          <span className="text-sm">{cat.name}</span>
+                          <span className="text-xs text-gray-500">({countQuestionsForCategory(cat.id)})</span>
+                        </label>
+                        <div className="ml-6">
+                          {catThemes.map(th=>{
+                            const themeSubs=getSubThemesForTheme(th.id);
+                            return<div key={th.id}>
+                              <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-600 p-1 rounded">
+                                <input type="checkbox" checked={!!filterChecked.themes[th.id]} onChange={()=>toggleFilterTheme(th.id)} className="w-3 h-3 rounded"/>
+                                <span className="text-xs">{th.name}</span>
+                                <span className="text-xs text-gray-500">({countQuestionsForTheme(th.id)})</span>
+                              </label>
+                              <div className="ml-5">
+                                {themeSubs.map(st=>(
+                                  <label key={st.id} className="flex items-center gap-2 cursor-pointer hover:bg-gray-600 p-0.5 rounded">
+                                    <input type="checkbox" checked={!!filterChecked.subThemes[st.id]} onChange={()=>toggleFilterSubTheme(st.id)} className="w-3 h-3 rounded"/>
+                                    <span className="text-xs text-gray-400">{st.name} ({countQuestionsForSubTheme(st.id)})</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>;
+                          })}
+                        </div>
+                      </div>;
+                    })}
+                  </div>
+                )}
               </Card>
               
-              {/* Liste */}
-              <div className="space-y-2 max-h-[calc(100vh-300px)] overflow-y-auto">
-                {filteredQuestions.length===0?<Card className="p-8 text-center text-gray-500">Aucune question</Card>:(
+              {/* Liste des questions */}
+              <div className="space-y-2 max-h-[calc(100vh-350px)] overflow-y-auto">
+                {filteredQuestions.length===0?<Card className="p-8 text-center text-gray-500">Aucune question{isFilterActive()?' (filtres actifs)':''}</Card>:(
                   filteredQuestions.map(q=>(
-                    <Card key={q.id} className={`p-3 cursor-pointer hover:border-indigo-500 transition-colors ${editingQuestion?.id===q.id?'border-indigo-500':''}`} onClick={()=>editQuestion(q)}>
-                      <div className="flex items-start gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex flex-wrap gap-1 mb-1">
-                            <span className="px-2 py-0.5 bg-gray-600 rounded text-xs">{QUESTION_TYPES[q.question_type]?.label}</span>
-                            {q.category&&<span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded text-xs">{q.category}</span>}
-                            <span className={`px-2 py-0.5 rounded text-xs ${q.difficulty==='easy'?'bg-green-500/20 text-green-400':q.difficulty==='hard'?'bg-red-500/20 text-red-400':'bg-yellow-500/20 text-yellow-400'}`}>{DIFFICULTIES.find(d=>d.value===q.difficulty)?.label}</span>
-                            {q.image_url&&<Icon name="Image" size={12} className="text-purple-400"/>}
-                            {q.audio_url&&<Icon name="Music" size={12} className="text-pink-400"/>}
-                            {q.vimeo_id&&<Icon name="Video" size={12} className="text-cyan-400"/>}
-                          </div>
-                          <p className="text-sm truncate">{q.question_text}</p>
-                        </div>
-                        <button onClick={e=>{e.stopPropagation();deleteQuestion(q.id);}} className="p-1 hover:bg-red-500/20 rounded"><Icon name="Trash2" size={14} className="text-red-400"/></button>
+                    <Card key={q.id} className={`p-3 cursor-pointer hover:border-indigo-500 ${editingQuestion?.id===q.id?'border-indigo-500':''}`} onClick={()=>editQuestion(q)}>
+                      <div className="flex flex-wrap gap-1 mb-1">
+                        <span className="px-2 py-0.5 bg-gray-600 rounded text-xs">{QUESTION_TYPES[q.question_type]?.label}</span>
+                        {q.category_id&&<span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded text-xs">{getCategoryName(q.category_id)}</span>}
+                        {q.theme_id&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">{getThemeName(q.theme_id)}</span>}
+                        <span className={`px-2 py-0.5 rounded text-xs ${q.difficulty==='easy'?'bg-green-500/20 text-green-400':q.difficulty==='hard'?'bg-red-500/20 text-red-400':'bg-yellow-500/20 text-yellow-400'}`}>{DIFFICULTIES.find(d=>d.value===q.difficulty)?.label}</span>
+                        {q.image_url&&<Icon name="Image" size={12} className="text-purple-400"/>}
+                        {q.audio_url&&<Icon name="Music" size={12} className="text-pink-400"/>}
+                        {q.vimeo_id&&<Icon name="Video" size={12} className="text-cyan-400"/>}
                       </div>
+                      <p className="text-sm truncate">{q.question_text}</p>
                     </Card>
                   ))
                 )}
@@ -3875,51 +3895,47 @@
             </div>
             
             {/* Colonne droite : Formulaire */}
-            <Card className="p-4 h-fit sticky top-4">
-              <h3 className="font-semibold mb-4">{editingQuestion?'Modifier la question':'Nouvelle question'}</h3>
+            <Card className="p-4 h-fit sticky top-4 max-h-[calc(100vh-200px)] overflow-y-auto">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold">{editingQuestion?'Modifier':'Nouvelle question'}</h3>
+                {editingQuestion&&<Button size="sm" variant="ghost" icon="X" onClick={cancelEdit}/>}
+              </div>
               
               {/* Médias en haut */}
-              <div className="mb-4 p-4 bg-gray-700/50 rounded-lg">
-                <div className="grid grid-cols-2 gap-4 mb-3">
-                  {/* Image ou Vidéo */}
+              <div className="mb-4 p-3 bg-gray-700/50 rounded-lg">
+                <div className="grid grid-cols-2 gap-3 mb-3">
                   <div>
-                    <label className="block text-xs text-gray-400 mb-2">Image</label>
+                    <label className="text-xs text-gray-400 mb-1 block">Image</label>
                     {!questionForm.image_url?(
-                      <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-indigo-500">
-                        <Icon name="Upload" size={24} className="text-gray-400 mb-1"/>
-                        <span className="text-xs text-gray-400">{uploadingMedia?'Upload...':'Choisir une image'}</span>
+                      <label className="flex flex-col items-center justify-center h-28 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-indigo-500">
+                        <Icon name="Upload" size={20} className="text-gray-400"/>
+                        <span className="text-xs text-gray-400 mt-1">{uploadingMedia?'Upload...':'Choisir'}</span>
                         <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} disabled={uploadingMedia}/>
                       </label>
                     ):(
-                      <div className="relative h-32">
+                      <div className="relative h-28">
                         <img src={questionForm.image_url} alt="" className="w-full h-full object-cover rounded-lg"/>
-                        <button onClick={()=>setQuestionForm({...questionForm,image_url:''})} className="absolute top-1 right-1 p-1 bg-red-500 rounded-full"><Icon name="X" size={12}/></button>
+                        <button onClick={()=>setQuestionForm({...questionForm,image_url:''})} className="absolute top-1 right-1 p-1 bg-red-500 rounded-full"><Icon name="X" size={10}/></button>
                       </div>
                     )}
                   </div>
-                  
-                  {/* Vidéo Vimeo */}
                   <div>
-                    <label className="block text-xs text-gray-400 mb-2">Vidéo Vimeo</label>
+                    <label className="text-xs text-gray-400 mb-1 block">Vidéo Vimeo</label>
                     {!questionForm.vimeo_id?(
-                      <div className="h-32 flex flex-col">
-                        <Input size="sm" placeholder="URL ou ID Vimeo" onChange={e=>setQuestionForm({...questionForm,vimeo_id:extractVimeoId(e.target.value)})}/>
-                      </div>
+                      <Input size="sm" placeholder="URL ou ID" onChange={e=>setQuestionForm({...questionForm,vimeo_id:extractVimeoId(e.target.value)})} className="h-28"/>
                     ):(
-                      <div className="relative h-32">
+                      <div className="relative h-28">
                         <iframe src={`https://player.vimeo.com/video/${questionForm.vimeo_id}`} className="w-full h-full rounded-lg" frameBorder="0"/>
-                        <button onClick={()=>setQuestionForm({...questionForm,vimeo_id:''})} className="absolute top-1 right-1 p-1 bg-red-500 rounded-full"><Icon name="X" size={12}/></button>
+                        <button onClick={()=>setQuestionForm({...questionForm,vimeo_id:''})} className="absolute top-1 right-1 p-1 bg-red-500 rounded-full"><Icon name="X" size={10}/></button>
                       </div>
                     )}
                   </div>
                 </div>
-                
-                {/* Audio */}
                 <div>
-                  <label className="block text-xs text-gray-400 mb-2">Audio MP3</label>
+                  <label className="text-xs text-gray-400 mb-1 block">Audio</label>
                   {!questionForm.audio_url?(
-                    <label className="flex items-center justify-center gap-2 p-3 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-indigo-500">
-                      <Icon name="Music" size={20} className="text-gray-400"/>
+                    <label className="flex items-center justify-center gap-2 p-2 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-indigo-500">
+                      <Icon name="Music" size={16} className="text-gray-400"/>
                       <span className="text-xs text-gray-400">{uploadingMedia?'Upload...':'Choisir un audio'}</span>
                       <input type="file" accept="audio/*" className="hidden" onChange={handleAudioChange} disabled={uploadingMedia}/>
                     </label>
@@ -3932,29 +3948,33 @@
                 </div>
               </div>
               
-              {/* Classification */}
-              <div className="grid grid-cols-4 gap-2 mb-4">
-                <Select size="sm" value={questionForm.category} onChange={e=>setQuestionForm({...questionForm,category:e.target.value})} options={[{value:'',label:'Catégorie'},...categories.map(c=>({value:c.name,label:c.name}))]}/>
-                <Select size="sm" value={questionForm.theme} onChange={e=>setQuestionForm({...questionForm,theme:e.target.value,sub_theme:''})} options={[{value:'',label:'Thème'},...themes.map(t=>({value:t.name,label:t.name}))]}/>
-                <Select size="sm" value={questionForm.sub_theme} onChange={e=>setQuestionForm({...questionForm,sub_theme:e.target.value})} options={[{value:'',label:'Sous-thème'},...subThemes.filter(st=>{const th=themes.find(t=>t.name===questionForm.theme);return th&&st.theme_id===th.id;}).map(st=>({value:st.name,label:st.name}))]} disabled={!questionForm.theme}/>
-                <Select size="sm" value={questionForm.difficulty} onChange={e=>setQuestionForm({...questionForm,difficulty:e.target.value})} options={DIFFICULTIES.map(d=>({value:d.value,label:d.label}))}/>
+              {/* Classification avec + Créer */}
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                <div className="flex gap-1">
+                  <Select size="sm" className="flex-1" value={questionForm.category_id} onChange={e=>setQuestionForm({...questionForm,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Catégorie'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+                  <button onClick={()=>setQuickAdd({type:'category'})} className="px-2 bg-gray-700 hover:bg-gray-600 rounded text-indigo-400" title="Créer"><Icon name="Plus" size={14}/></button>
+                </div>
+                <div className="flex gap-1">
+                  <Select size="sm" className="flex-1" value={questionForm.theme_id} onChange={e=>setQuestionForm({...questionForm,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Thème'},...getThemesForCategory(questionForm.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!questionForm.category_id}/>
+                  <button onClick={()=>{if(questionForm.category_id)setQuickAdd({type:'theme',parentId:questionForm.category_id});}} className={`px-2 rounded ${questionForm.category_id?'bg-gray-700 hover:bg-gray-600 text-indigo-400':'bg-gray-800 text-gray-600'}`} title="Créer" disabled={!questionForm.category_id}><Icon name="Plus" size={14}/></button>
+                </div>
+                <div className="flex gap-1">
+                  <Select size="sm" className="flex-1" value={questionForm.sub_theme_id} onChange={e=>setQuestionForm({...questionForm,sub_theme_id:e.target.value})} options={[{value:'',label:'Sous-thème'},...getSubThemesForTheme(questionForm.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!questionForm.theme_id}/>
+                  <button onClick={()=>{if(questionForm.theme_id)setQuickAdd({type:'subtheme',parentId:questionForm.theme_id});}} className={`px-2 rounded ${questionForm.theme_id?'bg-gray-700 hover:bg-gray-600 text-indigo-400':'bg-gray-800 text-gray-600'}`} title="Créer" disabled={!questionForm.theme_id}><Icon name="Plus" size={14}/></button>
+                </div>
               </div>
               
-              {/* Type de question */}
-              <div className="grid grid-cols-3 gap-2 mb-4">
-                {Object.entries(QUESTION_TYPES).map(([type,info])=>(
-                  <button key={type} onClick={()=>changeQuestionType(type)} className={`p-2 rounded-lg border text-xs ${questionForm.question_type===type?'border-indigo-500 bg-indigo-500/20':'border-gray-600 hover:border-gray-500'}`}>
-                    <Icon name={info.icon} size={16} className="mx-auto mb-1"/>
-                    {info.label}
-                  </button>
-                ))}
+              {/* Type et difficulté */}
+              <div className="flex gap-2 mb-4">
+                <Select size="sm" className="flex-1" value={questionForm.question_type} onChange={e=>changeQuestionType(e.target.value)} options={Object.entries(QUESTION_TYPES).map(([k,v])=>({value:k,label:v.label}))}/>
+                <Select size="sm" value={questionForm.difficulty} onChange={e=>setQuestionForm({...questionForm,difficulty:e.target.value})} options={DIFFICULTIES.map(d=>({value:d.value,label:d.label}))}/>
               </div>
               
               {/* Question */}
               <textarea value={questionForm.question_text} onChange={e=>setQuestionForm({...questionForm,question_text:e.target.value})} rows={2} className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white mb-4" placeholder="Votre question..."/>
               
-              {/* Réponses selon le type */}
-              <div className="mb-4 max-h-48 overflow-y-auto">
+              {/* Réponses selon type */}
+              <div className="mb-4 max-h-40 overflow-y-auto">
                 {(questionForm.question_type==='single'||questionForm.question_type==='multiple')&&(
                   <div className="space-y-2">
                     {questionForm.answers.map((a,i)=>(
@@ -3964,61 +3984,51 @@
                         {questionForm.answers.length>2&&<button onClick={()=>removeAnswerOption(i)} className="p-1 text-red-400"><Icon name="X" size={14}/></button>}
                       </div>
                     ))}
-                    {questionForm.answers.length<8&&<Button size="sm" variant="ghost" icon="Plus" onClick={addAnswerOption}>Ajouter</Button>}
+                    {questionForm.answers.length<8&&<Button size="sm" variant="ghost" icon="Plus" onClick={addAnswerOption}>Réponse</Button>}
                   </div>
                 )}
-                
                 {questionForm.question_type==='true_false'&&(
                   <div className="flex gap-4">
-                    {['Vrai','Faux'].map((label,i)=>(
-                      <button key={i} onClick={()=>updateAnswer(i,'is_correct',true)} className={`flex-1 p-4 rounded-lg border ${questionForm.answers[i]?.is_correct?'border-green-500 bg-green-500/20':'border-gray-600'}`}>
-                        <Icon name={i===0?'Check':'X'} size={24} className={`mx-auto ${questionForm.answers[i]?.is_correct?'text-green-400':'text-gray-500'}`}/>
-                        <span className="block text-center mt-1">{label}</span>
+                    {['Vrai','Faux'].map((l,i)=>(
+                      <button key={i} onClick={()=>updateAnswer(i,'is_correct',true)} className={`flex-1 p-3 rounded-lg border ${questionForm.answers[i]?.is_correct?'border-green-500 bg-green-500/20':'border-gray-600'}`}>
+                        <Icon name={i===0?'Check':'X'} size={20} className={`mx-auto ${questionForm.answers[i]?.is_correct?'text-green-400':'text-gray-500'}`}/>
+                        <span className="block text-center text-sm mt-1">{l}</span>
                       </button>
                     ))}
                   </div>
                 )}
-                
                 {questionForm.question_type==='text'&&(
                   <div>
                     <div className="flex gap-2 mb-2">
                       <Input size="sm" className="flex-1" placeholder="Mot-clé..." value={questionForm.answers[0]?.text||''} onChange={e=>updateAnswer(0,'text',e.target.value)} onKeyDown={e=>e.key==='Enter'&&addKeyword()}/>
                       <Button size="sm" icon="Plus" onClick={addKeyword}>Ajouter</Button>
                     </div>
-                    <div className="flex flex-wrap gap-1">
-                      {questionForm.keywords.map(kw=>(
-                        <span key={kw} className="px-2 py-1 bg-indigo-500/20 text-indigo-300 rounded-full text-xs flex items-center gap-1">
-                          {kw}<button onClick={()=>removeKeyword(kw)}><Icon name="X" size={12}/></button>
-                        </span>
-                      ))}
-                    </div>
+                    <div className="flex flex-wrap gap-1">{questionForm.keywords.map(kw=><span key={kw} className="px-2 py-1 bg-indigo-500/20 text-indigo-300 rounded-full text-xs flex items-center gap-1">{kw}<button onClick={()=>removeKeyword(kw)}><Icon name="X" size={10}/></button></span>)}</div>
                   </div>
                 )}
-                
                 {questionForm.question_type==='matching'&&(
                   <div className="space-y-2">
                     {(questionForm.pairs||[]).map((p,i)=>(
                       <div key={i} className="flex items-center gap-2">
                         <Input size="sm" className="flex-1" value={p.left} onChange={e=>updatePair(i,'left',e.target.value)} placeholder="Élément"/>
-                        <Icon name="ArrowRight" size={16} className="text-gray-500"/>
-                        <Input size="sm" className="flex-1" value={p.right} onChange={e=>updatePair(i,'right',e.target.value)} placeholder="Correspondance"/>
-                        {(questionForm.pairs||[]).length>2&&<button onClick={()=>removePair(i)} className="p-1 text-red-400"><Icon name="X" size={14}/></button>}
+                        <Icon name="ArrowRight" size={14}/>
+                        <Input size="sm" className="flex-1" value={p.right} onChange={e=>updatePair(i,'right',e.target.value)} placeholder="Correspond."/>
+                        {(questionForm.pairs||[]).length>2&&<button onClick={()=>removePair(i)} className="text-red-400"><Icon name="X" size={14}/></button>}
                       </div>
                     ))}
-                    {(questionForm.pairs||[]).length<8&&<Button size="sm" variant="ghost" icon="Plus" onClick={addPair}>Ajouter</Button>}
+                    {(questionForm.pairs||[]).length<8&&<Button size="sm" variant="ghost" icon="Plus" onClick={addPair}>Paire</Button>}
                   </div>
                 )}
-                
                 {questionForm.question_type==='ordering'&&(
                   <div className="space-y-2">
-                    {(questionForm.items||[]).map((item,i)=>(
+                    {(questionForm.items||[]).map((it,i)=>(
                       <div key={i} className="flex items-center gap-2">
                         <span className="w-6 h-6 bg-indigo-500/20 rounded flex items-center justify-center text-xs">{i+1}</span>
-                        <Input size="sm" className="flex-1" value={item} onChange={e=>updateItem(i,e.target.value)} placeholder={`Étape ${i+1}`}/>
-                        {(questionForm.items||[]).length>2&&<button onClick={()=>removeItem(i)} className="p-1 text-red-400"><Icon name="X" size={14}/></button>}
+                        <Input size="sm" className="flex-1" value={it} onChange={e=>updateItem(i,e.target.value)} placeholder={`Étape ${i+1}`}/>
+                        {(questionForm.items||[]).length>2&&<button onClick={()=>removeItem(i)} className="text-red-400"><Icon name="X" size={14}/></button>}
                       </div>
                     ))}
-                    {(questionForm.items||[]).length<10&&<Button size="sm" variant="ghost" icon="Plus" onClick={addItem}>Ajouter</Button>}
+                    {(questionForm.items||[]).length<10&&<Button size="sm" variant="ghost" icon="Plus" onClick={addItem}>Étape</Button>}
                   </div>
                 )}
               </div>
@@ -4026,56 +4036,36 @@
               {/* Options */}
               <div className="grid grid-cols-2 gap-2 mb-4">
                 <Input size="sm" label="Points" type="number" min="1" value={questionForm.points} onChange={e=>setQuestionForm({...questionForm,points:parseInt(e.target.value)||1})}/>
-                <Input size="sm" label="Temps (sec)" type="number" min="0" value={questionForm.time_limit} onChange={e=>setQuestionForm({...questionForm,time_limit:parseInt(e.target.value)||0})}/>
+                <Input size="sm" label="Temps (s)" type="number" min="0" value={questionForm.time_limit} onChange={e=>setQuestionForm({...questionForm,time_limit:parseInt(e.target.value)||0})}/>
               </div>
               
               {/* Feedback */}
               <div className="grid grid-cols-2 gap-2 mb-4">
-                <div>
-                  <label className="text-xs text-gray-400">Feedback correct</label>
-                  <textarea value={questionForm.feedback_correct} onChange={e=>setQuestionForm({...questionForm,feedback_correct:e.target.value})} rows={2} className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm"/>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-400">Feedback incorrect</label>
-                  <textarea value={questionForm.feedback_incorrect} onChange={e=>setQuestionForm({...questionForm,feedback_incorrect:e.target.value})} rows={2} className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm"/>
-                </div>
+                <div><label className="text-xs text-gray-400">Feedback ✓</label><textarea value={questionForm.feedback_correct} onChange={e=>setQuestionForm({...questionForm,feedback_correct:e.target.value})} rows={2} className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm"/></div>
+                <div><label className="text-xs text-gray-400">Feedback ✗</label><textarea value={questionForm.feedback_incorrect} onChange={e=>setQuestionForm({...questionForm,feedback_incorrect:e.target.value})} rows={2} className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm"/></div>
               </div>
               
-              {/* Actions */}
-              <div className="flex gap-2">
-                {editingQuestion&&<Button variant="secondary" onClick={cancelEdit}>Annuler</Button>}
-                <Button className="flex-1" onClick={saveQuestion} loading={saving} disabled={uploadingMedia}>{editingQuestion?'Mettre à jour':'Créer la question'}</Button>
-              </div>
+              <Button className="w-full" onClick={saveQuestion} loading={saving} disabled={uploadingMedia}>{editingQuestion?'Mettre à jour':'Créer'}</Button>
             </Card>
           </div>
         )}
         
-        {/* === ONGLET QUIZ === */}
+        {/* ==================== ONGLET QUIZ ==================== */}
         {activeTab==='quizzes'&&(
           <div className="space-y-4">
-            <div className="flex justify-end">
-              <Button icon="Plus" onClick={()=>openQuizModal()}>Créer un quiz</Button>
-            </div>
-            
-            {quizzes.length===0?<Empty icon="HelpCircle" title="Aucun quiz" desc="Créez votre premier quiz"/>:(
+            <div className="flex justify-end"><Button icon="Plus" onClick={()=>openQuizModal()}>Créer un quiz</Button></div>
+            {quizzes.length===0?<Empty icon="HelpCircle" title="Aucun quiz"/>:(
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {quizzes.map(quiz=>(
                   <Card key={quiz.id} className="p-4">
                     <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <h3 className="font-semibold">{quiz.title}</h3>
-                        <p className="text-sm text-gray-400">{quiz.playlists?.title||'Quiz indépendant'}</p>
-                      </div>
+                      <h3 className="font-semibold">{quiz.title}</h3>
                       {quiz.is_required&&<span className="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">Obligatoire</span>}
                     </div>
                     <div className="flex flex-wrap gap-2 text-xs text-gray-400 mb-3">
                       <span><Icon name="Target" size={12} className="inline mr-1"/>{quiz.passing_score}%</span>
-                      {quiz.time_limit>0&&<span className="text-blue-400"><Icon name="Clock" size={12} className="inline mr-1"/>{quiz.time_limit}min</span>}
-                      {quiz.max_attempts>0&&<span className="text-orange-400">{quiz.max_attempts}x</span>}
-                    </div>
-                    <div className="flex flex-wrap gap-1 mb-3">
-                      {quiz.shuffle_questions&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">Mélange Q</span>}
-                      {quiz.shuffle_answers&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">Mélange R</span>}
+                      {quiz.time_limit>0&&<span><Icon name="Clock" size={12} className="inline mr-1"/>{quiz.time_limit}min</span>}
+                      {quiz.max_attempts>0&&<span>{quiz.max_attempts} tentatives</span>}
                     </div>
                     <div className="flex gap-2">
                       <Button size="sm" variant="ghost" icon="Play" onClick={()=>openPreview(quiz)}>Tester</Button>
@@ -4089,23 +4079,64 @@
           </div>
         )}
         
+        {/* ==================== MODALS ==================== */}
+        
+        {/* Modal création rapide */}
+        <Modal isOpen={!!quickAdd} onClose={()=>setQuickAdd(null)} title={`Créer ${quickAdd?.type==='category'?'une catégorie':quickAdd?.type==='theme'?'un thème':'un sous-thème'}`} size="sm">
+          <Input autoFocus value={quickAddValue} onChange={e=>setQuickAddValue(e.target.value)} placeholder="Nom..." onKeyDown={e=>e.key==='Enter'&&handleQuickAdd()}/>
+          <div className="flex gap-2 mt-4">
+            <Button variant="secondary" onClick={()=>setQuickAdd(null)}>Annuler</Button>
+            <Button className="flex-1" onClick={handleQuickAdd}>Créer</Button>
+          </div>
+        </Modal>
+        
+        {/* Modal Stats */}
+        <Modal isOpen={showStats} onClose={()=>setShowStats(false)} title="Statistiques" size="lg">
+          <div className="grid grid-cols-4 gap-4 mb-6">
+            <div className="text-center p-4 bg-gray-700 rounded-lg"><p className="text-2xl font-bold text-indigo-400">{stats.total}</p><p className="text-sm text-gray-400">Questions</p></div>
+            <div className="text-center p-4 bg-gray-700 rounded-lg"><p className="text-2xl font-bold text-purple-400">{stats.catCount}</p><p className="text-sm text-gray-400">Catégories</p></div>
+            <div className="text-center p-4 bg-gray-700 rounded-lg"><p className="text-2xl font-bold text-cyan-400">{stats.themeCount}</p><p className="text-sm text-gray-400">Thèmes</p></div>
+            <div className="text-center p-4 bg-gray-700 rounded-lg"><p className="text-2xl font-bold text-green-400">{stats.subThemeCount}</p><p className="text-sm text-gray-400">Sous-thèmes</p></div>
+          </div>
+          
+          <h4 className="font-medium mb-3">Répartition par catégorie</h4>
+          <div className="space-y-2 mb-6">
+            {stats.byCat.map(c=>(
+              <div key={c.name} className="flex items-center gap-3">
+                <span className="w-32 truncate">{c.name}</span>
+                <div className="flex-1 bg-gray-700 rounded-full h-4">
+                  <div className="bg-indigo-500 h-4 rounded-full" style={{width:`${stats.total>0?c.count/stats.total*100:0}%`}}/>
+                </div>
+                <span className="text-sm text-gray-400 w-16 text-right">{c.count} ({stats.total>0?Math.round(c.count/stats.total*100):0}%)</span>
+              </div>
+            ))}
+          </div>
+          
+          <h4 className="font-medium mb-3">Couverture</h4>
+          <div className="space-y-2">
+            <p className="text-sm text-gray-400"><span className={stats.orphans>0?'text-orange-400':'text-green-400'}>{stats.orphans}</span> questions sans catégorie</p>
+            <p className="text-sm text-gray-400">{stats.total>0?Math.round(stats.withTheme/stats.total*100):0}% ont un thème</p>
+            <p className="text-sm text-gray-400">{stats.total>0?Math.round(stats.withSubTheme/stats.total*100):0}% ont un sous-thème</p>
+          </div>
+        </Modal>
+        
         {/* Modal Quiz */}
         <Modal isOpen={quizModal} onClose={()=>setQuizModal(false)} title={editingQuiz?'Modifier le quiz':'Créer un quiz'} size="xl">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Gauche : Paramètres */}
             <div className="space-y-4">
               <Input label="Titre *" value={quizForm.title} onChange={e=>setQuizForm({...quizForm,title:e.target.value})}/>
-              <Select label="Cours associé" value={quizForm.playlist_id} onChange={e=>setQuizForm({...quizForm,playlist_id:e.target.value})} options={[{value:'',label:'-- Aucun --'},...playlists.map(p=>({value:p.id,label:p.title}))]}/>
-              <textarea value={quizForm.description} onChange={e=>setQuizForm({...quizForm,description:e.target.value})} rows={2} className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white" placeholder="Description..."/>
+              <Select label="Cours" value={quizForm.playlist_id} onChange={e=>setQuizForm({...quizForm,playlist_id:e.target.value})} options={[{value:'',label:'-- Aucun --'},...playlists.map(p=>({value:p.id,label:p.title}))]}/>
+              <textarea value={quizForm.description} onChange={e=>setQuizForm({...quizForm,description:e.target.value})} rows={2} className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg" placeholder="Description..."/>
               
-              <div className="grid grid-cols-2 gap-4">
-                <Input label="Score min (%)" type="number" value={quizForm.passing_score} onChange={e=>setQuizForm({...quizForm,passing_score:parseInt(e.target.value)||70})}/>
-                <Input label="Tentatives (0=∞)" type="number" value={quizForm.max_attempts} onChange={e=>setQuizForm({...quizForm,max_attempts:parseInt(e.target.value)||0})}/>
-                <Input label="Durée (min, 0=∞)" type="number" value={quizForm.time_limit} onChange={e=>setQuizForm({...quizForm,time_limit:parseInt(e.target.value)||0})}/>
+              <div className="grid grid-cols-3 gap-3">
+                <Input label="Score min (%)" type="number" value={quizForm.passing_score} onChange={e=>setQuizForm({...quizForm,passing_score:e.target.value})}/>
+                <Input label="Tentatives" type="number" value={quizForm.max_attempts} onChange={e=>setQuizForm({...quizForm,max_attempts:e.target.value})} placeholder="0=∞"/>
+                <Input label="Durée (min)" type="number" value={quizForm.time_limit} onChange={e=>setQuizForm({...quizForm,time_limit:e.target.value})} placeholder="0=∞"/>
               </div>
               
-              <div className="grid grid-cols-2 gap-2 p-3 bg-gray-700/50 rounded-lg">
-                <Checkbox label="Quiz obligatoire" checked={quizForm.is_required} onChange={v=>setQuizForm({...quizForm,is_required:v})}/>
+              <div className="grid grid-cols-2 gap-2 p-3 bg-gray-700/50 rounded-lg text-sm">
+                <Checkbox label="Obligatoire" checked={quizForm.is_required} onChange={v=>setQuizForm({...quizForm,is_required:v})}/>
                 <Checkbox label="Mélanger questions" checked={quizForm.shuffle_questions} onChange={v=>setQuizForm({...quizForm,shuffle_questions:v})}/>
                 <Checkbox label="Mélanger réponses" checked={quizForm.shuffle_answers} onChange={v=>setQuizForm({...quizForm,shuffle_answers:v})}/>
                 <Checkbox label="Afficher réponses" checked={quizForm.show_answers} onChange={v=>setQuizForm({...quizForm,show_answers:v})}/>
@@ -4119,51 +4150,42 @@
               </div>
             </div>
             
-            {/* Droite : Sélection questions */}
+            {/* Droite : Questions */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h4 className="font-medium">Questions du quiz ({quizQuestions.length})</h4>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="secondary" onClick={()=>randomPick(5)}>+5 aléatoires</Button>
-                  <Button size="sm" variant="secondary" onClick={()=>randomPick(10)}>+10 aléatoires</Button>
-                </div>
+                <h4 className="font-medium">Questions ({quizQuestions.length})</h4>
+                <Button size="sm" variant="secondary" icon="Shuffle" onClick={()=>setShowPickerModal(true)}>Pioche intelligente</Button>
               </div>
               
-              {/* Questions sélectionnées (drag & drop) */}
-              <div ref={sortableRef} className="space-y-2 max-h-40 overflow-y-auto p-2 bg-gray-700/30 rounded-lg min-h-[100px]">
-                {quizQuestions.length===0?<p className="text-center text-gray-500 py-4">Aucune question</p>:(
+              {/* Questions du quiz (drag & drop) */}
+              <div ref={sortableRef} className="space-y-1 max-h-36 overflow-y-auto p-2 bg-gray-700/30 rounded-lg min-h-[80px]">
+                {quizQuestions.length===0?<p className="text-center text-gray-500 py-4 text-sm">Aucune question</p>:(
                   quizQuestions.map((q,i)=>(
-                    <div key={q.id||i} className="flex items-center gap-2 p-2 bg-gray-700 rounded">
-                      <Icon name="GripVertical" size={16} className="drag-handle cursor-move text-gray-500"/>
-                      <span className="text-xs bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded">{i+1}</span>
-                      <span className="flex-1 text-sm truncate">{q.question_text}</span>
-                      <button onClick={()=>removeFromQuiz(i)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={14} className="text-red-400"/></button>
+                    <div key={q.id||i} className="flex items-center gap-2 p-2 bg-gray-700 rounded text-sm">
+                      <Icon name="GripVertical" size={14} className="drag-handle cursor-move text-gray-500"/>
+                      <span className="w-6 h-6 bg-indigo-500/20 text-indigo-400 rounded flex items-center justify-center text-xs">{i+1}</span>
+                      <span className="flex-1 truncate">{q.question_text}</span>
+                      <button onClick={()=>removeFromQuiz(i)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={12} className="text-red-400"/></button>
                     </div>
                   ))
                 )}
               </div>
               
-              {/* Banque pour sélection */}
-              <div className="border-t border-gray-600 pt-4">
+              {/* Sélection depuis banque */}
+              <div className="border-t border-gray-600 pt-3">
                 <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-sm font-medium">Banque de questions</h4>
+                  <span className="text-sm font-medium">Banque de questions</span>
                   <Button size="sm" onClick={addQuestionsToQuiz} disabled={selectedQuestions.length===0}>Ajouter ({selectedQuestions.length})</Button>
                 </div>
-                <div className="flex gap-2 mb-2">
-                  <Input size="sm" className="flex-1" icon="Search" placeholder="Rechercher..." value={bankFilter.search} onChange={e=>setBankFilter({...bankFilter,search:e.target.value})}/>
-                  <Select size="sm" value={bankFilter.category} onChange={e=>setBankFilter({...bankFilter,category:e.target.value})} options={[{value:'all',label:'Catégorie'},...categories.map(c=>({value:c.name,label:c.name}))]}/>
-                </div>
-                <div className="space-y-1 max-h-48 overflow-y-auto">
-                  {filteredQuestions.map(q=>{
+                <Input size="sm" icon="Search" placeholder="Rechercher..." className="mb-2"/>
+                <div className="space-y-1 max-h-40 overflow-y-auto">
+                  {bankQuestions.map(q=>{
                     const inQuiz=quizQuestions.some(qq=>qq.id===q.id||qq.bank_id===q.id);
                     return(
-                      <label key={q.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer ${inQuiz?'opacity-50':'hover:bg-gray-700'}`}>
-                        <input type="checkbox" checked={selectedQuestions.includes(q.id)} onChange={e=>{
-                          if(inQuiz)return;
-                          setSelectedQuestions(e.target.checked?[...selectedQuestions,q.id]:selectedQuestions.filter(id=>id!==q.id));
-                        }} disabled={inQuiz} className="w-4 h-4"/>
-                        <span className="flex-1 text-sm truncate">{q.question_text}</span>
-                        <span className="text-xs text-gray-500">{QUESTION_TYPES[q.question_type]?.label}</span>
+                      <label key={q.id} className={`flex items-center gap-2 p-1.5 rounded text-sm cursor-pointer ${inQuiz?'opacity-40':'hover:bg-gray-700'}`}>
+                        <input type="checkbox" checked={selectedQuestions.includes(q.id)} onChange={e=>setSelectedQuestions(e.target.checked?[...selectedQuestions,q.id]:selectedQuestions.filter(id=>id!==q.id))} disabled={inQuiz} className="w-4 h-4"/>
+                        <span className="flex-1 truncate">{q.question_text}</span>
+                        {q.category_id&&<span className="text-xs text-indigo-400">{getCategoryName(q.category_id)}</span>}
                       </label>
                     );
                   })}
@@ -4173,22 +4195,59 @@
           </div>
         </Modal>
         
+        {/* Modal Pioche intelligente */}
+        <Modal isOpen={showPickerModal} onClose={()=>setShowPickerModal(false)} title="Pioche intelligente" size="md">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Mode de sélection</label>
+              <div className="flex gap-2">
+                <button onClick={()=>setPickerConfig({...pickerConfig,mode:'branch'})} className={`flex-1 p-3 rounded-lg border ${pickerConfig.mode==='branch'?'border-indigo-500 bg-indigo-500/20':'border-gray-600'}`}>
+                  <Icon name="GitBranch" size={20} className="mx-auto mb-1"/>
+                  <span className="text-sm">Par branche</span>
+                </button>
+                <button onClick={()=>setPickerConfig({...pickerConfig,mode:'balance'})} className={`flex-1 p-3 rounded-lg border ${pickerConfig.mode==='balance'?'border-indigo-500 bg-indigo-500/20':'border-gray-600'}`}>
+                  <Icon name="Scale" size={20} className="mx-auto mb-1"/>
+                  <span className="text-sm">Équilibré</span>
+                </button>
+              </div>
+            </div>
+            
+            {pickerConfig.mode==='branch'&&(
+              <div className="grid grid-cols-2 gap-3">
+                <Select label="Catégorie" value={pickerConfig.categoryId} onChange={e=>setPickerConfig({...pickerConfig,categoryId:e.target.value,themeId:''})} options={[{value:'',label:'Toutes'},...categories.map(c=>({value:c.id,label:`${c.name} (${countQuestionsForCategory(c.id)})`}))]}/>
+                <Select label="Thème" value={pickerConfig.themeId} onChange={e=>setPickerConfig({...pickerConfig,themeId:e.target.value})} options={[{value:'',label:'Tous'},...getThemesForCategory(pickerConfig.categoryId).map(t=>({value:t.id,label:`${t.name} (${countQuestionsForTheme(t.id)})`}))]} disabled={!pickerConfig.categoryId}/>
+              </div>
+            )}
+            
+            {pickerConfig.mode==='balance'&&(
+              <p className="text-sm text-gray-400">Les questions seront réparties équitablement entre toutes les catégories.</p>
+            )}
+            
+            <Input label="Nombre de questions" type="number" min="1" max="50" value={pickerConfig.count} onChange={e=>setPickerConfig({...pickerConfig,count:parseInt(e.target.value)||10})}/>
+            
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={()=>setShowPickerModal(false)}>Annuler</Button>
+              <Button className="flex-1" icon="Shuffle" onClick={executePicker}>Piocher</Button>
+            </div>
+          </div>
+        </Modal>
+        
         {/* Modal Prévisualisation */}
         <Modal isOpen={!!previewQuiz} onClose={()=>setPreviewQuiz(null)} title={`Test: ${previewQuiz?.title}`} size="xl">
           {previewQuiz&&(
             <div className="space-y-4">
               {previewSubmitted&&(
-                <div className={`p-4 rounded-lg ${calculateScore().percent>=previewQuiz.passing_score?'bg-green-500/20':'bg-red-500/20'}`}>
-                  <p className="font-semibold">{calculateScore().percent>=previewQuiz.passing_score?'✓ Réussi':'✗ Échoué'} - {calculateScore().score}/{calculateScore().total} pts ({calculateScore().percent}%)</p>
+                <div className={`p-4 rounded-lg ${calcScore().pct>=previewQuiz.passing_score?'bg-green-500/20':'bg-red-500/20'}`}>
+                  <p className="font-semibold">{calcScore().pct>=previewQuiz.passing_score?'✓ Réussi':'✗ Échoué'} - {calcScore().score}/{calcScore().total} pts ({calcScore().pct}%)</p>
                   <Button size="sm" variant="secondary" className="mt-2" onClick={()=>{setPreviewAnswers({});setPreviewSubmitted(false);}}>Recommencer</Button>
                 </div>
               )}
               
-              <div className="space-y-4 max-h-96 overflow-y-auto">
+              <div className="space-y-3 max-h-96 overflow-y-auto">
                 {previewQuiz.questions.map((q,i)=>{
                   const correct=(q.quiz_answers||[]).filter(a=>a.is_correct).map(a=>a.id);
-                  const userAns=previewAnswers[q.id];
-                  const isCorrect=previewSubmitted&&((q.question_type==='single'||q.question_type==='true_false')?correct.includes(userAns):(userAns||[]).length===correct.length&&correct.every(id=>(userAns||[]).includes(id)));
+                  const ans=previewAnswers[q.id];
+                  const isCorrect=previewSubmitted&&((q.question_type==='single'||q.question_type==='true_false')?correct.includes(ans):(ans||[]).length===correct.length&&correct.every(id=>(ans||[]).includes(id)));
                   
                   return(
                     <div key={q.id} className={`p-4 rounded-lg ${previewSubmitted?(isCorrect?'bg-green-500/10':'bg-red-500/10'):'bg-gray-700'}`}>
@@ -4200,8 +4259,8 @@
                       {(q.question_type==='single'||q.question_type==='true_false')&&(
                         <div className="space-y-2 ml-8">
                           {(q.quiz_answers||[]).map(a=>(
-                            <label key={a.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer ${previewSubmitted?(a.is_correct?'bg-green-500/20':userAns===a.id?'bg-red-500/20':''):(userAns===a.id?'bg-indigo-500/20':'hover:bg-gray-600')}`}>
-                              <input type="radio" checked={userAns===a.id} onChange={()=>!previewSubmitted&&setPreviewAnswers({...previewAnswers,[q.id]:a.id})} disabled={previewSubmitted}/>
+                            <label key={a.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer ${previewSubmitted?(a.is_correct?'bg-green-500/20':ans===a.id?'bg-red-500/20':''):(ans===a.id?'bg-indigo-500/20':'hover:bg-gray-600')}`}>
+                              <input type="radio" checked={ans===a.id} onChange={()=>!previewSubmitted&&setPreviewAnswers({...previewAnswers,[q.id]:a.id})} disabled={previewSubmitted}/>
                               <span>{a.answer_text}</span>
                             </label>
                           ))}
@@ -4211,14 +4270,10 @@
                       {q.question_type==='multiple'&&(
                         <div className="space-y-2 ml-8">
                           {(q.quiz_answers||[]).map(a=>{
-                            const sel=(userAns||[]).includes(a.id);
+                            const sel=(ans||[]).includes(a.id);
                             return(
                               <label key={a.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer ${previewSubmitted?(a.is_correct?'bg-green-500/20':sel?'bg-red-500/20':''):(sel?'bg-indigo-500/20':'hover:bg-gray-600')}`}>
-                                <input type="checkbox" checked={sel} onChange={()=>{
-                                  if(previewSubmitted)return;
-                                  const arr=userAns||[];
-                                  setPreviewAnswers({...previewAnswers,[q.id]:sel?arr.filter(id=>id!==a.id):[...arr,a.id]});
-                                }} disabled={previewSubmitted}/>
+                                <input type="checkbox" checked={sel} onChange={()=>!previewSubmitted&&setPreviewAnswers({...previewAnswers,[q.id]:sel?(ans||[]).filter(id=>id!==a.id):[...(ans||[]),a.id]})} disabled={previewSubmitted}/>
                                 <span>{a.answer_text}</span>
                               </label>
                             );
@@ -4230,11 +4285,7 @@
                 })}
               </div>
               
-              {!previewSubmitted?(
-                <Button className="w-full" onClick={()=>setPreviewSubmitted(true)}>Soumettre</Button>
-              ):(
-                <Button className="w-full" onClick={()=>setPreviewQuiz(null)}>Fermer</Button>
-              )}
+              {!previewSubmitted?<Button className="w-full" onClick={()=>setPreviewSubmitted(true)}>Soumettre</Button>:<Button className="w-full" onClick={()=>setPreviewQuiz(null)}>Fermer</Button>}
             </div>
           )}
         </Modal>
