@@ -5555,15 +5555,23 @@
             {(!editContentModal?.is_locked||isSuperAdmin)&&realRole!=='trainer'&&<div>
               <h4 className="font-medium mb-3">Vidéos disponibles</h4>
               <div className="space-y-2 max-h-96 overflow-y-auto">
-                {videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)).map(v=>{
+                {videos.filter(v=>{
+                  // Exclure les vidéos déjà dans le cours
+                  if(playlistVideos.find(pv=>pv.video_id===v.id))return false;
+                  // Vérifier la propriété et la licence
                   const isOwn=!v.is_lms_content||v.center_id===center?.id;
-                  const licensed=isOwn||isLicensed('video',v.id);
-                  if(!licensed&&!isSuperAdmin)return null; // Masquer les non-licenciés
-                  return<div key={v.id} className={`flex items-center gap-3 p-3 rounded-lg ${licensed?'bg-gray-700/50 hover:bg-gray-700 cursor-pointer':'bg-gray-800/50 opacity-50 cursor-not-allowed'}`} onClick={()=>licensed&&addVideoToPlaylist(v.id)}>
-                    <Icon name="Plus" size={16} className={licensed?"text-indigo-400":"text-gray-500"}/>
+                  if(isOwn)return true; // Contenu du centre = toujours visible
+                  if(isSuperAdmin)return true; // Super Admin voit tout
+                  // Pour les contenus LMS, vérifier la licence
+                  const licensed=isLicensed('video',v.id);
+                  return licensed; // Masquer si pas licencié
+                }).map(v=>{
+                  const isOwn=!v.is_lms_content||v.center_id===center?.id;
+                  return<div key={v.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-700/50 hover:bg-gray-700 cursor-pointer" onClick={()=>addVideoToPlaylist(v.id)}>
+                    <Icon name="Plus" size={16} className="text-indigo-400"/>
                     <div className="flex-1 min-w-0">
                       <p className="font-medium truncate text-sm">{v.title}</p>
-                      {!isOwn&&<span className={`text-xs ${licensed?'text-indigo-400':'text-red-400'}`}>{licensed?'📦 LMS':'🔒 Non licencié'}</span>}
+                      {!isOwn&&<span className="text-xs text-indigo-400">📦 LMS</span>}
                     </div>
                   </div>;
                 })}
@@ -5591,15 +5599,23 @@
             {(!editContentModal?.is_locked||isSuperAdmin)&&realRole!=='trainer'&&<div>
               <h4 className="font-medium mb-3">Modules disponibles</h4>
               <div className="space-y-2 max-h-96 overflow-y-auto">
-                {scormModules.filter(m=>!playlistScorm.find(ps=>ps.scorm_module_id===m.id)).map(m=>{
+                {scormModules.filter(m=>{
+                  // Exclure les modules déjà dans le cours
+                  if(playlistScorm.find(ps=>ps.scorm_module_id===m.id))return false;
+                  // Vérifier la propriété et la licence
                   const isOwn=!m.is_lms_content||m.center_id===center?.id;
-                  const licensed=isOwn||isLicensed('scorm',m.id);
-                  if(!licensed&&!isSuperAdmin)return null; // Masquer les non-licenciés
-                  return<div key={m.id} className={`flex items-center gap-3 p-3 rounded-lg ${licensed?'bg-gray-700/50 hover:bg-gray-700 cursor-pointer':'bg-gray-800/50 opacity-50 cursor-not-allowed'}`} onClick={()=>licensed&&addScormToPlaylist(m.id)}>
-                    <Icon name="Plus" size={16} className={licensed?"text-orange-400":"text-gray-500"}/>
+                  if(isOwn)return true; // Contenu du centre = toujours visible
+                  if(isSuperAdmin)return true; // Super Admin voit tout
+                  // Pour les contenus LMS, vérifier la licence
+                  const licensed=isLicensed('scorm',m.id);
+                  return licensed; // Masquer si pas licencié
+                }).map(m=>{
+                  const isOwn=!m.is_lms_content||m.center_id===center?.id;
+                  return<div key={m.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-700/50 hover:bg-gray-700 cursor-pointer" onClick={()=>addScormToPlaylist(m.id)}>
+                    <Icon name="Plus" size={16} className="text-orange-400"/>
                     <div className="flex-1 min-w-0">
                       <p className="font-medium truncate text-sm">{m.title}</p>
-                      <p className="text-xs text-gray-400">{m.module_type}{!isOwn&&<span className={`ml-2 ${licensed?'text-indigo-400':'text-red-400'}`}>{licensed?'📦 LMS':'🔒 Non licencié'}</span>}</p>
+                      <p className="text-xs text-gray-400">{m.module_type}{!isOwn&&<span className="ml-2 text-indigo-400">📦 LMS</span>}</p>
                     </div>
                   </div>;
                 })}
@@ -8384,16 +8400,24 @@
             {!contentModal?.is_locked&&<div>
               <h4 className="font-medium mb-3">Cours disponibles</h4>
               <div className="space-y-2 max-h-80 overflow-y-auto">
-                {courses.filter(c=>!pathCourses.find(pc=>pc.playlist_id===c.id)).map(c=>{
-                  const licensed=isCourseLicensed(c);
-                  if(!licensed&&!isSuperAdmin)return null; // Masquer les non-licenciés
-                  return<div key={c.id} className={`flex items-center gap-3 p-3 rounded-lg ${licensed?'bg-gray-700/50 hover:bg-gray-700 cursor-pointer':'bg-gray-800/50 opacity-50 cursor-not-allowed'}`} onClick={()=>licensed&&addCourseToPath(c.id)}>
-                    <Icon name="Plus" size={16} className={licensed?"text-indigo-400":"text-gray-500"}/>
+                {courses.filter(c=>{
+                  // Exclure les cours déjà dans le parcours
+                  if(pathCourses.find(pc=>pc.playlist_id===c.id))return false;
+                  // Vérifier la propriété et la licence
+                  const isOwn=!c.is_lms_content||c.center_id===center?.id;
+                  if(isOwn)return true; // Contenu du centre = toujours visible
+                  if(isSuperAdmin)return true; // Super Admin voit tout
+                  // Pour les contenus LMS, vérifier la licence
+                  return isCourseLicensed(c);
+                }).map(c=>{
+                  const isOwn=!c.is_lms_content||c.center_id===center?.id;
+                  return<div key={c.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-700/50 hover:bg-gray-700 cursor-pointer" onClick={()=>addCourseToPath(c.id)}>
+                    <Icon name="Plus" size={16} className="text-indigo-400"/>
                     <div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{c.title}</p></div>
-                    {c.is_lms_content&&<span className={`px-1.5 py-0.5 rounded text-xs ${licensed?'bg-indigo-500/20 text-indigo-400':'bg-red-500/20 text-red-400'}`}>{licensed?'📦 LMS':'🔒'}</span>}
+                    {c.is_lms_content&&!isOwn&&<span className="px-1.5 py-0.5 rounded text-xs bg-indigo-500/20 text-indigo-400">📦 LMS</span>}
                   </div>;
                 })}
-                {courses.filter(c=>!pathCourses.find(pc=>pc.playlist_id===c.id)&&isCourseLicensed(c)).length===0&&<p className="text-gray-500 text-sm text-center py-4">Tous les cours ajoutés</p>}
+                {courses.filter(c=>!pathCourses.find(pc=>pc.playlist_id===c.id)&&((!c.is_lms_content||c.center_id===center?.id)||isCourseLicensed(c)||isSuperAdmin)).length===0&&<p className="text-gray-500 text-sm text-center py-4">Tous les cours ajoutés</p>}
               </div>
             </div>}
           </div>
