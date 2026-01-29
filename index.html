@@ -61,7 +61,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '7.4.2';
+    const APP_VERSION = '7.4.4';
     // =======================================
 
     // Masquer l'écran de chargement une fois React prêt
@@ -238,33 +238,54 @@
       // Mode "Vue comme" pour Super Admin
       const[viewAs,setViewAs]=useState(null);
       
-      // Ref pour éviter les appels multiples
+      // Refs pour éviter les boucles infinies et appels multiples
       const isRefreshingRef=useRef(false);
       const lastRefreshRef=useRef(0);
+      const initializedRef=useRef(false); // IMPORTANT: empêche INITIAL_SESSION multiple
+      const profileRef=useRef(null); // Ref pour le profil actuel
+      const userRef=useRef(null); // Ref pour l'utilisateur actuel
+      const isLoadingProfileRef=useRef(false); // Empêche les appels parallèles à loadProfile
 
+      // Mettre à jour les refs quand les états changent
+      useEffect(()=>{profileRef.current=profile;},[profile]);
+      useEffect(()=>{userRef.current=user;},[user]);
+
+      // loadProfile sans dépendance sur profile (utilise profileRef)
       const loadProfile=useCallback(async(userId)=>{
+        // Éviter les appels parallèles
+        if(isLoadingProfileRef.current){
+          console.log('loadProfile déjà en cours, ignoré');
+          return profileRef.current;
+        }
+        isLoadingProfileRef.current=true;
+        
         try{
           const{data,error:err}=await supabase.from('profiles').select('*,centers(*)').eq('id',userId).single();
           // Ignorer les erreurs AbortError (requête annulée)
           if(err){
-            if(err.message?.includes('AbortError')||err.code==='PGRST301')return profile; // Retourner le profil existant
+            if(err.message?.includes('AbortError')||err.code==='PGRST301'){
+              isLoadingProfileRef.current=false;
+              return profileRef.current; // Retourner le profil existant
+            }
             throw err;
           }
           setProfile(data);
           setCenter(data?.centers);
           const{data:perms}=await supabase.from('role_permissions').select('permissions').eq('role',data?.role).single();
           setPermissions(perms?.permissions||{});
+          isLoadingProfileRef.current=false;
           return data;
         }catch(e){
+          isLoadingProfileRef.current=false;
           // Ignorer AbortError
           if(e.message?.includes('AbortError')||e.name==='AbortError'){
             console.log('Requête profile annulée (AbortError) - ignorée');
-            return profile;
+            return profileRef.current;
           }
           console.error('Erreur loadProfile:',e);
           return null;
         }
-      },[profile]);
+      },[]); // PAS DE DÉPENDANCE ICI - utilise profileRef à la place
 
       // Fonction pour vérifier et rafraîchir la session (avec protection contre les appels multiples)
       const checkAndRefreshSession=useCallback(async(force=false)=>{
@@ -334,6 +355,13 @@
       useEffect(()=>{
         let mounted=true;
         
+        // Éviter la double initialisation (React StrictMode)
+        if(initializedRef.current){
+          console.log('AuthProvider déjà initialisé, skip');
+          return;
+        }
+        initializedRef.current=true;
+        
         // Timeout de sécurité : si le chargement prend plus de 10s, on arrête
         const timeout=setTimeout(()=>{
           if(mounted&&loading){
@@ -360,6 +388,9 @@
         };
         init();
         
+        // Flag pour ne traiter INITIAL_SESSION qu'une seule fois
+        let initialSessionHandled=false;
+        
         // Listener pour les changements d'état auth
         const{data:{subscription}}=supabase.auth.onAuthStateChange(async(event,session)=>{
           if(!mounted)return;
@@ -369,7 +400,7 @@
             setUser(session.user);
             setSessionError(false);
             // Ne recharger le profil que si c'est un nouvel utilisateur
-            if(!profile||profile.id!==session.user.id){
+            if(!profileRef.current||profileRef.current.id!==session.user.id){
               await loadProfile(session.user.id);
             }
           }
@@ -388,11 +419,21 @@
             }
           }
           else if(event==='INITIAL_SESSION'){
+            // IMPORTANT: Ne traiter qu'une seule fois pour éviter la boucle infinie
+            if(initialSessionHandled){
+              console.log('INITIAL_SESSION déjà traité, ignoré');
+              return;
+            }
+            initialSessionHandled=true;
+            
             // Session restaurée depuis le storage
             if(session?.user){
               setUser(session.user);
               setSessionError(false);
-              await loadProfile(session.user.id);
+              // Ne charger que si pas déjà chargé
+              if(!profileRef.current||profileRef.current.id!==session.user.id){
+                await loadProfile(session.user.id);
+              }
             }
           }
         });
@@ -406,7 +447,7 @@
             visibilityTimeout=setTimeout(async()=>{
               console.log('Onglet redevenu visible, vérification session...');
               const session=await checkAndRefreshSession();
-              if(!session&&user){
+              if(!session&&userRef.current){
                 // Avait un user mais plus de session valide
                 console.warn('Session perdue, déconnexion...');
                 setUser(null);
@@ -424,7 +465,7 @@
         
         // Heartbeat toutes les 4 minutes pour garder la session active
         const heartbeatInterval=setInterval(async()=>{
-          if(document.visibilityState==='visible'&&user){
+          if(document.visibilityState==='visible'&&userRef.current){
             console.log('Heartbeat session...');
             await checkAndRefreshSession();
           }
@@ -438,7 +479,7 @@
           document.removeEventListener('visibilitychange',handleVisibilityChange);
           subscription.unsubscribe();
         };
-      },[loadProfile,checkAndRefreshSession]);
+      },[]); // IMPORTANT: pas de dépendances pour éviter de recréer le listener
 
       const signIn=async(email,password)=>{
         try{
@@ -6455,11 +6496,19 @@
           </div>
         </Card>
         
+        {/* Légende */}
+        <div className="flex flex-wrap gap-4 mb-4 text-xs text-gray-400">
+          <span className="flex items-center gap-1"><Icon name="ChevronRight" size={14}/> Cliquer pour déplier</span>
+          <span className="flex items-center gap-1"><Icon name="Edit2" size={14} className="text-indigo-400"/> Modifier (nom, couleur, tags)</span>
+          <span className="flex items-center gap-1"><Icon name="Plus" size={14} className="text-green-400"/> Ajouter thème/sous-thème</span>
+          <span className="flex items-center gap-1"><Icon name="Tags" size={14} className="text-amber-400"/> Gérer les tags</span>
+        </div>
+        
         <Card className="p-6">
           {/* Ajouter catégorie */}
           <div className="flex gap-2 mb-6">
             <Input className="flex-1" placeholder="Nouvelle catégorie..." value={quickAddValue} onChange={e=>setQuickAddValue(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&quickAddValue.trim()){addCategory(quickAddValue);setQuickAddValue('');}}}/>
-            <Button icon="Plus" onClick={()=>{if(quickAddValue.trim()){addCategory(quickAddValue);setQuickAddValue('');}}} loading={saving}>Ajouter</Button>
+            <Button icon="Plus" onClick={()=>{if(quickAddValue.trim()){addCategory(quickAddValue);setQuickAddValue('');}}} loading={saving}>Ajouter catégorie</Button>
           </div>
           
           {filteredCategories.length===0?(
@@ -6473,10 +6522,12 @@
                 const highlighted=isHighlighted('category',cat.id);
                 
                 return<div key={cat.id} className={`border rounded-lg overflow-hidden ${highlighted?'border-indigo-500 ring-1 ring-indigo-500':'border-gray-700'}`}>
-                  <div className="flex items-center gap-3 p-4 bg-gray-800 hover:bg-gray-750 cursor-pointer" onClick={()=>setExpandedCats({...expandedCats,[cat.id]:!isExpanded})}>
-                    <Icon name={isExpanded?'ChevronDown':'ChevronRight'} size={20} className="text-gray-400"/>
+                  <div className="flex items-center gap-3 p-4 bg-gray-800 hover:bg-gray-750">
+                    <button onClick={()=>setExpandedCats({...expandedCats,[cat.id]:!isExpanded})} className="p-1 hover:bg-gray-700 rounded">
+                      <Icon name={isExpanded?'ChevronDown':'ChevronRight'} size={20} className="text-gray-400"/>
+                    </button>
                     <div className="w-4 h-4 rounded-full shrink-0" style={{backgroundColor:cat.color||'#6366f1'}}/>
-                    <span className="font-semibold flex-1">{cat.name}</span>
+                    <span className="font-semibold flex-1 cursor-pointer" onClick={()=>setExpandedCats({...expandedCats,[cat.id]:!isExpanded})}>{cat.name}</span>
                     
                     {/* Tags */}
                     {(cat.tags||[]).length>0&&(
@@ -6499,13 +6550,35 @@
                     </div>
                     
                     <span className="text-sm text-gray-500">{allCatThemes.length} thème(s)</span>
-                    <button onClick={e=>{e.stopPropagation();openEditModal('category',cat);}} className="p-2 hover:bg-indigo-500/20 rounded"><Icon name="Edit2" size={16} className="text-indigo-400"/></button>
-                    <button onClick={e=>{e.stopPropagation();deleteCategory(cat.id);}} className="p-2 hover:bg-red-500/20 rounded"><Icon name="Trash2" size={16} className="text-red-400"/></button>
+                    
+                    {/* Boutons d'action explicites */}
+                    <div className="flex items-center gap-1 border-l border-gray-600 pl-2 ml-2">
+                      <button onClick={e=>{e.stopPropagation();setExpandedCats({...expandedCats,[cat.id]:true});}} className="p-2 hover:bg-green-500/20 rounded group relative" title="Ajouter un thème">
+                        <Icon name="Plus" size={16} className="text-green-400"/>
+                        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-xs text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none">+ Thème</span>
+                      </button>
+                      <button onClick={e=>{e.stopPropagation();openEditModal('category',cat);}} className="p-2 hover:bg-indigo-500/20 rounded group relative" title="Modifier la catégorie">
+                        <Icon name="Edit2" size={16} className="text-indigo-400"/>
+                        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-xs text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none">Modifier</span>
+                      </button>
+                      <button onClick={e=>{e.stopPropagation();deleteCategory(cat.id);}} className="p-2 hover:bg-red-500/20 rounded group relative" title="Supprimer">
+                        <Icon name="Trash2" size={16} className="text-red-400"/>
+                        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-xs text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none">Supprimer</span>
+                      </button>
+                    </div>
                   </div>
                   
                   {isExpanded&&(
                     <div className="p-4 pl-12 space-y-3 bg-gray-800/50 border-t border-gray-700">
-                      {catThemes.length===0&&!searchQuery&&<p className="text-sm text-gray-500">Aucun thème</p>}
+                      {/* Formulaire ajout thème en haut */}
+                      {!searchQuery&&(
+                        <div className="flex gap-2 items-center p-3 bg-gray-700/50 rounded-lg border border-dashed border-gray-600">
+                          <Icon name="Plus" size={16} className="text-green-400"/>
+                          <Input className="flex-1" size="sm" placeholder="Ajouter un thème à cette catégorie..." onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){addTheme(e.target.value,cat.id);e.target.value='';}}}/>
+                        </div>
+                      )}
+                      
+                      {catThemes.length===0&&!searchQuery&&<p className="text-sm text-gray-500 text-center py-2">Aucun thème - Utilisez le champ ci-dessus pour en créer</p>}
                       {catThemes.length===0&&searchQuery&&<p className="text-sm text-gray-500">Aucun thème correspondant</p>}
                       
                       {catThemes.map(theme=>{
@@ -6514,10 +6587,12 @@
                         const themeHighlighted=isHighlighted('theme',theme.id);
                         
                         return<div key={theme.id} className={`border rounded-lg overflow-hidden ${themeHighlighted?'border-purple-500':'border-gray-600'}`}>
-                          <div className="flex items-center gap-2 p-3 bg-gray-700 hover:bg-gray-650 cursor-pointer" onClick={()=>setExpandedThemes({...expandedThemes,[theme.id]:!themeExpanded})}>
-                            <Icon name={themeExpanded?'ChevronDown':'ChevronRight'} size={16} className="text-gray-400"/>
+                          <div className="flex items-center gap-2 p-3 bg-gray-700 hover:bg-gray-650">
+                            <button onClick={()=>setExpandedThemes({...expandedThemes,[theme.id]:!themeExpanded})} className="p-1 hover:bg-gray-600 rounded">
+                              <Icon name={themeExpanded?'ChevronDown':'ChevronRight'} size={16} className="text-gray-400"/>
+                            </button>
                             <Icon name="Tag" size={16} className="text-purple-400"/>
-                            <span className="flex-1">{theme.name}</span>
+                            <span className="flex-1 cursor-pointer" onClick={()=>setExpandedThemes({...expandedThemes,[theme.id]:!themeExpanded})}>{theme.name}</span>
                             {(theme.tags||[]).length>0&&(
                               <div className="flex gap-1">
                                 {theme.tags.slice(0,2).map(t=>{
@@ -6528,13 +6603,30 @@
                               </div>
                             )}
                             <span className="text-xs text-gray-500">{themeSubs.length} sous-thème(s)</span>
-                            <button onClick={e=>{e.stopPropagation();openEditModal('theme',theme);}} className="p-1.5 hover:bg-indigo-500/20 rounded"><Icon name="Edit2" size={14} className="text-indigo-400"/></button>
-                            <button onClick={e=>{e.stopPropagation();deleteTheme(theme.id);}} className="p-1.5 hover:bg-red-500/20 rounded"><Icon name="X" size={14} className="text-red-400"/></button>
+                            
+                            {/* Boutons thème */}
+                            <div className="flex items-center gap-1 border-l border-gray-600 pl-2 ml-1">
+                              <button onClick={e=>{e.stopPropagation();setExpandedThemes({...expandedThemes,[theme.id]:true});}} className="p-1.5 hover:bg-green-500/20 rounded" title="Ajouter sous-thème">
+                                <Icon name="Plus" size={14} className="text-green-400"/>
+                              </button>
+                              <button onClick={e=>{e.stopPropagation();openEditModal('theme',theme);}} className="p-1.5 hover:bg-indigo-500/20 rounded" title="Modifier">
+                                <Icon name="Edit2" size={14} className="text-indigo-400"/>
+                              </button>
+                              <button onClick={e=>{e.stopPropagation();deleteTheme(theme.id);}} className="p-1.5 hover:bg-red-500/20 rounded" title="Supprimer">
+                                <Icon name="X" size={14} className="text-red-400"/>
+                              </button>
+                            </div>
                           </div>
                           
                           {themeExpanded&&(
                             <div className="p-3 pl-8 space-y-2 bg-gray-700/50 border-t border-gray-600">
-                              {themeSubs.length===0&&<p className="text-xs text-gray-500">Aucun sous-thème</p>}
+                              {/* Formulaire ajout sous-thème en haut */}
+                              <div className="flex gap-2 items-center p-2 bg-gray-600/50 rounded border border-dashed border-gray-500">
+                                <Icon name="Plus" size={14} className="text-cyan-400"/>
+                                <Input size="sm" className="flex-1" placeholder="Ajouter un sous-thème..." onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){addSubTheme(e.target.value,theme.id);e.target.value='';}}}/>
+                              </div>
+                              
+                              {themeSubs.length===0&&<p className="text-xs text-gray-500 text-center py-1">Aucun sous-thème</p>}
                               
                               {themeSubs.map(st=>{
                                 const stHighlighted=isHighlighted('subtheme',st.id);
@@ -6549,24 +6641,18 @@
                                       })}
                                     </div>
                                   )}
-                                  <button onClick={()=>openEditModal('subtheme',st)} className="p-1 hover:bg-indigo-500/20 rounded"><Icon name="Edit2" size={12} className="text-indigo-400"/></button>
-                                  <button onClick={()=>deleteSubTheme(st.id)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={12} className="text-red-400"/></button>
+                                  <button onClick={()=>openEditModal('subtheme',st)} className="p-1 hover:bg-indigo-500/20 rounded" title="Modifier">
+                                    <Icon name="Edit2" size={12} className="text-indigo-400"/>
+                                  </button>
+                                  <button onClick={()=>deleteSubTheme(st.id)} className="p-1 hover:bg-red-500/20 rounded" title="Supprimer">
+                                    <Icon name="X" size={12} className="text-red-400"/>
+                                  </button>
                                 </div>;
                               })}
-                              
-                              <div className="pt-2">
-                                <Input size="sm" placeholder="+ Ajouter un sous-thème..." onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){addSubTheme(e.target.value,theme.id);e.target.value='';}}}/>
-                              </div>
                             </div>
                           )}
                         </div>;
                       })}
-                      
-                      {!searchQuery&&(
-                        <div className="pt-2">
-                          <Input placeholder="+ Ajouter un thème..." onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){addTheme(e.target.value,cat.id);e.target.value='';}}}/>
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>;
