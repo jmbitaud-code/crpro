@@ -4771,7 +4771,7 @@
             
             <div className="flex gap-3">
               <Button variant="secondary" className="flex-1" onClick={()=>setRequestLicenseModal(null)}>Fermer</Button>
-              <Button className="flex-1" icon="Send" onClick={()=>{setRequestLicenseModal(null);window.location.hash='licenses';}}>Aller aux licences</Button>
+              <Button className="flex-1" icon="Send" onClick={()=>{setRequestLicenseModal(null);localStorage.setItem('openLicenseRequest','true');window.location.hash='licenses';}}>Aller aux licences</Button>
             </div>
           </div>}
         </Modal>
@@ -7912,7 +7912,7 @@
                     {canModify&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>openModal(path)}>Modifier</Button>}
                     {canModify&&<Button variant="ghost" size="sm" icon={path.is_published?'EyeOff':'Eye'} onClick={()=>togglePublish(path)}/>}
                     {canModify&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(path.id)}/>}
-                    {!licensed&&!isOwn&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>window.location.hash='licenses'}>Demander licence</Button>}
+                    {!licensed&&!isOwn&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>{localStorage.setItem('openLicenseRequest','true');window.location.hash='licenses';}}>Demander licence</Button>}
                   </div>
                 </div>
               </Card>;
@@ -8009,16 +8009,20 @@
       // Seul le Center Admin peut demander des licences (pas le trainer)
       const canRequestLicense=realRole==='center_admin'&&center?.id;
       
-      // Ouvrir automatiquement le modal si on vient avec ?request=true
+      // Ouvrir automatiquement le modal si on vient de la bibliothèque
       useEffect(()=>{
-        const params=new URLSearchParams(window.location.search);
-        if(params.get('request')==='true'&&canRequestLicense){
-          setRequestModal(true);
-          setActiveTab('my-requests');
-          // Nettoyer l'URL
-          window.history.replaceState({},document.title,window.location.pathname+window.location.hash);
+        // Attendre que le chargement soit terminé
+        if(loading)return;
+        
+        if(canRequestLicense){
+          const shouldOpen=localStorage.getItem('openLicenseRequest');
+          if(shouldOpen==='true'){
+            localStorage.removeItem('openLicenseRequest');
+            setActiveTab('my-requests');
+            setRequestModal(true);
+          }
         }
-      },[canRequestLicense]);
+      },[canRequestLicense,loading]);
       
       const load=useCallback(async()=>{
         setLoadError(null);
@@ -8164,18 +8168,17 @@
       
       const submitRequest=async()=>{
         if(!center?.id){alert('Erreur: Aucun centre associé à votre compte');return;}
-        if(!requestForm.pack_id){alert('Veuillez sélectionner un pack');return;}
         if(!profile?.id){alert('Erreur: Utilisateur non identifié');return;}
         
         setSaving(true);
         try{
           const{error}=await supabase.from('license_requests').insert({
             center_id:center.id,
-            pack_id:requestForm.pack_id,
+            pack_id:requestForm.pack_id||null, // null = catalogue complet
             requested_by:profile.id,
             requested_duration_months:requestForm.requested_duration_months||12,
             requested_max_learners:requestForm.requested_max_learners?parseInt(requestForm.requested_max_learners):null,
-            request_message:requestForm.request_message||''
+            request_message:requestForm.request_message||(requestForm.pack_id?'':'Demande d\'accès au catalogue complet')
           });
           
           if(error)throw error;
@@ -8368,31 +8371,41 @@
         </Modal>
         
         <Modal isOpen={requestModal} onClose={()=>setRequestModal(false)} title="Demander une licence" size="md">
-          {packs.length===0?(
-            <div className="text-center py-6">
-              <Icon name="Package" size={48} className="mx-auto text-gray-500 mb-4"/>
-              <p className="text-gray-400">Aucun pack de contenus disponible</p>
-              <p className="text-sm text-gray-500 mt-2">Contactez l'administrateur pour plus d'informations</p>
+          <div className="space-y-4">
+            <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+              <p className="text-sm text-blue-400"><Icon name="Info" size={16} className="inline mr-2"/>Votre demande sera envoyée au Super Administrateur pour validation.</p>
             </div>
-          ):(
-            <div className="space-y-4">
-              <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-                <p className="text-sm text-blue-400"><Icon name="Info" size={16} className="inline mr-2"/>Votre demande sera envoyée au Super Administrateur pour validation.</p>
-              </div>
-              <Select label="Pack de contenus *" value={requestForm.pack_id} onChange={e=>setRequestForm({...requestForm,pack_id:e.target.value})} options={[{value:'',label:'Sélectionner un pack...'},...packs.map(p=>({value:p.id,label:`${p.name}${p.description?' - '+p.description.slice(0,50)+'...':''}`}))]}/>
-              <div className="grid grid-cols-2 gap-4">
-                <Input label="Durée souhaitée (mois)" type="number" min="1" max="60" value={requestForm.requested_duration_months} onChange={e=>setRequestForm({...requestForm,requested_duration_months:parseInt(e.target.value)||12})}/>
-                <Input label="Nb apprenants max" type="number" min="1" value={requestForm.requested_max_learners} onChange={e=>setRequestForm({...requestForm,requested_max_learners:e.target.value})} placeholder="Illimité"/>
-              </div>
-              <div>
-                <label className="text-sm font-medium">Message (optionnel)</label>
-                <textarea value={requestForm.request_message} onChange={e=>setRequestForm({...requestForm,request_message:e.target.value})} rows={3} className="w-full mt-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400" placeholder="Précisez votre besoin, contexte, etc."/>
-              </div>
+            
+            <Select 
+              label="Pack de contenus" 
+              value={requestForm.pack_id} 
+              onChange={e=>setRequestForm({...requestForm,pack_id:e.target.value})} 
+              options={[
+                {value:'',label:'📚 Catalogue complet (tous les contenus)'},
+                ...packs.map(p=>({value:p.id,label:`${p.name}${p.description?' - '+p.description.slice(0,40)+'...':''}`}))
+              ]}
+            />
+            
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Durée souhaitée (mois)" type="number" min="1" max="60" value={requestForm.requested_duration_months} onChange={e=>setRequestForm({...requestForm,requested_duration_months:parseInt(e.target.value)||12})}/>
+              <Input label="Nb apprenants max" type="number" min="1" value={requestForm.requested_max_learners} onChange={e=>setRequestForm({...requestForm,requested_max_learners:e.target.value})} placeholder="Illimité"/>
             </div>
-          )}
+            
+            <div>
+              <label className="text-sm font-medium">Message</label>
+              <textarea 
+                value={requestForm.request_message} 
+                onChange={e=>setRequestForm({...requestForm,request_message:e.target.value})} 
+                rows={3} 
+                className="w-full mt-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400" 
+                placeholder="Précisez votre besoin : contenus souhaités, nombre d'apprenants, contexte..."
+              />
+            </div>
+          </div>
+          
           <div className="flex gap-2 mt-4">
             <Button variant="secondary" onClick={()=>setRequestModal(false)}>Annuler</Button>
-            {packs.length>0&&<Button className="flex-1" onClick={submitRequest} loading={saving} disabled={!requestForm.pack_id}>Envoyer la demande</Button>}
+            <Button className="flex-1" onClick={submitRequest} loading={saving}>Envoyer la demande</Button>
           </div>
         </Modal>
       </div>;
