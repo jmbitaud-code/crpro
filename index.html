@@ -4788,7 +4788,7 @@
       const[contentTab,setContentTab]=useState('videos');
       const[assignModal,setAssignModal]=useState(null);
       const[assignedTrainers,setAssignedTrainers]=useState([]);
-      const[licensedIds,setLicensedIds]=useState({courses:[],hasFullCatalog:false});
+      const[licensedIds,setLicensedIds]=useState({videos:[],scorm:[],courses:[],hasFullCatalog:false,hasAnyLicense:false});
       const[extensions,setExtensions]=useState([]);
       const[extensionUploading,setExtensionUploading]=useState(false);
       // Taxonomie
@@ -4802,20 +4802,35 @@
       // Helpers taxonomie
       const getThemesForCategory=(catId)=>themes.filter(t=>t.category_id===catId);
       const getSubThemesForTheme=(themeId)=>subThemes.filter(st=>st.theme_id===themeId);
+      
+      // Vérifier si un contenu est licencié
+      const isLicensed=(type,id)=>{
+        if(isSuperAdmin)return true;
+        if(licensedIds.hasFullCatalog)return true;
+        if(type==='video')return licensedIds.videos.includes(id);
+        if(type==='scorm')return licensedIds.scorm.includes(id);
+        if(type==='course')return licensedIds.courses.includes(id);
+        return false;
+      };
 
       const load=useCallback(async()=>{
-        // Charger les licences du centre
-        let licenseInfo={courses:[],hasFullCatalog:false};
+        // Charger les licences du centre (vidéos, SCORM, cours)
+        let licenseInfo={videos:[],scorm:[],courses:[],hasFullCatalog:false,hasAnyLicense:false};
         if(!isSuperAdmin&&center?.id){
           try{
             const today=new Date().toISOString().split('T')[0];
             const{data:licenses}=await supabase.from('center_licenses').select('*,content_packs(pack_type)').eq('center_id',center.id).eq('status','active').lte('start_date',today).gte('end_date',today);
+            licenseInfo.hasAnyLicense=(licenses||[]).length>0;
             licenseInfo.hasFullCatalog=(licenses||[]).some(l=>l.license_type==='full_catalog'||l.content_packs?.pack_type==='full_catalog');
             if(!licenseInfo.hasFullCatalog){
               const packIds=(licenses||[]).map(l=>l.pack_id).filter(Boolean);
               if(packIds.length>0){
                 const{data:items}=await supabase.from('content_pack_items').select('content_type,content_id').in('pack_id',packIds);
-                (items||[]).forEach(i=>{if(i.content_type==='course')licenseInfo.courses.push(i.content_id);});
+                (items||[]).forEach(i=>{
+                  if(i.content_type==='video')licenseInfo.videos.push(i.content_id);
+                  else if(i.content_type==='scorm')licenseInfo.scorm.push(i.content_id);
+                  else if(i.content_type==='course')licenseInfo.courses.push(i.content_id);
+                });
               }
             }
           }catch(e){console.log('Erreur licences:',e);}
@@ -5123,11 +5138,19 @@
             {(!editContentModal?.is_locked||isSuperAdmin)&&<div>
               <h4 className="font-medium mb-3">Vidéos disponibles</h4>
               <div className="space-y-2 max-h-96 overflow-y-auto">
-                {videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)).map(v=><div key={v.id} className="flex items-center gap-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 cursor-pointer" onClick={()=>addVideoToPlaylist(v.id)}>
-                  <Icon name="Plus" size={16} className="text-indigo-400"/>
-                  <div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{v.title}</p></div>
-                </div>)}
-                {videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)).length===0&&<p className="text-gray-500 text-sm text-center py-4">Toutes les vidéos ajoutées</p>}
+                {videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)).map(v=>{
+                  const isOwn=!v.is_lms_content||v.center_id===center?.id;
+                  const licensed=isOwn||isLicensed('video',v.id);
+                  if(!licensed&&!isSuperAdmin)return null; // Masquer les non-licenciés
+                  return<div key={v.id} className={`flex items-center gap-3 p-3 rounded-lg ${licensed?'bg-gray-700/50 hover:bg-gray-700 cursor-pointer':'bg-gray-800/50 opacity-50 cursor-not-allowed'}`} onClick={()=>licensed&&addVideoToPlaylist(v.id)}>
+                    <Icon name="Plus" size={16} className={licensed?"text-indigo-400":"text-gray-500"}/>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate text-sm">{v.title}</p>
+                      {!isOwn&&<span className={`text-xs ${licensed?'text-indigo-400':'text-red-400'}`}>{licensed?'📦 LMS':'🔒 Non licencié'}</span>}
+                    </div>
+                  </div>;
+                })}
+                {videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)&&(!v.is_lms_content||v.center_id===center?.id||isLicensed('video',v.id)||isSuperAdmin)).length===0&&<p className="text-gray-500 text-sm text-center py-4">Toutes les vidéos ajoutées</p>}
               </div>
             </div>}
           </div>}
@@ -5150,14 +5173,19 @@
             {(!editContentModal?.is_locked||isSuperAdmin)&&<div>
               <h4 className="font-medium mb-3">Modules disponibles</h4>
               <div className="space-y-2 max-h-96 overflow-y-auto">
-                {scormModules.filter(m=>!playlistScorm.find(ps=>ps.scorm_module_id===m.id)).map(m=><div key={m.id} className="flex items-center gap-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 cursor-pointer" onClick={()=>addScormToPlaylist(m.id)}>
-                  <Icon name="Plus" size={16} className="text-orange-400"/>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate text-sm">{m.title}</p>
-                    <p className="text-xs text-gray-400">{m.module_type}</p>
-                  </div>
-                </div>)}
-                {scormModules.filter(m=>!playlistScorm.find(ps=>ps.scorm_module_id===m.id)).length===0&&<p className="text-gray-500 text-sm text-center py-4">{scormModules.length===0?'Aucun module SCORM disponible':'Tous les modules ajoutés'}</p>}
+                {scormModules.filter(m=>!playlistScorm.find(ps=>ps.scorm_module_id===m.id)).map(m=>{
+                  const isOwn=!m.is_lms_content||m.center_id===center?.id;
+                  const licensed=isOwn||isLicensed('scorm',m.id);
+                  if(!licensed&&!isSuperAdmin)return null; // Masquer les non-licenciés
+                  return<div key={m.id} className={`flex items-center gap-3 p-3 rounded-lg ${licensed?'bg-gray-700/50 hover:bg-gray-700 cursor-pointer':'bg-gray-800/50 opacity-50 cursor-not-allowed'}`} onClick={()=>licensed&&addScormToPlaylist(m.id)}>
+                    <Icon name="Plus" size={16} className={licensed?"text-orange-400":"text-gray-500"}/>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate text-sm">{m.title}</p>
+                      <p className="text-xs text-gray-400">{m.module_type}{!isOwn&&<span className={`ml-2 ${licensed?'text-indigo-400':'text-red-400'}`}>{licensed?'📦 LMS':'🔒 Non licencié'}</span>}</p>
+                    </div>
+                  </div>;
+                })}
+                {scormModules.filter(m=>!playlistScorm.find(ps=>ps.scorm_module_id===m.id)&&(!m.is_lms_content||m.center_id===center?.id||isLicensed('scorm',m.id)||isSuperAdmin)).length===0&&<p className="text-gray-500 text-sm text-center py-4">{scormModules.length===0?'Aucun module SCORM disponible':'Tous les modules ajoutés'}</p>}
               </div>
             </div>}
           </div>}
@@ -7635,7 +7663,7 @@
       const[pathCourses,setPathCourses]=useState([]);
       const[saving,setSaving]=useState(false);
       const[contentModal,setContentModal]=useState(null);
-      const[licensedIds,setLicensedIds]=useState({paths:[],hasFullCatalog:false});
+      const[licensedIds,setLicensedIds]=useState({paths:[],courses:[],hasFullCatalog:false});
       const[filterSource,setFilterSource]=useState('all');
       // Taxonomie
       const[categories,setCategories]=useState([]);
@@ -7649,8 +7677,8 @@
       const getSubThemesForTheme=(themeId)=>subThemes.filter(st=>st.theme_id===themeId);
       
       const load=useCallback(async()=>{
-        // Charger les licences
-        let licenseInfo={paths:[],hasFullCatalog:false};
+        // Charger les licences (parcours + cours)
+        let licenseInfo={paths:[],courses:[],hasFullCatalog:false};
         if(!isSuperAdmin&&center?.id){
           try{
             const today=new Date().toISOString().split('T')[0];
@@ -7660,7 +7688,10 @@
               const packIds=(licenses||[]).map(l=>l.pack_id).filter(Boolean);
               if(packIds.length>0){
                 const{data:items}=await supabase.from('content_pack_items').select('content_type,content_id').in('pack_id',packIds);
-                (items||[]).forEach(i=>{if(i.content_type==='path')licenseInfo.paths.push(i.content_id);});
+                (items||[]).forEach(i=>{
+                  if(i.content_type==='path')licenseInfo.paths.push(i.content_id);
+                  else if(i.content_type==='course')licenseInfo.courses.push(i.content_id);
+                });
               }
             }
           }catch(e){}
@@ -7717,6 +7748,14 @@
         if(isSuperAdmin)return true;
         if(licensedIds.hasFullCatalog)return true;
         return licensedIds.paths.includes(pathId);
+      };
+      
+      const isCourseLicensed=(course)=>{
+        if(isSuperAdmin)return true;
+        if(!course.is_lms_content)return true; // Cours du centre = toujours ok
+        if(course.center_id===center?.id)return true; // Cours du propre centre
+        if(licensedIds.hasFullCatalog)return true;
+        return licensedIds.courses.includes(course.id);
       };
       
       const filterBySource=(items)=>{
@@ -7917,12 +7956,16 @@
             {!contentModal?.is_locked&&<div>
               <h4 className="font-medium mb-3">Cours disponibles</h4>
               <div className="space-y-2 max-h-80 overflow-y-auto">
-                {courses.filter(c=>!pathCourses.find(pc=>pc.playlist_id===c.id)).map(c=><div key={c.id} className="flex items-center gap-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 cursor-pointer" onClick={()=>addCourseToPath(c.id)}>
-                  <Icon name="Plus" size={16} className="text-indigo-400"/>
-                  <div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{c.title}</p></div>
-                  {c.is_lms_content&&<span className="px-1.5 py-0.5 bg-indigo-500/20 text-indigo-400 rounded text-xs">LMS</span>}
-                </div>)}
-                {courses.filter(c=>!pathCourses.find(pc=>pc.playlist_id===c.id)).length===0&&<p className="text-gray-500 text-sm text-center py-4">Tous les cours ajoutés</p>}
+                {courses.filter(c=>!pathCourses.find(pc=>pc.playlist_id===c.id)).map(c=>{
+                  const licensed=isCourseLicensed(c);
+                  if(!licensed&&!isSuperAdmin)return null; // Masquer les non-licenciés
+                  return<div key={c.id} className={`flex items-center gap-3 p-3 rounded-lg ${licensed?'bg-gray-700/50 hover:bg-gray-700 cursor-pointer':'bg-gray-800/50 opacity-50 cursor-not-allowed'}`} onClick={()=>licensed&&addCourseToPath(c.id)}>
+                    <Icon name="Plus" size={16} className={licensed?"text-indigo-400":"text-gray-500"}/>
+                    <div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{c.title}</p></div>
+                    {c.is_lms_content&&<span className={`px-1.5 py-0.5 rounded text-xs ${licensed?'bg-indigo-500/20 text-indigo-400':'bg-red-500/20 text-red-400'}`}>{licensed?'📦 LMS':'🔒'}</span>}
+                  </div>;
+                })}
+                {courses.filter(c=>!pathCourses.find(pc=>pc.playlist_id===c.id)&&isCourseLicensed(c)).length===0&&<p className="text-gray-500 text-sm text-center py-4">Tous les cours ajoutés</p>}
               </div>
             </div>}
           </div>
@@ -7937,7 +7980,7 @@
 
     // ==================== LICENCES ====================
     function LicensesPage(){
-      const{isSuperAdmin,profile,center}=useAuth();
+      const{isSuperAdmin,profile,center,realRole}=useAuth();
       const[loading,setLoading]=useState(true);
       const[licenses,setLicenses]=useState([]);
       const[requests,setRequests]=useState([]);
@@ -7952,10 +7995,18 @@
       const[requestForm,setRequestForm]=useState({pack_id:'',requested_duration_months:12,requested_max_learners:'',request_message:''});
       const[history,setHistory]=useState([]);
       const[alertsSent,setAlertsSent]=useState([]);
+      const[loadError,setLoadError]=useState(null);
+      
+      // Seul le Center Admin peut demander des licences (pas le trainer)
+      const canRequestLicense=realRole==='center_admin'&&center?.id;
       
       const load=useCallback(async()=>{
+        setLoadError(null);
         try{
-          const{data:pk}=await supabase.from('content_packs').select('*').eq('is_active',true);setPacks(pk||[]);
+          const{data:pk,error:pkErr}=await supabase.from('content_packs').select('*').eq('is_active',true);
+          if(pkErr)console.warn('Erreur packs:',pkErr);
+          setPacks(pk||[]);
+          
           if(isSuperAdmin){
             const{data:lic}=await supabase.from('center_licenses').select('*,centers(name,slug),content_packs(name,code)').order('created_at',{ascending:false});setLicenses(lic||[]);
             const{data:req}=await supabase.from('license_requests').select('*,centers(name),content_packs(name),profiles!requested_by(first_name,last_name)').order('created_at',{ascending:false});setRequests(req||[]);
@@ -7963,10 +8014,19 @@
             // Charger les alertes déjà envoyées
             try{const{data:alerts}=await supabase.from('license_alerts').select('*');setAlertsSent(alerts||[]);}catch(e){setAlertsSent([]);}
           }else if(center?.id){
-            const{data:lic}=await supabase.from('center_licenses').select('*,content_packs(name,code,description)').eq('center_id',center.id);setLicenses(lic||[]);
-            const{data:req}=await supabase.from('license_requests').select('*,content_packs(name)').eq('center_id',center.id);setRequests(req||[]);
+            const{data:lic,error:licErr}=await supabase.from('center_licenses').select('*,content_packs(name,code,description)').eq('center_id',center.id);
+            if(licErr){console.warn('Erreur licences:',licErr);setLoadError('Erreur lors du chargement des licences');}
+            setLicenses(lic||[]);
+            const{data:req,error:reqErr}=await supabase.from('license_requests').select('*,content_packs(name)').eq('center_id',center.id);
+            if(reqErr)console.warn('Erreur requêtes:',reqErr);
+            setRequests(req||[]);
+          }else{
+            setLoadError('Aucun centre associé à votre compte');
           }
-        }catch(err){console.error(err);}
+        }catch(err){
+          console.error('Erreur chargement licences:',err);
+          setLoadError('Erreur lors du chargement: '+err.message);
+        }
         setLoading(false);
       },[isSuperAdmin,center?.id]);
       useEffect(()=>{load();},[load]);
@@ -8083,12 +8143,31 @@
       };
       
       const submitRequest=async()=>{
-        if(!requestForm.pack_id){alert('Pack requis');return;}
+        if(!center?.id){alert('Erreur: Aucun centre associé à votre compte');return;}
+        if(!requestForm.pack_id){alert('Veuillez sélectionner un pack');return;}
+        if(!profile?.id){alert('Erreur: Utilisateur non identifié');return;}
+        
         setSaving(true);
         try{
-          await supabase.from('license_requests').insert({center_id:center.id,pack_id:requestForm.pack_id,requested_by:profile.id,requested_duration_months:requestForm.requested_duration_months,requested_max_learners:requestForm.requested_max_learners?parseInt(requestForm.requested_max_learners):null,request_message:requestForm.request_message});
-          await load();setRequestModal(false);setRequestForm({pack_id:'',requested_duration_months:12,requested_max_learners:'',request_message:''});alert('Demande envoyée !');
-        }catch(err){alert('Erreur: '+err.message);}
+          const{error}=await supabase.from('license_requests').insert({
+            center_id:center.id,
+            pack_id:requestForm.pack_id,
+            requested_by:profile.id,
+            requested_duration_months:requestForm.requested_duration_months||12,
+            requested_max_learners:requestForm.requested_max_learners?parseInt(requestForm.requested_max_learners):null,
+            request_message:requestForm.request_message||''
+          });
+          
+          if(error)throw error;
+          
+          await load();
+          setRequestModal(false);
+          setRequestForm({pack_id:'',requested_duration_months:12,requested_max_learners:'',request_message:''});
+          alert('✅ Demande envoyée avec succès ! L\'administrateur sera notifié.');
+        }catch(err){
+          console.error('Erreur demande licence:',err);
+          alert('Erreur lors de l\'envoi: '+(err.message||'Erreur inconnue'));
+        }
         setSaving(false);
       };
       
@@ -8104,10 +8183,29 @@
       
       if(loading)return<Loading/>;
       
+      // Afficher l'erreur si présente
+      if(loadError&&!isSuperAdmin){
+        return<div className="text-center py-12">
+          <Icon name="AlertTriangle" size={48} className="mx-auto text-yellow-400 mb-4"/>
+          <h2 className="text-xl font-semibold mb-2">Impossible de charger les licences</h2>
+          <p className="text-gray-400 mb-4">{loadError}</p>
+          <Button onClick={load} icon="RefreshCw">Réessayer</Button>
+        </div>;
+      }
+      
       return<div>
         <div className="flex items-center justify-between mb-6">
-          <div><h1 className="text-2xl font-bold">Licences</h1><p className="text-sm text-gray-400">{isSuperAdmin?'Gestion des licences':'Vos licences'}</p></div>
-          {isSuperAdmin?<Button icon="Plus" onClick={()=>openLicenseModal()}>Attribuer</Button>:<Button icon="Send" onClick={()=>setRequestModal(true)}>Demander</Button>}
+          <div>
+            <h1 className="text-2xl font-bold">Licences</h1>
+            <p className="text-sm text-gray-400">{isSuperAdmin?'Gestion des licences':center?.name||'Vos licences'}</p>
+          </div>
+          <div className="flex gap-2">
+            {isSuperAdmin&&<Button icon="Plus" onClick={()=>openLicenseModal()}>Attribuer</Button>}
+            {canRequestLicense&&<Button icon="Send" onClick={()=>setRequestModal(true)}>Demander une licence</Button>}
+            {!isSuperAdmin&&!canRequestLicense&&realRole==='trainer'&&(
+              <p className="text-sm text-gray-500 italic">Seul l'administrateur du centre peut demander des licences</p>
+            )}
+          </div>
         </div>
         
         {isSuperAdmin?<>
@@ -8215,13 +8313,32 @@
         </Modal>
         
         <Modal isOpen={requestModal} onClose={()=>setRequestModal(false)} title="Demander une licence" size="md">
-          <div className="space-y-4">
-            <Select label="Pack *" value={requestForm.pack_id} onChange={e=>setRequestForm({...requestForm,pack_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...packs.map(p=>({value:p.id,label:p.name}))]}/>
-            <Input label="Durée (mois)" type="number" value={requestForm.requested_duration_months} onChange={e=>setRequestForm({...requestForm,requested_duration_months:parseInt(e.target.value)||12})}/>
-            <Input label="Nb apprenants" type="number" value={requestForm.requested_max_learners} onChange={e=>setRequestForm({...requestForm,requested_max_learners:e.target.value})} placeholder="Vide = illimité"/>
-            <div><label className="text-sm font-medium">Message</label><textarea value={requestForm.request_message} onChange={e=>setRequestForm({...requestForm,request_message:e.target.value})} rows={3} className="w-full mt-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg" placeholder="Précisions sur votre demande..."/></div>
+          {packs.length===0?(
+            <div className="text-center py-6">
+              <Icon name="Package" size={48} className="mx-auto text-gray-500 mb-4"/>
+              <p className="text-gray-400">Aucun pack de contenus disponible</p>
+              <p className="text-sm text-gray-500 mt-2">Contactez l'administrateur pour plus d'informations</p>
+            </div>
+          ):(
+            <div className="space-y-4">
+              <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                <p className="text-sm text-blue-400"><Icon name="Info" size={16} className="inline mr-2"/>Votre demande sera envoyée au Super Administrateur pour validation.</p>
+              </div>
+              <Select label="Pack de contenus *" value={requestForm.pack_id} onChange={e=>setRequestForm({...requestForm,pack_id:e.target.value})} options={[{value:'',label:'Sélectionner un pack...'},...packs.map(p=>({value:p.id,label:`${p.name}${p.description?' - '+p.description.slice(0,50)+'...':''}`}))]}/>
+              <div className="grid grid-cols-2 gap-4">
+                <Input label="Durée souhaitée (mois)" type="number" min="1" max="60" value={requestForm.requested_duration_months} onChange={e=>setRequestForm({...requestForm,requested_duration_months:parseInt(e.target.value)||12})}/>
+                <Input label="Nb apprenants max" type="number" min="1" value={requestForm.requested_max_learners} onChange={e=>setRequestForm({...requestForm,requested_max_learners:e.target.value})} placeholder="Illimité"/>
+              </div>
+              <div>
+                <label className="text-sm font-medium">Message (optionnel)</label>
+                <textarea value={requestForm.request_message} onChange={e=>setRequestForm({...requestForm,request_message:e.target.value})} rows={3} className="w-full mt-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400" placeholder="Précisez votre besoin, contexte, etc."/>
+              </div>
+            </div>
+          )}
+          <div className="flex gap-2 mt-4">
+            <Button variant="secondary" onClick={()=>setRequestModal(false)}>Annuler</Button>
+            {packs.length>0&&<Button className="flex-1" onClick={submitRequest} loading={saving} disabled={!requestForm.pack_id}>Envoyer la demande</Button>}
           </div>
-          <div className="flex gap-2 mt-4"><Button variant="secondary" onClick={()=>setRequestModal(false)}>Annuler</Button><Button className="flex-1" onClick={submitRequest} loading={saving}>Envoyer</Button></div>
         </Modal>
       </div>;
     }
