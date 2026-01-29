@@ -61,7 +61,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '7.4.0';
+    const APP_VERSION = '7.4.1';
     // =======================================
 
     // Masquer l'écran de chargement une fois React prêt
@@ -233,6 +233,7 @@
       const[center,setCenter]=useState(null);
       const[permissions,setPermissions]=useState({});
       const[loading,setLoading]=useState(true);
+      const[sessionError,setSessionError]=useState(false);
       
       // Mode "Vue comme" pour Super Admin
       const[viewAs,setViewAs]=useState(null);
@@ -249,6 +250,46 @@
         }catch(e){console.error('Erreur loadProfile:',e);return null;}
       },[]);
 
+      // Fonction pour vérifier et rafraîchir la session
+      const checkAndRefreshSession=useCallback(async()=>{
+        try{
+          const{data:{session},error}=await supabase.auth.getSession();
+          if(error){
+            console.error('Erreur getSession:',error);
+            if(error.message?.includes('refresh_token')||error.message?.includes('invalid')||error.message?.includes('expired')){
+              console.warn('Session invalide, déconnexion...');
+              setSessionError(true);
+              await supabase.auth.signOut();
+              return null;
+            }
+          }
+          if(session?.user){
+            // Tenter de rafraîchir le token si proche de l'expiration
+            const expiresAt=session.expires_at;
+            const now=Math.floor(Date.now()/1000);
+            const timeUntilExpiry=expiresAt-now;
+            
+            // Si le token expire dans moins de 5 minutes, le rafraîchir
+            if(timeUntilExpiry<300){
+              console.log('Token proche expiration, rafraîchissement...');
+              const{data:refreshData,error:refreshError}=await supabase.auth.refreshSession();
+              if(refreshError){
+                console.error('Erreur refresh:',refreshError);
+                setSessionError(true);
+                return null;
+              }
+              return refreshData.session;
+            }
+            setSessionError(false);
+            return session;
+          }
+          return null;
+        }catch(e){
+          console.error('Erreur checkSession:',e);
+          return null;
+        }
+      },[]);
+
       useEffect(()=>{
         let mounted=true;
         
@@ -262,15 +303,7 @@
         
         const init=async()=>{
           try{
-            const{data:{session},error}=await supabase.auth.getSession();
-            if(error){
-              console.error('Erreur getSession:',error);
-              // Si erreur de session, on nettoie le localStorage
-              if(error.message?.includes('refresh_token')||error.message?.includes('invalid')){
-                console.warn('Session invalide, nettoyage...');
-                await supabase.auth.signOut();
-              }
-            }
+            const session=await checkAndRefreshSession();
             if(mounted&&session?.user){
               setUser(session.user);
               await loadProfile(session.user.id);
@@ -284,19 +317,89 @@
         };
         init();
         
+        // Listener pour les changements d'état auth
         const{data:{subscription}}=supabase.auth.onAuthStateChange(async(event,session)=>{
           if(!mounted)return;
           console.log('Auth event:',event);
-          if(event==='SIGNED_IN'&&session?.user){setUser(session.user);await loadProfile(session.user.id);}
-          else if(event==='SIGNED_OUT'){setUser(null);setProfile(null);setCenter(null);setPermissions({});setViewAs(null);}
-          else if(event==='TOKEN_REFRESHED'){console.log('Token rafraîchi');}
+          
+          if(event==='SIGNED_IN'&&session?.user){
+            setUser(session.user);
+            setSessionError(false);
+            await loadProfile(session.user.id);
+          }
+          else if(event==='SIGNED_OUT'){
+            setUser(null);
+            setProfile(null);
+            setCenter(null);
+            setPermissions({});
+            setViewAs(null);
+          }
+          else if(event==='TOKEN_REFRESHED'){
+            console.log('Token rafraîchi avec succès');
+            setSessionError(false);
+            if(session?.user){
+              setUser(session.user);
+            }
+          }
+          else if(event==='INITIAL_SESSION'){
+            // Session restaurée depuis le storage
+            if(session?.user){
+              setUser(session.user);
+              setSessionError(false);
+              await loadProfile(session.user.id);
+            }
+          }
         });
-        return()=>{mounted=false;clearTimeout(timeout);subscription.unsubscribe();};
-      },[loadProfile]);
+        
+        // Listener pour la visibilité de l'onglet
+        const handleVisibilityChange=async()=>{
+          if(document.visibilityState==='visible'&&mounted){
+            console.log('Onglet redevenu visible, vérification session...');
+            const session=await checkAndRefreshSession();
+            if(session?.user){
+              // Session valide, s'assurer que le profil est chargé
+              if(!profile||profile.id!==session.user.id){
+                await loadProfile(session.user.id);
+              }
+              setUser(session.user);
+            }else if(user){
+              // Avait un user mais plus de session valide
+              console.warn('Session perdue, déconnexion...');
+              setUser(null);
+              setProfile(null);
+              setCenter(null);
+              setPermissions({});
+              setViewAs(null);
+            }
+          }
+        };
+        
+        document.addEventListener('visibilitychange',handleVisibilityChange);
+        
+        // Heartbeat toutes les 4 minutes pour garder la session active
+        const heartbeatInterval=setInterval(async()=>{
+          if(document.visibilityState==='visible'&&user){
+            console.log('Heartbeat session...');
+            await checkAndRefreshSession();
+          }
+        },4*60*1000);
+        
+        return()=>{
+          mounted=false;
+          clearTimeout(timeout);
+          clearInterval(heartbeatInterval);
+          document.removeEventListener('visibilitychange',handleVisibilityChange);
+          subscription.unsubscribe();
+        };
+      },[loadProfile,checkAndRefreshSession]);
 
       const signIn=async(email,password)=>{
-        try{const{error:err}=await supabase.auth.signInWithPassword({email,password});if(err)throw err;return{success:true};}
-        catch(e){return{success:false,error:e.message};}
+        try{
+          setSessionError(false);
+          const{error:err}=await supabase.auth.signInWithPassword({email,password});
+          if(err)throw err;
+          return{success:true};
+        }catch(e){return{success:false,error:e.message};}
       };
       const signOut=async()=>{setViewAs(null);await supabase.auth.signOut();};
 
@@ -363,6 +466,8 @@
         role:effectiveRole||'learner',
         can,canForCenter,canAssignRole,permissions,
         viewAs,switchView,exitViewAs,
+        sessionError,
+        checkSession:checkAndRefreshSession,
         reload:async()=>{if(user)await loadProfile(user.id);}
       };
       return<AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -461,7 +566,7 @@
 
     // Layout
     function AppLayout(){
-      const{profile,signOut,center,can,isSuperAdmin,realIsSuperAdmin,viewAs,switchView,exitViewAs,effectiveRole,isLearner,isCenterAdmin}=useAuth();
+      const{profile,signOut,center,can,isSuperAdmin,realIsSuperAdmin,viewAs,switchView,exitViewAs,effectiveRole,isLearner,isCenterAdmin,sessionError,checkSession}=useAuth();
       const[sidebarOpen,setSidebarOpen]=useState(false);
       const[page,setPage]=useState('my-courses');
       const[notifications,setNotifications]=useState([]);
@@ -471,6 +576,18 @@
       const[selectedCenter,setSelectedCenter]=useState('');
       const[selectedRole,setSelectedRole]=useState('center_admin');
       const[isMobile,setIsMobile]=useState(window.innerWidth<1024);
+      const[reconnecting,setReconnecting]=useState(false);
+      
+      // Fonction pour tenter de reconnecter
+      const handleReconnect=async()=>{
+        setReconnecting(true);
+        const session=await checkSession();
+        if(!session){
+          // Session vraiment perdue, forcer déconnexion
+          await signOut();
+        }
+        setReconnecting(false);
+      };
       
       // Écouter les changements de taille de fenêtre
       useEffect(()=>{
@@ -581,8 +698,22 @@
       ].filter(i=>i.show);
 
       return(<div className="min-h-screen bg-gray-900 text-white flex">
+        {/* Bandeau Session Expirée */}
+        {sessionError&&<div className="fixed top-0 left-0 right-0 z-50 bg-red-600 text-white px-4 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Icon name="AlertTriangle" size={18}/>
+            <span className="text-sm font-medium">Votre session a expiré ou a été interrompue.</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={handleReconnect} disabled={reconnecting} className="flex items-center gap-1 px-3 py-1 bg-white/20 hover:bg-white/30 rounded text-sm disabled:opacity-50">
+              {reconnecting?<><Icon name="Loader2" size={14} className="animate-spin"/>Reconnexion...</>:<><Icon name="RefreshCw" size={14}/>Reconnecter</>}
+            </button>
+            <button onClick={signOut} className="flex items-center gap-1 px-3 py-1 bg-white/20 hover:bg-white/30 rounded text-sm"><Icon name="LogOut" size={14}/>Se déconnecter</button>
+          </div>
+        </div>}
+        
         {/* Bandeau Vue comme */}
-        {viewAs&&<div className="fixed top-0 left-0 right-0 z-50 bg-orange-600 text-white px-4 py-2 flex items-center justify-between">
+        {viewAs&&!sessionError&&<div className={`fixed top-0 left-0 right-0 z-50 bg-orange-600 text-white px-4 py-2 flex items-center justify-between`}>
           <div className="flex items-center gap-2">
             <Icon name="Eye" size={18}/>
             <span className="text-sm font-medium">Vue comme: <strong>{ROLE_LABELS[viewAs.role]}</strong> du centre <strong>{viewAs.center_name}</strong></span>
@@ -594,7 +725,7 @@
         {sidebarOpen&&isMobile&&<div className="fixed inset-0 bg-black/60 z-30 backdrop-blur-sm" onClick={()=>setSidebarOpen(false)}/>}
         
         {/* Sidebar */}
-        <aside className={`fixed lg:static inset-y-0 left-0 z-40 w-64 bg-gray-800 border-r border-gray-700 transform transition-transform duration-300 ease-in-out ${sidebarOpen||!isMobile?'translate-x-0':'-translate-x-full'} ${viewAs?'pt-10':''}`}>
+        <aside className={`fixed lg:static inset-y-0 left-0 z-40 w-64 bg-gray-800 border-r border-gray-700 transform transition-transform duration-300 ease-in-out ${sidebarOpen||!isMobile?'translate-x-0':'-translate-x-full'} ${viewAs||sessionError?'pt-10':''}`}>
           <div className="h-full flex flex-col">
             {/* Header avec bouton fermer sur mobile */}
             <div className="p-4 border-b border-gray-700">
@@ -612,7 +743,7 @@
           </div>
         </aside>
         
-        <main className={`flex-1 min-h-screen ${viewAs?'pt-10':''}`}>
+        <main className={`flex-1 min-h-screen ${viewAs||sessionError?'pt-10':''}`}>
           <header className="bg-gray-800 border-b border-gray-700 p-4 flex items-center gap-4">
             <button onClick={()=>setSidebarOpen(!sidebarOpen)} className="lg:hidden p-2 hover:bg-gray-700 rounded-lg"><Icon name="Menu" size={24}/></button>
             <h1 className="font-semibold flex-1">{menu.find(i=>i.id===page)?.label||'Dashboard'}</h1>
