@@ -3355,11 +3355,72 @@
       };
       const handleDelete=async id=>{if(!confirm('Supprimer ?'))return;await supabase.from('videos').delete().eq('id',id);load();};
 
-      const handleFileSelect=async(e)=>{const file=e.target.files[0];if(!file)return;try{const data=await file.arrayBuffer();const workbook=XLSX.read(data);const sheet=workbook.Sheets[workbook.SheetNames[0]];const jsonData=XLSX.utils.sheet_to_json(sheet);const mapped=jsonData.map((row,i)=>({_index:i+1,title:row['Titre']||row['title']||'',vimeo_id:String(row['ID Vimeo']||row['vimeo_id']||''),duration:row['Durée']||row['duration']||'',category:row['Catégorie']||row['category']||'',description:row['Description']||'',sort_order:row['Ordre']||null,tags:row['Tags']||'',theme:row['Thème']||'',thumbnail_url:row['Miniature URL']||'',_valid:!!(row['Titre']||row['title'])&&!!(row['ID Vimeo']||row['vimeo_id'])}));setImportData(mapped);setImportResult(null);}catch(err){alert('Erreur: '+err.message);}e.target.value='';};
+      const handleFileSelect=async(e)=>{const file=e.target.files[0];if(!file)return;try{const data=await file.arrayBuffer();const workbook=XLSX.read(data);const sheet=workbook.Sheets[workbook.SheetNames[0]];const jsonData=XLSX.utils.sheet_to_json(sheet);const mapped=jsonData.map((row,i)=>({_index:i+1,title:row['Titre']||row['title']||'','Catégorie':row['Catégorie']||row['category']||row['categorie']||'','Thème':row['Thème']||row['theme']||'','Sous-thème':row['Sous-thème']||row['sub_theme']||row['subtheme']||'',vimeo_id:String(row['ID Vimeo']||row['vimeo_id']||''),duration:row['Durée']||row['duration']||'',description:row['Description']||row['description']||'',sort_order:row['Ordre']||row['sort_order']||null,tags:row['Tags']||row['tags']||'',thumbnail_url:row['Miniature URL']||row['thumbnail_url']||'',_valid:!!(row['Titre']||row['title'])&&!!(row['ID Vimeo']||row['vimeo_id'])}));setImportData(mapped);setImportResult(null);}catch(err){alert('Erreur: '+err.message);}e.target.value='';};
 
-      const handleImport=async()=>{const validData=importData.filter(d=>d._valid);if(!validData.length)return;setImportLoading(true);let created=0,updated=0,errors=0;for(const item of validData){const vimeoMatch=item.vimeo_id.match(/vimeo\.com\/(\d+)/)||item.vimeo_id.match(/^(\d+)$/);const vimeoId=vimeoMatch?vimeoMatch[1]:item.vimeo_id;const tagsArray=item.tags?item.tags.split(',').map(t=>t.trim()).filter(t=>t):null;const payload={title:item.title,vimeo_id:vimeoId,duration:item.duration||null,category:item.category||null,description:item.description||null,sort_order:item.sort_order?parseInt(item.sort_order):null,tags:tagsArray,theme:item.theme||null,thumbnail_url:item.thumbnail_url||null,center_id:center?.id,created_by:profile?.id};const{data:existing}=await supabase.from('videos').select('id').eq('vimeo_id',vimeoId).eq('center_id',center?.id).single();if(existing){const{error}=await supabase.from('videos').update(payload).eq('id',existing.id);if(error)errors++;else updated++;}else{const{error}=await supabase.from('videos').insert(payload);if(error)errors++;else created++;}}setImportLoading(false);setImportResult({created,updated,errors});await load();};
+      const handleImport=async()=>{
+        const validData=importData.filter(d=>d._valid);
+        if(!validData.length)return;
+        setImportLoading(true);
+        let created=0,updated=0,errors=0;
+        
+        for(const item of validData){
+          const vimeoMatch=item.vimeo_id.match(/vimeo\.com\/(\d+)/)||item.vimeo_id.match(/^(\d+)$/);
+          const vimeoId=vimeoMatch?vimeoMatch[1]:item.vimeo_id;
+          const tagsArray=item.tags?item.tags.split(',').map(t=>t.trim()).filter(t=>t):null;
+          
+          // Matcher catégorie/thème/sous-thème par nom
+          let categoryId=null,themeId=null,subThemeId=null;
+          const catName=(item['Catégorie']||item.category||item.categorie||'').trim();
+          const themeName=(item['Thème']||item.theme||'').trim();
+          const subThemeName=(item['Sous-thème']||item.sub_theme||item.subtheme||'').trim();
+          
+          if(catName){
+            const cat=categories.find(c=>c.name.toLowerCase()===catName.toLowerCase());
+            if(cat){
+              categoryId=cat.id;
+              if(themeName){
+                const th=themes.find(t=>t.name.toLowerCase()===themeName.toLowerCase()&&t.category_id===categoryId);
+                if(th){
+                  themeId=th.id;
+                  if(subThemeName){
+                    const st=subThemes.find(s=>s.name.toLowerCase()===subThemeName.toLowerCase()&&s.theme_id===themeId);
+                    if(st)subThemeId=st.id;
+                  }
+                }
+              }
+            }
+          }
+          
+          const payload={
+            title:item.title||item['Titre'],
+            vimeo_id:vimeoId,
+            duration:item.duration||item['Durée']||null,
+            category_id:categoryId,
+            theme_id:themeId,
+            sub_theme_id:subThemeId,
+            description:item.description||item['Description']||null,
+            sort_order:item.sort_order||item['Ordre']?parseInt(item.sort_order||item['Ordre']):null,
+            tags:tagsArray,
+            thumbnail_url:item.thumbnail_url||item['Miniature URL']||null,
+            center_id:center?.id,
+            created_by:profile?.id
+          };
+          
+          const{data:existing}=await supabase.from('videos').select('id').eq('vimeo_id',vimeoId).eq('center_id',center?.id).single();
+          if(existing){
+            const{error}=await supabase.from('videos').update(payload).eq('id',existing.id);
+            if(error)errors++;else updated++;
+          }else{
+            const{error}=await supabase.from('videos').insert(payload);
+            if(error)errors++;else created++;
+          }
+        }
+        setImportLoading(false);
+        setImportResult({created,updated,errors});
+        await load();
+      };
 
-      const downloadTemplate=()=>{const template=[{'Titre':'Ma vidéo','ID Vimeo':'123456789','Durée':'5:30','Ordre':'1','Tags':'tag1, tag2','Catégorie':'Intro','Thème':'Bases','Description':''}];const ws=XLSX.utils.json_to_sheet(template);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Videos');XLSX.writeFile(wb,'template_videos.xlsx');};
+      const downloadTemplate=()=>{const template=[{'Titre':'Ma vidéo','ID Vimeo':'123456789','Durée':'5:30','Ordre':'1','Tags':'tag1, tag2','Catégorie':'Sécurité','Thème':'RGPD','Sous-thème':'Consentement','Description':'','Miniature URL':''}];const ws=XLSX.utils.json_to_sheet(template);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Videos');XLSX.writeFile(wb,'template_videos.xlsx');};
 
       // Ouvrir le modal de détail (documents + chapitres)
       const openDetailModal=async(video)=>{
@@ -3774,7 +3835,7 @@
         <Modal isOpen={modal} onClose={()=>{setModal(false);resetForm();setEditing(null);}} title={editing?'Modifier la vidéo':'Ajouter une vidéo'} size="lg"><div className="space-y-4"><div className="grid grid-cols-2 gap-4"><Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><Input label="ID Vimeo *" value={form.vimeo_id} onChange={e=>setForm({...form,vimeo_id:e.target.value})} placeholder="123456789"/></div><div className="grid grid-cols-3 gap-4"><Input label="Durée" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="5:30"/><Input label="Ordre" type="number" value={form.sort_order} onChange={e=>setForm({...form,sort_order:e.target.value})}/><Select label="Catégorie" value={form.category_id} onChange={e=>{setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''});}} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/></div><div className="grid grid-cols-3 gap-4"><Select label="Thème" value={form.theme_id} onChange={e=>{setForm({...form,theme_id:e.target.value,sub_theme_id:''});}} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/><Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/><Input label="Tags" value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="tag1, tag2"/></div><Input label="Miniature URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setModal(false);resetForm();setEditing(null);}}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
         
         {/* Modal import */}
-        <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer" size="lg"><div className="space-y-4"><div className="bg-gray-700/50 rounded-lg p-4"><p className="text-sm text-gray-400 mb-2">Colonnes : Titre*, ID Vimeo*, Durée, Ordre, Tags, Catégorie, Thème</p><Button variant="ghost" size="sm" icon="Download" onClick={downloadTemplate}>Template</Button></div><div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center"><input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".xlsx,.xls,.csv" className="hidden"/><Icon name="Film" size={48} className="mx-auto text-gray-500 mb-4"/><Button variant="secondary" onClick={()=>fileInputRef.current?.click()}>Parcourir</Button></div>{importData.length>0&&!importResult&&<div className="max-h-48 overflow-y-auto bg-gray-700/50 rounded-lg p-2">{importData.filter(d=>d._valid).map((row,i)=><div key={i} className="text-sm py-1">{row.title}</div>)}</div>}{importResult&&<Alert type={importResult.errors>0?'warning':'success'}>{importResult.created>0&&<span className="text-green-400">✅ {importResult.created} créée(s) </span>}{importResult.updated>0&&<span className="text-blue-400">🔄 {importResult.updated} mise(s) à jour </span>}{importResult.errors>0&&<span className="text-red-400">❌ {importResult.errors} erreur(s)</span>}</Alert>}<div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>{importData.length>0&&!importResult&&<Button icon="Upload" onClick={handleImport} loading={importLoading}>Importer {importData.filter(d=>d._valid).length}</Button>}</div></div></Modal>
+        <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer des vidéos" size="lg"><div className="space-y-4"><div className="bg-gray-700/50 rounded-lg p-4"><p className="text-sm text-gray-400 mb-2">Colonnes : Titre*, ID Vimeo*, Durée, Ordre, Tags, Catégorie, Thème, Sous-thème, Description, Miniature URL</p><p className="text-xs text-gray-500 mb-2">💡 Les catégories/thèmes/sous-thèmes doivent correspondre à ceux créés dans la page Catégories</p><Button variant="ghost" size="sm" icon="Download" onClick={downloadTemplate}>Template</Button></div><div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center"><input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".xlsx,.xls,.csv" className="hidden"/><Icon name="Film" size={48} className="mx-auto text-gray-500 mb-4"/><Button variant="secondary" onClick={()=>fileInputRef.current?.click()}>Parcourir</Button></div>{importData.length>0&&!importResult&&<div className="max-h-48 overflow-y-auto bg-gray-700/50 rounded-lg p-2">{importData.filter(d=>d._valid).map((row,i)=><div key={i} className="text-sm py-1">{row.title||row['Titre']}</div>)}</div>}{importResult&&<Alert type={importResult.errors>0?'warning':'success'}>{importResult.created>0&&<span className="text-green-400">✅ {importResult.created} créée(s) </span>}{importResult.updated>0&&<span className="text-blue-400">🔄 {importResult.updated} mise(s) à jour </span>}{importResult.errors>0&&<span className="text-red-400">❌ {importResult.errors} erreur(s)</span>}</Alert>}<div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>{importData.length>0&&!importResult&&<Button icon="Upload" onClick={handleImport} loading={importLoading}>Importer {importData.filter(d=>d._valid).length}</Button>}</div></div></Modal>
         
         {/* Modal gestion pack */}
         <Modal isOpen={packModal} onClose={()=>setPackModal(false)} title={editingPack?'Modifier le pack':'Créer un pack'} size="xl">
