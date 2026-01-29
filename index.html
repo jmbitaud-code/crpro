@@ -694,8 +694,20 @@
       // Définir la page initiale selon le rôle
       useEffect(()=>{
         if(profile?.role==='learner')setPage('my-courses');
-        else setPage('scorm-tracking');
+        else setPage('dashboard');
       },[profile?.role]);
+      
+      // Écouter les changements de hash pour la navigation
+      useEffect(()=>{
+        const handleHashChange=()=>{
+          const hash=window.location.hash.replace('#','');
+          if(hash)setPage(hash);
+        };
+        // Vérifier le hash initial
+        handleHashChange();
+        window.addEventListener('hashchange',handleHashChange);
+        return()=>window.removeEventListener('hashchange',handleHashChange);
+      },[]);
       
       // Charger les centres pour le mode "Vue comme"
       useEffect(()=>{
@@ -708,7 +720,7 @@
       useEffect(()=>{
         if(viewAs){
           if(viewAs.role==='learner')setPage('my-courses');
-          else setPage('scorm-tracking');
+          else setPage('dashboard');
         }
       },[viewAs]);
       
@@ -1417,21 +1429,23 @@
         setLearners(lrn||[]);
         const learnerIds=(lrn||[]).map(l=>l.id);
         
-        // Charger les cours (filtrés par centre)
-        let qc=supabase.from('playlists').select('id,title');
-        if(!isSuperAdmin&&center?.id)qc=qc.eq('center_id',center.id);
+        // Charger les cours (filtrés par centre + contenus LMS partagés)
+        let qc=supabase.from('playlists').select('id,title,center_id,is_lms_content');
+        if(!isSuperAdmin&&center?.id)qc=qc.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
         const{data:crs}=await qc;
         setCourses(crs||[]);
         const courseIds=(crs||[]).map(c=>c.id);
         
-        // Charger les parcours (filtrés par centre)
-        let qp=supabase.from('learning_paths').select('id,title');
-        if(!isSuperAdmin&&center?.id)qp=qp.eq('center_id',center.id);
+        // Charger les parcours (filtrés par centre + contenus LMS partagés)
+        let qp=supabase.from('learning_paths').select('id,title,center_id,is_lms_content');
+        if(!isSuperAdmin&&center?.id)qp=qp.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
         const{data:pth}=await qp;
         setPaths(pth||[]);
         
-        // Charger les modules SCORM
-        const{data:mods}=await supabase.from('scorm_modules').select('id,title,category');
+        // Charger les modules SCORM (filtrés par centre + contenus LMS partagés)
+        let qm=supabase.from('scorm_modules').select('id,title,category,center_id,is_lms_content');
+        if(!isSuperAdmin&&center?.id)qm=qm.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
+        const{data:mods}=await qm;
         setModules(mods||[]);
         
         // Charger les inscriptions aux cours
@@ -2348,33 +2362,44 @@
       };
 
       const load=useCallback(async()=>{
-        // Charger les inscriptions avec détails
+        // D'abord charger les apprenants du centre pour filtrer correctement
+        let learnerQuery=supabase.from('profiles').select('id').eq('role','learner');
+        if(!isSuperAdmin&&center?.id)learnerQuery=learnerQuery.eq('center_id',center.id);
+        const{data:learnerProfiles}=await learnerQuery;
+        const centerLearnerIds=(learnerProfiles||[]).map(l=>l.id);
+        
+        // Charger les inscriptions des apprenants du centre
         let q=supabase.from('enrollments').select(`
           *,
-          playlists:playlist_id(id,title,center_id),
-          profiles:learner_id(id,first_name,last_name,email)
+          playlists:playlist_id(id,title,center_id,is_lms_content),
+          profiles:learner_id(id,first_name,last_name,email,center_id)
         `);
-        if(!isSuperAdmin&&center?.id){
-          q=q.eq('playlists.center_id',center.id);
+        if(!isSuperAdmin&&center?.id&&centerLearnerIds.length>0){
+          q=q.in('learner_id',centerLearnerIds);
         }
         const{data:enrollments}=await q;
         
-        // Charger les cours
-        let qc=supabase.from('playlists').select('id,title,is_published');
-        if(!isSuperAdmin&&center?.id)qc=qc.eq('center_id',center.id);
+        // Filtrer côté client: garder les inscriptions aux cours du centre OU aux cours LMS partagés
+        const filteredEnrollments=(!isSuperAdmin&&center?.id)
+          ?(enrollments||[]).filter(e=>e.playlists?.center_id===center.id||e.playlists?.is_lms_content===true)
+          :(enrollments||[]);
+        
+        // Charger les cours (centre + LMS partagés)
+        let qc=supabase.from('playlists').select('id,title,is_published,center_id,is_lms_content');
+        if(!isSuperAdmin&&center?.id)qc=qc.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
         const{data:courses}=await qc;
         
         // Charger les sessions de cours pour le temps total
         let qs=supabase.from('course_sessions').select('*');
         if(!isSuperAdmin&&center?.id){
           // Filtrer par les enrollments du centre
-          const enrollmentIds=(enrollments||[]).filter(e=>e.playlists).map(e=>e.id);
+          const enrollmentIds=(filteredEnrollments||[]).filter(e=>e.playlists).map(e=>e.id);
           if(enrollmentIds.length>0)qs=qs.in('enrollment_id',enrollmentIds);
         }
         const{data:sessions}=await qs;
         
         // Charger les scores SCORM
-        const learnerIds=[...new Set((enrollments||[]).map(e=>e.learner_id).filter(Boolean))];
+        const learnerIds=[...new Set((filteredEnrollments||[]).map(e=>e.learner_id).filter(Boolean))];
         let scormData=[];
         if(learnerIds.length>0){
           const{data:sp}=await supabase.from('scorm_progress').select('*').in('learner_id',learnerIds);
@@ -2390,7 +2415,7 @@
 
         // Calculer les statistiques par apprenant
         const learnerStats=learnerIds.map(learnerId=>{
-          const learnerEnrollments=(enrollments||[]).filter(e=>e.learner_id===learnerId);
+          const learnerEnrollments=(filteredEnrollments||[]).filter(e=>e.learner_id===learnerId);
           const profile=learnerEnrollments[0]?.profiles;
           const totalTime=learnerEnrollments.reduce((a,e)=>a+(e.time_spent_seconds||0),0);
           const completedCourses=learnerEnrollments.filter(e=>e.status==='completed').length;
@@ -2419,7 +2444,7 @@
         }).sort((a,b)=>b.totalTime-a.totalTime);
 
         // Calculer les statistiques globales
-        const validEnrollments=(enrollments||[]).filter(e=>e.playlists&&e.profiles);
+        const validEnrollments=(filteredEnrollments||[]).filter(e=>e.playlists&&e.profiles);
         const totalTimeAll=validEnrollments.reduce((a,e)=>a+(e.time_spent_seconds||0),0);
         const summary={
           total:validEnrollments.length,
@@ -6612,6 +6637,9 @@
       const[loading,setLoading]=useState(true);
       const[saving,setSaving]=useState(false);
       
+      // Mode lecture seule pour non-super-admins
+      const isReadOnly=!isSuperAdmin;
+      
       // Données taxonomie
       const[categories,setCategories]=useState([]);
       const[themes,setThemes]=useState([]);
@@ -7188,17 +7216,28 @@
       );
       
       return<div>
+        {/* Bandeau lecture seule */}
+        {isReadOnly&&(
+          <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex items-center gap-3">
+            <Icon name="Eye" size={20} className="text-yellow-400"/>
+            <div>
+              <p className="text-yellow-400 font-medium">Mode lecture seule</p>
+              <p className="text-xs text-gray-400">Seul un Super Administrateur peut modifier les catégories</p>
+            </div>
+          </div>
+        )}
+        
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl font-bold">Catégories</h1>
             <p className="text-sm text-gray-400">Organisez vos contenus avec catégories, thèmes, sous-thèmes et tags</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" icon="Tags" onClick={()=>setTagsModal(true)}>Gérer les tags</Button>
+            {!isReadOnly&&<Button variant="secondary" icon="Tags" onClick={()=>setTagsModal(true)}>Gérer les tags</Button>}
             <Button variant="secondary" icon="FileSpreadsheet" onClick={downloadTemplate}>Template</Button>
-            <Button variant="secondary" icon="Upload" onClick={()=>fileInputRef.current?.click()}>Importer</Button>
+            {!isReadOnly&&<Button variant="secondary" icon="Upload" onClick={()=>fileInputRef.current?.click()}>Importer</Button>}
             <Button variant="secondary" icon="Download" onClick={exportToExcel} disabled={categories.length===0}>Exporter</Button>
-            <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleFileSelect} className="hidden"/>
+            {!isReadOnly&&<input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleFileSelect} className="hidden"/>}
           </div>
         </div>
         
@@ -7240,17 +7279,19 @@
         {/* Légende */}
         <div className="flex flex-wrap gap-4 mb-4 text-xs text-gray-400">
           <span className="flex items-center gap-1"><Icon name="ChevronRight" size={14}/> Cliquer pour déplier</span>
-          <span className="flex items-center gap-1"><Icon name="Edit2" size={14} className="text-indigo-400"/> Modifier (nom, couleur, tags)</span>
-          <span className="flex items-center gap-1"><Icon name="Plus" size={14} className="text-green-400"/> Ajouter thème/sous-thème</span>
-          <span className="flex items-center gap-1"><Icon name="Tags" size={14} className="text-amber-400"/> Gérer les tags</span>
+          {!isReadOnly&&<span className="flex items-center gap-1"><Icon name="Edit2" size={14} className="text-indigo-400"/> Modifier (nom, couleur, tags)</span>}
+          {!isReadOnly&&<span className="flex items-center gap-1"><Icon name="Plus" size={14} className="text-green-400"/> Ajouter thème/sous-thème</span>}
+          {!isReadOnly&&<span className="flex items-center gap-1"><Icon name="Tags" size={14} className="text-amber-400"/> Gérer les tags</span>}
         </div>
         
         <Card className="p-6">
-          {/* Ajouter catégorie */}
-          <div className="flex gap-2 mb-6">
-            <Input className="flex-1" placeholder="Nouvelle catégorie..." value={quickAddValue} onChange={e=>setQuickAddValue(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&quickAddValue.trim()){addCategory(quickAddValue);setQuickAddValue('');}}}/>
-            <Button icon="Plus" onClick={()=>{if(quickAddValue.trim()){addCategory(quickAddValue);setQuickAddValue('');}}} loading={saving}>Ajouter catégorie</Button>
-          </div>
+          {/* Ajouter catégorie - masqué en lecture seule */}
+          {!isReadOnly&&(
+            <div className="flex gap-2 mb-6">
+              <Input className="flex-1" placeholder="Nouvelle catégorie..." value={quickAddValue} onChange={e=>setQuickAddValue(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&quickAddValue.trim()){addCategory(quickAddValue);setQuickAddValue('');}}}/>
+              <Button icon="Plus" onClick={()=>{if(quickAddValue.trim()){addCategory(quickAddValue);setQuickAddValue('');}}} loading={saving}>Ajouter catégorie</Button>
+            </div>
+          )}
           
           {filteredCategories.length===0?(
             <Empty icon="FolderTree" title={searchQuery?"Aucun résultat":"Aucune catégorie"} desc={searchQuery?"Modifiez votre recherche":"Créez ou importez des catégories."}/>
@@ -7292,35 +7333,38 @@
                     
                     <span className="text-sm text-gray-500">{allCatThemes.length} thème(s)</span>
                     
-                    {/* Boutons d'action explicites */}
-                    <div className="flex items-center gap-1 border-l border-gray-600 pl-2 ml-2">
-                      <button onClick={e=>{e.stopPropagation();setExpandedCats({...expandedCats,[cat.id]:true});}} className="p-2 hover:bg-green-500/20 rounded group relative" title="Ajouter un thème">
-                        <Icon name="Plus" size={16} className="text-green-400"/>
-                        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-xs text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none">+ Thème</span>
-                      </button>
-                      <button onClick={e=>{e.stopPropagation();openEditModal('category',cat);}} className="p-2 hover:bg-indigo-500/20 rounded group relative" title="Modifier la catégorie">
-                        <Icon name="Edit2" size={16} className="text-indigo-400"/>
-                        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-xs text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none">Modifier</span>
-                      </button>
-                      <button onClick={e=>{e.stopPropagation();deleteCategory(cat.id);}} className="p-2 hover:bg-red-500/20 rounded group relative" title="Supprimer">
-                        <Icon name="Trash2" size={16} className="text-red-400"/>
-                        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-xs text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none">Supprimer</span>
-                      </button>
-                    </div>
+                    {/* Boutons d'action explicites - masqués en lecture seule */}
+                    {!isReadOnly&&(
+                      <div className="flex items-center gap-1 border-l border-gray-600 pl-2 ml-2">
+                        <button onClick={e=>{e.stopPropagation();setExpandedCats({...expandedCats,[cat.id]:true});}} className="p-2 hover:bg-green-500/20 rounded group relative" title="Ajouter un thème">
+                          <Icon name="Plus" size={16} className="text-green-400"/>
+                          <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-xs text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none">+ Thème</span>
+                        </button>
+                        <button onClick={e=>{e.stopPropagation();openEditModal('category',cat);}} className="p-2 hover:bg-indigo-500/20 rounded group relative" title="Modifier la catégorie">
+                          <Icon name="Edit2" size={16} className="text-indigo-400"/>
+                          <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-xs text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none">Modifier</span>
+                        </button>
+                        <button onClick={e=>{e.stopPropagation();deleteCategory(cat.id);}} className="p-2 hover:bg-red-500/20 rounded group relative" title="Supprimer">
+                          <Icon name="Trash2" size={16} className="text-red-400"/>
+                          <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-xs text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none">Supprimer</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                   
                   {isExpanded&&(
                     <div className="p-4 pl-12 space-y-3 bg-gray-800/50 border-t border-gray-700">
-                      {/* Formulaire ajout thème en haut */}
-                      {!searchQuery&&(
+                      {/* Formulaire ajout thème en haut - masqué en lecture seule */}
+                      {!searchQuery&&!isReadOnly&&(
                         <div className="flex gap-2 items-center p-3 bg-gray-700/50 rounded-lg border border-dashed border-gray-600">
                           <Icon name="Plus" size={16} className="text-green-400"/>
                           <Input className="flex-1" size="sm" placeholder="Ajouter un thème à cette catégorie..." onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){addTheme(e.target.value,cat.id);e.target.value='';}}}/>
                         </div>
                       )}
                       
-                      {catThemes.length===0&&!searchQuery&&<p className="text-sm text-gray-500 text-center py-2">Aucun thème - Utilisez le champ ci-dessus pour en créer</p>}
-                      {catThemes.length===0&&searchQuery&&<p className="text-sm text-gray-500">Aucun thème correspondant</p>}
+                      {catThemes.length===0&&!searchQuery&&!isReadOnly&&<p className="text-sm text-gray-500 text-center py-2">Aucun thème - Utilisez le champ ci-dessus pour en créer</p>}
+                      {catThemes.length===0&&!isReadOnly&&searchQuery&&<p className="text-sm text-gray-500">Aucun thème correspondant</p>}
+                      {catThemes.length===0&&isReadOnly&&<p className="text-sm text-gray-500 text-center py-2">Aucun thème dans cette catégorie</p>}
                       
                       {catThemes.map(theme=>{
                         const themeSubs=getSubThemesForTheme(theme.id);
@@ -7345,27 +7389,31 @@
                             )}
                             <span className="text-xs text-gray-500">{themeSubs.length} sous-thème(s)</span>
                             
-                            {/* Boutons thème */}
-                            <div className="flex items-center gap-1 border-l border-gray-600 pl-2 ml-1">
-                              <button onClick={e=>{e.stopPropagation();setExpandedThemes({...expandedThemes,[theme.id]:true});}} className="p-1.5 hover:bg-green-500/20 rounded" title="Ajouter sous-thème">
-                                <Icon name="Plus" size={14} className="text-green-400"/>
-                              </button>
-                              <button onClick={e=>{e.stopPropagation();openEditModal('theme',theme);}} className="p-1.5 hover:bg-indigo-500/20 rounded" title="Modifier">
-                                <Icon name="Edit2" size={14} className="text-indigo-400"/>
-                              </button>
-                              <button onClick={e=>{e.stopPropagation();deleteTheme(theme.id);}} className="p-1.5 hover:bg-red-500/20 rounded" title="Supprimer">
-                                <Icon name="X" size={14} className="text-red-400"/>
-                              </button>
-                            </div>
+                            {/* Boutons thème - masqués en lecture seule */}
+                            {!isReadOnly&&(
+                              <div className="flex items-center gap-1 border-l border-gray-600 pl-2 ml-1">
+                                <button onClick={e=>{e.stopPropagation();setExpandedThemes({...expandedThemes,[theme.id]:true});}} className="p-1.5 hover:bg-green-500/20 rounded" title="Ajouter sous-thème">
+                                  <Icon name="Plus" size={14} className="text-green-400"/>
+                                </button>
+                                <button onClick={e=>{e.stopPropagation();openEditModal('theme',theme);}} className="p-1.5 hover:bg-indigo-500/20 rounded" title="Modifier">
+                                  <Icon name="Edit2" size={14} className="text-indigo-400"/>
+                                </button>
+                                <button onClick={e=>{e.stopPropagation();deleteTheme(theme.id);}} className="p-1.5 hover:bg-red-500/20 rounded" title="Supprimer">
+                                  <Icon name="X" size={14} className="text-red-400"/>
+                                </button>
+                              </div>
+                            )}
                           </div>
                           
                           {themeExpanded&&(
                             <div className="p-3 pl-8 space-y-2 bg-gray-700/50 border-t border-gray-600">
-                              {/* Formulaire ajout sous-thème en haut */}
-                              <div className="flex gap-2 items-center p-2 bg-gray-600/50 rounded border border-dashed border-gray-500">
-                                <Icon name="Plus" size={14} className="text-cyan-400"/>
-                                <Input size="sm" className="flex-1" placeholder="Ajouter un sous-thème..." onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){addSubTheme(e.target.value,theme.id);e.target.value='';}}}/>
-                              </div>
+                              {/* Formulaire ajout sous-thème en haut - masqué en lecture seule */}
+                              {!isReadOnly&&(
+                                <div className="flex gap-2 items-center p-2 bg-gray-600/50 rounded border border-dashed border-gray-500">
+                                  <Icon name="Plus" size={14} className="text-cyan-400"/>
+                                  <Input size="sm" className="flex-1" placeholder="Ajouter un sous-thème..." onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){addSubTheme(e.target.value,theme.id);e.target.value='';}}}/>
+                                </div>
+                              )}
                               
                               {themeSubs.length===0&&<p className="text-xs text-gray-500 text-center py-1">Aucun sous-thème</p>}
                               
@@ -7382,12 +7430,16 @@
                                       })}
                                     </div>
                                   )}
-                                  <button onClick={()=>openEditModal('subtheme',st)} className="p-1 hover:bg-indigo-500/20 rounded" title="Modifier">
-                                    <Icon name="Edit2" size={12} className="text-indigo-400"/>
-                                  </button>
-                                  <button onClick={()=>deleteSubTheme(st.id)} className="p-1 hover:bg-red-500/20 rounded" title="Supprimer">
-                                    <Icon name="X" size={12} className="text-red-400"/>
-                                  </button>
+                                  {!isReadOnly&&(
+                                    <>
+                                      <button onClick={()=>openEditModal('subtheme',st)} className="p-1 hover:bg-indigo-500/20 rounded" title="Modifier">
+                                        <Icon name="Edit2" size={12} className="text-indigo-400"/>
+                                      </button>
+                                      <button onClick={()=>deleteSubTheme(st.id)} className="p-1 hover:bg-red-500/20 rounded" title="Supprimer">
+                                        <Icon name="X" size={12} className="text-red-400"/>
+                                      </button>
+                                    </>
+                                  )}
                                 </div>;
                               })}
                             </div>
