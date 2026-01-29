@@ -3431,7 +3431,7 @@
     const Tabs=({tabs,active,onChange})=><div className="flex gap-1 p-1 bg-gray-700 rounded-lg mb-6">{tabs.map(t=><button key={t.id} onClick={()=>onChange(t.id)} className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${active===t.id?'bg-indigo-600 text-white':'text-gray-400 hover:text-white'}`}><Icon name={t.icon} size={16}/>{t.label}</button>)}</div>;
 
     function VideosPage(){
-      const{center,isSuperAdmin,profile,can}=useAuth();
+      const{center,isSuperAdmin,profile,can,realRole}=useAuth();
       const[activeTab,setActiveTab]=useState('videos');
       const[videos,setVideos]=useState([]);
       const[scormModules,setScormModules]=useState([]);
@@ -3465,6 +3465,11 @@
       const[requestLicenseModal,setRequestLicenseModal]=useState(null);
       const[packs,setPacks]=useState([]);
       const[packItems,setPackItems]=useState([]);
+      // Panier de demande de licence (pour Center Admin)
+      const[requestCart,setRequestCart]=useState({videos:[],scorm:[],quizzes:[],courses:[],paths:[]});
+      const[requestCartModal,setRequestCartModal]=useState(false);
+      const[requestCartForm,setRequestCartForm]=useState({name:'',description:'',duration_months:12,max_learners:'',message:''});
+      const[requestCartSaving,setRequestCartSaving]=useState(false);
       // Taxonomie
       const[categories,setCategories]=useState([]);
       const[themes,setThemes]=useState([]);
@@ -3798,6 +3803,290 @@
       };
       const isSelected=(type,id)=>selectedItems.includes(`${type}:${id}`);
       const clearSelection=()=>setSelectedItems([]);
+      
+      // === PANIER DE DEMANDE DE LICENCE (Center Admin) ===
+      const canUseRequestCart=!isSuperAdmin&&center?.id&&realRole==='center_admin';
+      
+      const toggleRequestCart=(type,id,item)=>{
+        setRequestCart(prev=>{
+          const list=[...prev[type+'s']||[]];
+          const idx=list.findIndex(i=>i.id===id);
+          if(idx>=0){
+            list.splice(idx,1);
+          }else{
+            list.push({id,title:item.title,type});
+          }
+          return{...prev,[type+'s']:list};
+        });
+      };
+      
+      const isInRequestCart=(type,id)=>(requestCart[type+'s']||[]).some(i=>i.id===id);
+      
+      const getRequestCartCount=()=>{
+        return (requestCart.videos?.length||0)+(requestCart.scorm?.length||0)+
+               (requestCart.quizzes?.length||0)+(requestCart.courses?.length||0)+
+               (requestCart.paths?.length||0);
+      };
+      
+      const clearRequestCart=()=>setRequestCart({videos:[],scorm:[],quizzes:[],courses:[],paths:[]});
+      
+      const removeFromRequestCart=(type,id)=>{
+        setRequestCart(prev=>({
+          ...prev,
+          [type+'s']:(prev[type+'s']||[]).filter(i=>i.id!==id)
+        }));
+      };
+      
+      // Générer le PDF de demande de licence
+      const generateRequestPDF=async(requestData)=>{
+        const{jsPDF}=window.jspdf;
+        const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+        const pageWidth=doc.internal.pageSize.getWidth();
+        const margin=20;
+        let y=20;
+        
+        // Couleurs
+        const primaryColor=[99,102,241]; // Indigo
+        const textColor=[55,65,81];
+        const lightGray=[156,163,175];
+        
+        // En-tête avec fond coloré
+        doc.setFillColor(...primaryColor);
+        doc.rect(0,0,pageWidth,45,  'F');
+        
+        // Logo texte
+        doc.setTextColor(255,255,255);
+        doc.setFontSize(24);
+        doc.setFont('helvetica','bold');
+        doc.text('CRPro',margin,25);
+        doc.setFontSize(10);
+        doc.setFont('helvetica','normal');
+        doc.text('Learning Management System',margin,32);
+        
+        // Titre du document
+        doc.setFontSize(14);
+        doc.text('DEMANDE DE LICENCE',pageWidth-margin,25,{align:'right'});
+        doc.setFontSize(10);
+        doc.text(`N° ${Date.now().toString(36).toUpperCase()}`,pageWidth-margin,32,{align:'right'});
+        
+        y=55;
+        
+        // Informations du demandeur
+        doc.setTextColor(...textColor);
+        doc.setFontSize(12);
+        doc.setFont('helvetica','bold');
+        doc.text('INFORMATIONS DU DEMANDEUR',margin,y);
+        y+=8;
+        
+        doc.setDrawColor(...primaryColor);
+        doc.setLineWidth(0.5);
+        doc.line(margin,y,pageWidth-margin,y);
+        y+=8;
+        
+        doc.setFontSize(10);
+        doc.setFont('helvetica','normal');
+        const info=[
+          ['Centre de formation:',requestData.centerName||'Non spécifié'],
+          ['Demandeur:',`${requestData.requesterName||'Non spécifié'}`],
+          ['Email:',requestData.requesterEmail||'Non spécifié'],
+          ['Date de la demande:',new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'})]
+        ];
+        
+        info.forEach(([label,value])=>{
+          doc.setFont('helvetica','bold');
+          doc.text(label,margin,y);
+          doc.setFont('helvetica','normal');
+          doc.text(value,margin+45,y);
+          y+=6;
+        });
+        
+        y+=10;
+        
+        // Détails de la demande
+        doc.setFontSize(12);
+        doc.setFont('helvetica','bold');
+        doc.text('DÉTAILS DE LA DEMANDE',margin,y);
+        y+=8;
+        doc.line(margin,y,pageWidth-margin,y);
+        y+=8;
+        
+        doc.setFontSize(11);
+        doc.setFont('helvetica','bold');
+        doc.setTextColor(...primaryColor);
+        doc.text(requestData.name,margin,y);
+        y+=7;
+        
+        if(requestData.description){
+          doc.setFontSize(10);
+          doc.setFont('helvetica','italic');
+          doc.setTextColor(...lightGray);
+          const descLines=doc.splitTextToSize(requestData.description,pageWidth-2*margin);
+          doc.text(descLines,margin,y);
+          y+=descLines.length*5+5;
+        }
+        
+        doc.setTextColor(...textColor);
+        doc.setFont('helvetica','normal');
+        doc.setFontSize(10);
+        doc.text(`Durée souhaitée: ${requestData.duration_months} mois`,margin,y);
+        y+=6;
+        doc.text(`Nombre d'apprenants: ${requestData.max_learners||'Illimité'}`,margin,y);
+        y+=12;
+        
+        // Contenus demandés
+        doc.setFontSize(12);
+        doc.setFont('helvetica','bold');
+        doc.text(`CONTENUS DEMANDÉS (${requestData.totalItems})`,margin,y);
+        y+=8;
+        doc.line(margin,y,pageWidth-margin,y);
+        y+=8;
+        
+        const contentTypes=[
+          {key:'videos',label:'Vidéos',icon:'🎬',color:[59,130,246]},
+          {key:'scorm',label:'Modules SCORM',icon:'📦',color:[249,115,22]},
+          {key:'quizzes',label:'Quiz',icon:'❓',color:[34,197,94]},
+          {key:'courses',label:'Cours',icon:'📚',color:[99,102,241]},
+          {key:'paths',label:'Parcours',icon:'🛤️',color:[168,85,247]}
+        ];
+        
+        doc.setFontSize(10);
+        contentTypes.forEach(ct=>{
+          const items=requestData.cart[ct.key]||[];
+          if(items.length>0){
+            doc.setFont('helvetica','bold');
+            doc.setTextColor(...ct.color);
+            doc.text(`${ct.icon} ${ct.label} (${items.length})`,margin,y);
+            y+=6;
+            
+            doc.setFont('helvetica','normal');
+            doc.setTextColor(...textColor);
+            items.forEach((item,i)=>{
+              if(y>270){
+                doc.addPage();
+                y=20;
+              }
+              doc.text(`   ${i+1}. ${item.title}`,margin,y);
+              y+=5;
+            });
+            y+=5;
+          }
+        });
+        
+        // Message complémentaire
+        if(requestData.message){
+          if(y>240){doc.addPage();y=20;}
+          y+=5;
+          doc.setFontSize(12);
+          doc.setFont('helvetica','bold');
+          doc.setTextColor(...textColor);
+          doc.text('MESSAGE DU DEMANDEUR',margin,y);
+          y+=8;
+          doc.line(margin,y,pageWidth-margin,y);
+          y+=8;
+          
+          doc.setFontSize(10);
+          doc.setFont('helvetica','normal');
+          const msgLines=doc.splitTextToSize(requestData.message,pageWidth-2*margin);
+          doc.text(msgLines,margin,y);
+        }
+        
+        // Pied de page
+        const pageCount=doc.internal.getNumberOfPages();
+        for(let i=1;i<=pageCount;i++){
+          doc.setPage(i);
+          doc.setFontSize(8);
+          doc.setTextColor(...lightGray);
+          doc.text(`Document généré automatiquement par CRPro - Page ${i}/${pageCount}`,pageWidth/2,290,{align:'center'});
+        }
+        
+        return doc.output('datauristring').split(',')[1]; // Retourne le base64
+      };
+      
+      const submitRequestCart=async()=>{
+        if(getRequestCartCount()===0){alert('Panier vide');return;}
+        if(!requestCartForm.name.trim()){alert('Veuillez donner un nom à votre demande');return;}
+        
+        setRequestCartSaving(true);
+        try{
+          // Préparer les données
+          const cartDetails={
+            videos:requestCart.videos.map(v=>({id:v.id,title:v.title})),
+            scorm:requestCart.scorm.map(s=>({id:s.id,title:s.title})),
+            quizzes:requestCart.quizzes.map(q=>({id:q.id,title:q.title})),
+            courses:requestCart.courses.map(c=>({id:c.id,title:c.title})),
+            paths:requestCart.paths.map(p=>({id:p.id,title:p.title}))
+          };
+          
+          const requestData={
+            name:requestCartForm.name,
+            description:requestCartForm.description,
+            duration_months:requestCartForm.duration_months||12,
+            max_learners:requestCartForm.max_learners,
+            message:requestCartForm.message,
+            cart:cartDetails,
+            totalItems:getRequestCartCount(),
+            centerName:center?.name||'Centre inconnu',
+            requesterName:`${profile?.first_name||''} ${profile?.last_name||''}`.trim()||'Utilisateur',
+            requesterEmail:profile?.email||''
+          };
+          
+          // Générer le PDF
+          let pdfBase64=null;
+          try{
+            pdfBase64=await generateRequestPDF(requestData);
+          }catch(pdfErr){
+            console.warn('Erreur génération PDF:',pdfErr);
+          }
+          
+          const message=`📦 Demande personnalisée: ${requestCartForm.name}\n\n`+
+            `📝 ${requestCartForm.description||'Pas de description'}\n\n`+
+            `📋 Contenus demandés (${getRequestCartCount()}):\n`+
+            (cartDetails.videos.length?`  • Vidéos (${cartDetails.videos.length}): ${cartDetails.videos.map(v=>v.title).join(', ')}\n`:'')+
+            (cartDetails.scorm.length?`  • Modules SCORM (${cartDetails.scorm.length}): ${cartDetails.scorm.map(s=>s.title).join(', ')}\n`:'')+
+            (cartDetails.quizzes.length?`  • Quiz (${cartDetails.quizzes.length}): ${cartDetails.quizzes.map(q=>q.title).join(', ')}\n`:'')+
+            (cartDetails.courses.length?`  • Cours (${cartDetails.courses.length}): ${cartDetails.courses.map(c=>c.title).join(', ')}\n`:'')+
+            (cartDetails.paths.length?`  • Parcours (${cartDetails.paths.length}): ${cartDetails.paths.map(p=>p.title).join(', ')}\n`:'')+
+            `\n💬 Message: ${requestCartForm.message||'Aucun'}`;
+          
+          // Insérer la demande en base
+          const{data:insertedRequest,error}=await supabase.from('license_requests').insert({
+            center_id:center.id,
+            pack_id:null,
+            requested_by:profile.id,
+            requested_duration_months:requestCartForm.duration_months||12,
+            requested_max_learners:requestCartForm.max_learners?parseInt(requestCartForm.max_learners):null,
+            request_message:message
+          }).select().single();
+          
+          if(error)throw error;
+          
+          // Envoyer l'email avec le PDF via Edge Function
+          if(pdfBase64){
+            try{
+              const{error:emailError}=await supabase.functions.invoke('send-license-request-email',{
+                body:{
+                  requestId:insertedRequest?.id,
+                  requestData,
+                  pdfBase64,
+                  centerId:center.id
+                }
+              });
+              if(emailError)console.warn('Email non envoyé:',emailError);
+            }catch(emailErr){
+              console.warn('Erreur envoi email:',emailErr);
+            }
+          }
+          
+          alert('✅ Demande envoyée avec succès !\n\nUn email avec le PDF récapitulatif a été envoyé à l\'administrateur.');
+          setRequestCartModal(false);
+          clearRequestCart();
+          setRequestCartForm({name:'',description:'',duration_months:12,max_learners:'',message:''});
+        }catch(err){
+          console.error('Erreur demande:',err);
+          alert('Erreur: '+(err.message||'Erreur inconnue'));
+        }
+        setRequestCartSaving(false);
+      };
       
       // Actions groupées
       const bulkSetLMS=async(value)=>{
@@ -4330,7 +4619,7 @@
         
         {/* ONGLET VIDÉOS */}
         {activeTab==='videos'&&<>
-          {filtered.length===0?<Empty icon="Film" title="Aucune vidéo" desc={filterSource!=='all'||filterCategory?'Essayez d\'autres filtres':undefined}/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{filtered.map(v=>{const licensed=!v.is_lms_content||isLicensed('video',v.id);const isOwn=!v.is_lms_content;return<Card key={v.id} className={`overflow-hidden ${!licensed&&!isOwn?'opacity-80':''}`}>{isSuperAdmin&&<div className="flex items-center gap-2 p-2 border-b border-gray-700 bg-gray-800/50"><label className="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={v.is_lms_content} onChange={()=>toggleLMS('video',v)} className="rounded"/>📦 LMS</label><label className="flex items-center gap-2 text-xs cursor-pointer ml-auto"><input type="checkbox" checked={isSelected('video',v.id)} onChange={()=>toggleSelection('video',v.id)} className="rounded bg-indigo-600"/>Sélect.</label></div>}<div className="aspect-video bg-gray-900 relative">{v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:<iframe src={`https://player.vimeo.com/video/${v.vimeo_id}?background=1`} className="w-full h-full" allow="autoplay"/>}<div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>{v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}{!isSuperAdmin&&(v.is_lms_content?<div className={`absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒 Non licencié'}</div>:<div className="absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium bg-gray-600">📁 Mon contenu</div>)}</div><div className="p-4"><h3 className="font-semibold truncate">{v.title}</h3><div className="flex flex-wrap gap-1 mt-2">{v.content_categories?.name&&<span className="px-2 py-1 rounded text-xs" style={{backgroundColor:(v.content_categories?.color||'#6366f1')+'30',color:v.content_categories?.color||'#6366f1'}}>{v.content_categories.name}</span>}{v.category&&!v.content_categories&&<span className="px-2 py-1 bg-gray-700 rounded text-xs">{v.category}</span>}{v.theme&&<span className="px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded text-xs">{v.theme}</span>}</div><div className="flex flex-wrap gap-2 mt-3">{(licensed||isOwn||isSuperAdmin)&&<Button variant="ghost" size="sm" icon="Settings" onClick={()=>openDetailModal(v)}>Ressources</Button>}{canEdit&&isOwn&&<><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category_id:v.category_id||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme_id:v.theme_id||'',sub_theme_id:v.sub_theme_id||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(v.id)}/></>}{isSuperAdmin&&v.is_lms_content&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category_id:v.category_id||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme_id:v.theme_id||'',sub_theme_id:v.sub_theme_id||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button>}{!licensed&&!isOwn&&!isSuperAdmin&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>setRequestLicenseModal({type:'video',item:v})}>Demander licence</Button>}</div></div></Card>})}</div>}
+          {filtered.length===0?<Empty icon="Film" title="Aucune vidéo" desc={filterSource!=='all'||filterCategory?'Essayez d\'autres filtres':undefined}/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{filtered.map(v=>{const licensed=!v.is_lms_content||isLicensed('video',v.id);const isOwn=!v.is_lms_content;return<Card key={v.id} className={`overflow-hidden ${!licensed&&!isOwn?'opacity-80':''}`}>{isSuperAdmin&&<div className="flex items-center gap-2 p-2 border-b border-gray-700 bg-gray-800/50"><label className="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={v.is_lms_content} onChange={()=>toggleLMS('video',v)} className="rounded"/>📦 LMS</label><label className="flex items-center gap-2 text-xs cursor-pointer ml-auto"><input type="checkbox" checked={isSelected('video',v.id)} onChange={()=>toggleSelection('video',v.id)} className="rounded bg-indigo-600"/>Sélect.</label></div>}<div className="aspect-video bg-gray-900 relative">{v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:<iframe src={`https://player.vimeo.com/video/${v.vimeo_id}?background=1`} className="w-full h-full" allow="autoplay"/>}<div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>{v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}{!isSuperAdmin&&(v.is_lms_content?<div className={`absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒 Non licencié'}</div>:<div className="absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium bg-gray-600">📁 Mon contenu</div>)}</div><div className="p-4"><h3 className="font-semibold truncate">{v.title}</h3><div className="flex flex-wrap gap-1 mt-2">{v.content_categories?.name&&<span className="px-2 py-1 rounded text-xs" style={{backgroundColor:(v.content_categories?.color||'#6366f1')+'30',color:v.content_categories?.color||'#6366f1'}}>{v.content_categories.name}</span>}{v.category&&!v.content_categories&&<span className="px-2 py-1 bg-gray-700 rounded text-xs">{v.category}</span>}{v.theme&&<span className="px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded text-xs">{v.theme}</span>}</div><div className="flex flex-wrap gap-2 mt-3">{(licensed||isOwn||isSuperAdmin)&&<Button variant="ghost" size="sm" icon="Settings" onClick={()=>openDetailModal(v)}>Ressources</Button>}{canEdit&&isOwn&&<><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category_id:v.category_id||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme_id:v.theme_id||'',sub_theme_id:v.sub_theme_id||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(v.id)}/></>}{isSuperAdmin&&v.is_lms_content&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category_id:v.category_id||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme_id:v.theme_id||'',sub_theme_id:v.sub_theme_id||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button>}{!licensed&&!isOwn&&!isSuperAdmin&&canUseRequestCart&&<label className="flex items-center gap-2 text-xs cursor-pointer bg-purple-500/20 text-purple-300 px-2 py-1 rounded hover:bg-purple-500/30"><input type="checkbox" checked={isInRequestCart('video',v.id)} onChange={()=>toggleRequestCart('video',v.id,v)} className="rounded"/>Ajouter</label>}</div></div></Card>})}</div>}
         </>}
         
         {/* ONGLET SCORM */}
@@ -4364,7 +4653,7 @@
                 {(licensed||isOwn)&&m.package_url&&<a href={m.package_url} target="_blank" className="inline-flex items-center gap-1 px-3 py-1.5 text-sm hover:bg-gray-700 rounded-lg"><Icon name="ExternalLink" size={14}/>Tester</a>}
                 {canEdit&&isOwn&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleScormDelete(m.id)}/>}
                 {isSuperAdmin&&m.is_lms_content&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleScormDelete(m.id)}/>}
-                {!licensed&&!isOwn&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>setRequestLicenseModal({type:'scorm',item:m})}>Demander licence</Button>}
+                {!licensed&&!isOwn&&canUseRequestCart&&<label className="flex items-center gap-2 text-xs cursor-pointer bg-purple-500/20 text-purple-300 px-2 py-1 rounded hover:bg-purple-500/30"><input type="checkbox" checked={isInRequestCart('scorm',m.id)} onChange={()=>toggleRequestCart('scorm',m.id,m)} className="rounded"/>Ajouter</label>}
               </div>
             </Card>})}
           </div>}
@@ -4396,7 +4685,7 @@
               {q.description&&<p className="text-sm text-gray-400 line-clamp-2 mb-3">{q.description}</p>}
               <div className="flex flex-wrap gap-2">
                 {(licensed||isOwn||isSuperAdmin)&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>window.location.hash='quizzes'}>Voir détails</Button>}
-                {!licensed&&!isOwn&&!isSuperAdmin&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>setRequestLicenseModal({type:'quiz',item:q})}>Demander licence</Button>}
+                {!licensed&&!isOwn&&!isSuperAdmin&&canUseRequestCart&&<label className="flex items-center gap-2 text-xs cursor-pointer bg-purple-500/20 text-purple-300 px-2 py-1 rounded hover:bg-purple-500/30"><input type="checkbox" checked={isInRequestCart('quiz',q.id)} onChange={()=>toggleRequestCart('quiz',q.id,q)} className="rounded"/>Ajouter</label>}
               </div>
             </Card>})}
           </div>}
@@ -4428,7 +4717,7 @@
               {c.description&&<p className="text-sm text-gray-400 line-clamp-2 mb-3">{c.description}</p>}
               <div className="flex flex-wrap gap-2">
                 {(licensed||isOwn||isSuperAdmin)&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>window.location.hash='playlists'}>Voir détails</Button>}
-                {!licensed&&!isOwn&&!isSuperAdmin&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>setRequestLicenseModal({type:'course',item:c})}>Demander licence</Button>}
+                {!licensed&&!isOwn&&!isSuperAdmin&&canUseRequestCart&&<label className="flex items-center gap-2 text-xs cursor-pointer bg-purple-500/20 text-purple-300 px-2 py-1 rounded hover:bg-purple-500/30"><input type="checkbox" checked={isInRequestCart('course',c.id)} onChange={()=>toggleRequestCart('course',c.id,c)} className="rounded"/>Ajouter</label>}
               </div>
             </Card>})}
           </div>}
@@ -4461,7 +4750,7 @@
               {p.description&&<p className="text-sm text-gray-400 line-clamp-2 mb-3">{p.description}</p>}
               <div className="flex flex-wrap gap-2">
                 {(licensed||isOwn||isSuperAdmin)&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>window.location.hash='paths'}>Voir détails</Button>}
-                {!licensed&&!isOwn&&!isSuperAdmin&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>setRequestLicenseModal({type:'path',item:p})}>Demander licence</Button>}
+                {!licensed&&!isOwn&&!isSuperAdmin&&canUseRequestCart&&<label className="flex items-center gap-2 text-xs cursor-pointer bg-purple-500/20 text-purple-300 px-2 py-1 rounded hover:bg-purple-500/30"><input type="checkbox" checked={isInRequestCart('path',p.id)} onChange={()=>toggleRequestCart('path',p.id,p)} className="rounded"/>Ajouter</label>}
               </div>
             </Card>})}
           </div>}
@@ -4738,42 +5027,161 @@
           </div>
         </Modal>
         
-        {/* Modal demande de licence */}
-        <Modal isOpen={!!requestLicenseModal} onClose={()=>setRequestLicenseModal(null)} title="Demander une licence" size="md">
-          {requestLicenseModal&&<div className="space-y-4">
-            <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-lg p-4">
-              <p className="font-medium">{requestLicenseModal.item?.title}</p>
-              <p className="text-sm text-gray-400 mt-1">Type: {requestLicenseModal.type==='video'?'Vidéo':requestLicenseModal.type==='scorm'?'Module SCORM':requestLicenseModal.type==='quiz'?'Quiz':requestLicenseModal.type==='course'?'Cours':'Parcours'}</p>
+        {/* Barre flottante du panier de demande (Center Admin uniquement) */}
+        {canUseRequestCart&&getRequestCartCount()>0&&(
+          <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-purple-600 text-white px-6 py-3 rounded-full shadow-lg flex items-center gap-4 z-50 animate-bounce-once">
+            <div className="flex items-center gap-2">
+              <Icon name="ShoppingCart" size={20}/>
+              <span className="font-semibold">{getRequestCartCount()} contenu{getRequestCartCount()>1?'s':''} sélectionné{getRequestCartCount()>1?'s':''}</span>
+            </div>
+            <Button size="sm" variant="secondary" className="bg-white/20 hover:bg-white/30 border-0" onClick={clearRequestCart}>Vider</Button>
+            <Button size="sm" className="bg-white text-purple-600 hover:bg-purple-100" onClick={()=>setRequestCartModal(true)}>Créer ma demande</Button>
+          </div>
+        )}
+        
+        {/* Modal du panier de demande */}
+        <Modal isOpen={requestCartModal} onClose={()=>setRequestCartModal(false)} title="Créer ma demande de licence" size="lg">
+          <div className="space-y-4">
+            <div className="p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+              <p className="text-sm text-purple-400"><Icon name="Info" size={16} className="inline mr-2"/>Nommez votre demande et ajoutez une description. Le Super Administrateur recevra votre demande personnalisée.</p>
             </div>
             
-            {/* Afficher les packs contenant ce contenu */}
-            {(()=>{
-              const contentPacks=packItems.filter(pi=>pi.content_type===requestLicenseModal.type&&pi.content_id===requestLicenseModal.item?.id);
-              const packList=contentPacks.map(pi=>packs.find(p=>p.id===pi.pack_id)).filter(Boolean);
-              
-              if(packList.length>0){
-                return<div>
-                  <p className="text-sm text-gray-400 mb-2">Ce contenu est inclus dans les packs suivants :</p>
-                  <div className="space-y-2">
-                    {packList.map(p=><div key={p.id} className="p-3 bg-gray-700 rounded-lg">
-                      <p className="font-medium">{p.name}</p>
-                      {p.description&&<p className="text-xs text-gray-400 mt-1">{p.description}</p>}
-                    </div>)}
+            <Input 
+              label="Nom de votre demande *" 
+              value={requestCartForm.name} 
+              onChange={e=>setRequestCartForm({...requestCartForm,name:e.target.value})} 
+              placeholder="Ex: Formation Sécurité 2025, Pack Onboarding..."
+            />
+            
+            <div>
+              <label className="text-sm font-medium">Description</label>
+              <textarea 
+                value={requestCartForm.description} 
+                onChange={e=>setRequestCartForm({...requestCartForm,description:e.target.value})} 
+                rows={2} 
+                className="w-full mt-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400" 
+                placeholder="Décrivez brièvement l'objectif de cette demande..."
+              />
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Durée souhaitée (mois)" type="number" min="1" max="60" value={requestCartForm.duration_months} onChange={e=>setRequestCartForm({...requestCartForm,duration_months:parseInt(e.target.value)||12})}/>
+              <Input label="Nb apprenants max" type="number" min="1" value={requestCartForm.max_learners} onChange={e=>setRequestCartForm({...requestCartForm,max_learners:e.target.value})} placeholder="Illimité"/>
+            </div>
+            
+            <div>
+              <label className="text-sm font-medium">Message complémentaire</label>
+              <textarea 
+                value={requestCartForm.message} 
+                onChange={e=>setRequestCartForm({...requestCartForm,message:e.target.value})} 
+                rows={2} 
+                className="w-full mt-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400" 
+                placeholder="Informations supplémentaires..."
+              />
+            </div>
+            
+            {/* Récapitulatif du panier */}
+            <div className="border border-gray-700 rounded-lg overflow-hidden">
+              <div className="bg-gray-800 px-4 py-2 font-semibold flex items-center gap-2">
+                <Icon name="ShoppingCart" size={16}/>
+                Contenus sélectionnés ({getRequestCartCount()})
+              </div>
+              <div className="max-h-48 overflow-y-auto divide-y divide-gray-700">
+                {requestCart.videos?.map(v=>(
+                  <div key={v.id} className="px-4 py-2 flex items-center justify-between hover:bg-gray-800/50">
+                    <div className="flex items-center gap-2">
+                      <Icon name="Film" size={14} className="text-blue-400"/>
+                      <span className="text-sm">{v.title}</span>
+                      <span className="text-xs text-gray-500">Vidéo</span>
+                    </div>
+                    <button onClick={()=>removeFromRequestCart('video',v.id)} className="p-1 hover:bg-red-600/20 rounded"><Icon name="X" size={14} className="text-red-400"/></button>
                   </div>
-                </div>;
-              }
-              return<p className="text-sm text-yellow-400"><Icon name="AlertTriangle" size={14} className="inline mr-1"/>Ce contenu n'est pas encore associé à un pack. Contactez l'administrateur.</p>;
-            })()}
-            
-            <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-              <p className="text-sm text-blue-400"><Icon name="Info" size={14} className="inline mr-1"/>Pour demander l'accès à ce contenu, rendez-vous sur la page Licences et faites une demande pour le pack correspondant.</p>
+                ))}
+                {requestCart.scorm?.map(s=>(
+                  <div key={s.id} className="px-4 py-2 flex items-center justify-between hover:bg-gray-800/50">
+                    <div className="flex items-center gap-2">
+                      <Icon name="Package" size={14} className="text-orange-400"/>
+                      <span className="text-sm">{s.title}</span>
+                      <span className="text-xs text-gray-500">SCORM</span>
+                    </div>
+                    <button onClick={()=>removeFromRequestCart('scorm',s.id)} className="p-1 hover:bg-red-600/20 rounded"><Icon name="X" size={14} className="text-red-400"/></button>
+                  </div>
+                ))}
+                {requestCart.quizzes?.map(q=>(
+                  <div key={q.id} className="px-4 py-2 flex items-center justify-between hover:bg-gray-800/50">
+                    <div className="flex items-center gap-2">
+                      <Icon name="HelpCircle" size={14} className="text-green-400"/>
+                      <span className="text-sm">{q.title}</span>
+                      <span className="text-xs text-gray-500">Quiz</span>
+                    </div>
+                    <button onClick={()=>removeFromRequestCart('quiz',q.id)} className="p-1 hover:bg-red-600/20 rounded"><Icon name="X" size={14} className="text-red-400"/></button>
+                  </div>
+                ))}
+                {requestCart.courses?.map(c=>(
+                  <div key={c.id} className="px-4 py-2 flex items-center justify-between hover:bg-gray-800/50">
+                    <div className="flex items-center gap-2">
+                      <Icon name="BookOpen" size={14} className="text-indigo-400"/>
+                      <span className="text-sm">{c.title}</span>
+                      <span className="text-xs text-gray-500">Cours</span>
+                    </div>
+                    <button onClick={()=>removeFromRequestCart('course',c.id)} className="p-1 hover:bg-red-600/20 rounded"><Icon name="X" size={14} className="text-red-400"/></button>
+                  </div>
+                ))}
+                {requestCart.paths?.map(p=>(
+                  <div key={p.id} className="px-4 py-2 flex items-center justify-between hover:bg-gray-800/50">
+                    <div className="flex items-center gap-2">
+                      <Icon name="GitBranch" size={14} className="text-purple-400"/>
+                      <span className="text-sm">{p.title}</span>
+                      <span className="text-xs text-gray-500">Parcours</span>
+                    </div>
+                    <button onClick={()=>removeFromRequestCart('path',p.id)} className="p-1 hover:bg-red-600/20 rounded"><Icon name="X" size={14} className="text-red-400"/></button>
+                  </div>
+                ))}
+              </div>
             </div>
-            
-            <div className="flex gap-3">
-              <Button variant="secondary" className="flex-1" onClick={()=>setRequestLicenseModal(null)}>Fermer</Button>
-              <Button className="flex-1" icon="Send" onClick={()=>{setRequestLicenseModal(null);localStorage.setItem('openLicenseRequest','true');window.location.hash='licenses';}}>Aller aux licences</Button>
-            </div>
-          </div>}
+          </div>
+          
+          <div className="flex gap-2 mt-4">
+            <Button variant="secondary" onClick={()=>setRequestCartModal(false)}>Annuler</Button>
+            <Button 
+              variant="secondary" 
+              onClick={async()=>{
+                if(!requestCartForm.name.trim()){alert('Veuillez donner un nom à votre demande');return;}
+                try{
+                  const cartDetails={
+                    videos:requestCart.videos.map(v=>({id:v.id,title:v.title})),
+                    scorm:requestCart.scorm.map(s=>({id:s.id,title:s.title})),
+                    quizzes:requestCart.quizzes.map(q=>({id:q.id,title:q.title})),
+                    courses:requestCart.courses.map(c=>({id:c.id,title:c.title})),
+                    paths:requestCart.paths.map(p=>({id:p.id,title:p.title}))
+                  };
+                  const requestData={
+                    name:requestCartForm.name,
+                    description:requestCartForm.description,
+                    duration_months:requestCartForm.duration_months||12,
+                    max_learners:requestCartForm.max_learners,
+                    message:requestCartForm.message,
+                    cart:cartDetails,
+                    totalItems:getRequestCartCount(),
+                    centerName:center?.name||'Centre inconnu',
+                    requesterName:`${profile?.first_name||''} ${profile?.last_name||''}`.trim()||'Utilisateur',
+                    requesterEmail:profile?.email||''
+                  };
+                  const pdfBase64=await generateRequestPDF(requestData);
+                  const link=document.createElement('a');
+                  link.href='data:application/pdf;base64,'+pdfBase64;
+                  link.download=`demande-licence-${requestCartForm.name.replace(/[^a-zA-Z0-9]/g,'-')}.pdf`;
+                  link.click();
+                }catch(err){alert('Erreur génération PDF');}
+              }}
+              disabled={!requestCartForm.name.trim()||getRequestCartCount()===0}
+            >
+              <Icon name="Download" size={16} className="mr-2"/>PDF
+            </Button>
+            <Button className="flex-1" onClick={submitRequestCart} loading={requestCartSaving} disabled={!requestCartForm.name.trim()||getRequestCartCount()===0}>
+              <Icon name="Send" size={16} className="mr-2"/>Envoyer ma demande
+            </Button>
+          </div>
         </Modal>
       </div>;
     }
