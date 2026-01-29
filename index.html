@@ -8320,7 +8320,7 @@
                     {canModify&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>openModal(path)}>Modifier</Button>}
                     {canModify&&<Button variant="ghost" size="sm" icon={path.is_published?'EyeOff':'Eye'} onClick={()=>togglePublish(path)}/>}
                     {canModify&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(path.id)}/>}
-                    {!licensed&&!isOwn&&<Button variant="secondary" size="sm" icon="Send" onClick={()=>{localStorage.setItem('openLicenseRequest','true');window.location.hash='licenses';}}>Demander licence</Button>}
+                    {!licensed&&!isOwn&&realRole==='center_admin'&&<label className="flex items-center gap-2 text-xs cursor-pointer bg-purple-500/20 text-purple-300 px-2 py-1 rounded hover:bg-purple-500/30"><input type="checkbox" checked={false} onChange={()=>{localStorage.setItem('openLicenseRequest','true');window.location.hash='licenses';}} className="rounded"/>Demander</label>}
                   </div>
                 </div>
               </Card>;
