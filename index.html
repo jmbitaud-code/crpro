@@ -1733,8 +1733,8 @@
       if(!can('view_analytics')&&!can('manage_enrollments'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
       
-      // Calculer les alertes
-      const alerts=useMemo(()=>{
+      // Calculer les alertes (calcul direct, pas de hook)
+      const alerts=(()=>{
         const list=[];
         const now=new Date();
         const sevenDaysAgo=new Date(now-7*24*60*60*1000);
@@ -1796,10 +1796,10 @@
         }
         
         return list;
-      },[learnerData,enrollments,filter]);
+      })();
       
-      // Tendances (cette semaine vs semaine précédente)
-      const trends=useMemo(()=>{
+      // Tendances (cette semaine vs semaine précédente) - calcul direct
+      const trends=(()=>{
         const now=new Date();
         const thisWeekStart=new Date(now-7*24*60*60*1000);
         const lastWeekStart=new Date(now-14*24*60*60*1000);
@@ -1818,7 +1818,7 @@
           quiz:{current:thisWeekQuiz,previous:lastWeekQuiz,change:lastWeekQuiz>0?Math.round(((thisWeekQuiz-lastWeekQuiz)/lastWeekQuiz)*100):0},
           enrollments:{current:thisWeekEnrollments,previous:lastWeekEnrollments,change:lastWeekEnrollments>0?Math.round(((thisWeekEnrollments-lastWeekEnrollments)/lastWeekEnrollments)*100):0}
         };
-      },[scormProgress,quizAttempts,enrollments]);
+      })();
 
       return<div>
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
@@ -1866,7 +1866,6 @@
                             {l.first_name}
                           </span>
                         ))}
-                        {alert.learners.length<(alert.type==='warning'?inactiveLearners?.length||0:0)&&<span className="text-xs text-gray-500">+{(inactiveLearners?.length||0)-3}</span>}
                       </div>
                     )}
                   </div>
