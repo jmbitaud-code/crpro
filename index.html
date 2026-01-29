@@ -3281,7 +3281,9 @@
           module_type:scormForm.module_type,
           package_url:scormForm.package_url||null,
           entry_point:scormForm.entry_point||'sco_0.html',
-          category:scormForm.category||null,
+          category_id:scormForm.category_id||null,
+          theme_id:scormForm.theme_id||null,
+          sub_theme_id:scormForm.sub_theme_id||null,
           center_id:center?.id||null,
           created_by:profile?.id,
           metadata:scormForm.remote_url?{remote_url:scormForm.remote_url,dispatch:true}:{}
@@ -3612,17 +3614,17 @@
                 </div>
                 {m.is_lms_content?<span className={`px-2 py-1 rounded text-xs ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒'}</span>:<span className="px-2 py-1 bg-gray-600 rounded text-xs">📁</span>}
               </div>
-              <div className="flex flex-wrap gap-1 mb-3">{m.category&&<span className="px-2 py-1 bg-purple-500/20 text-purple-300 rounded text-xs">{m.category}</span>}</div>
+              <div className="flex flex-wrap gap-1 mb-3">{m.content_categories?.name&&<span className="px-2 py-1 rounded text-xs" style={{backgroundColor:(m.content_categories?.color||'#a855f7')+'30',color:m.content_categories?.color||'#a855f7'}}>{m.content_categories.name}</span>}</div>
               {m.description&&<p className="text-sm text-gray-400 line-clamp-2 mb-3">{m.description}</p>}
               <div className="flex flex-wrap gap-2">
                 {canEdit&&isOwn&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{
                   setScormEditing(m);
-                  setScormForm({title:m.title,description:m.description||'',module_type:m.module_type,package_url:m.package_url||'',entry_point:m.entry_point||'index.html',category:m.category||'',version:m.version||''});
+                  setScormForm({title:m.title,description:m.description||'',module_type:m.module_type,package_url:m.package_url||'',entry_point:m.entry_point||'index.html',category_id:m.category_id||'',theme_id:m.theme_id||'',sub_theme_id:m.sub_theme_id||'',version:m.version||''});
                   setScormModal(true);
                 }}>Modifier</Button>}
                 {isSuperAdmin&&m.is_lms_content&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{
                   setScormEditing(m);
-                  setScormForm({title:m.title,description:m.description||'',module_type:m.module_type,package_url:m.package_url||'',entry_point:m.entry_point||'index.html',category:m.category||'',version:m.version||''});
+                  setScormForm({title:m.title,description:m.description||'',module_type:m.module_type,package_url:m.package_url||'',entry_point:m.entry_point||'index.html',category_id:m.category_id||'',theme_id:m.theme_id||'',sub_theme_id:m.sub_theme_id||'',version:m.version||''});
                   setScormModal(true);
                 }}>Modifier</Button>}
                 {(licensed||isOwn)&&m.package_url&&<a href={m.package_url} target="_blank" className="inline-flex items-center gap-1 px-3 py-1.5 text-sm hover:bg-gray-700 rounded-lg"><Icon name="ExternalLink" size={14}/>Tester</a>}
@@ -3769,7 +3771,7 @@
         </div>{/* Fin flex container */}
         
         {/* Modal édition vidéo */}
-        <Modal isOpen={modal} onClose={()=>{setModal(false);resetForm();setEditing(null);}} title={editing?'Modifier':'Ajouter'} size="lg"><div className="space-y-4"><div className="grid grid-cols-2 gap-4"><Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><Input label="ID Vimeo *" value={form.vimeo_id} onChange={e=>setForm({...form,vimeo_id:e.target.value})} placeholder="123456789"/></div><div className="grid grid-cols-3 gap-4"><Input label="Durée" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="5:30"/><Input label="Ordre" type="number" value={form.sort_order} onChange={e=>setForm({...form,sort_order:e.target.value})}/><Select label="Catégorie" value={form.category_id} onChange={e=>{setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''});}} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/></div><div className="grid grid-cols-2 gap-4"><Select label="Thème" value={form.theme_id} onChange={e=>{setForm({...form,theme_id:e.target.value,sub_theme_id:''});}} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]}/><Input label="Tags" value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="tag1, tag2"/></div><Input label="Miniature URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setModal(false);resetForm();setEditing(null);}}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
+        <Modal isOpen={modal} onClose={()=>{setModal(false);resetForm();setEditing(null);}} title={editing?'Modifier la vidéo':'Ajouter une vidéo'} size="lg"><div className="space-y-4"><div className="grid grid-cols-2 gap-4"><Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><Input label="ID Vimeo *" value={form.vimeo_id} onChange={e=>setForm({...form,vimeo_id:e.target.value})} placeholder="123456789"/></div><div className="grid grid-cols-3 gap-4"><Input label="Durée" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="5:30"/><Input label="Ordre" type="number" value={form.sort_order} onChange={e=>setForm({...form,sort_order:e.target.value})}/><Select label="Catégorie" value={form.category_id} onChange={e=>{setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''});}} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/></div><div className="grid grid-cols-3 gap-4"><Select label="Thème" value={form.theme_id} onChange={e=>{setForm({...form,theme_id:e.target.value,sub_theme_id:''});}} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/><Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/><Input label="Tags" value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="tag1, tag2"/></div><Input label="Miniature URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setModal(false);resetForm();setEditing(null);}}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
         
         {/* Modal import */}
         <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer" size="lg"><div className="space-y-4"><div className="bg-gray-700/50 rounded-lg p-4"><p className="text-sm text-gray-400 mb-2">Colonnes : Titre*, ID Vimeo*, Durée, Ordre, Tags, Catégorie, Thème</p><Button variant="ghost" size="sm" icon="Download" onClick={downloadTemplate}>Template</Button></div><div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center"><input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".xlsx,.xls,.csv" className="hidden"/><Icon name="Film" size={48} className="mx-auto text-gray-500 mb-4"/><Button variant="secondary" onClick={()=>fileInputRef.current?.click()}>Parcourir</Button></div>{importData.length>0&&!importResult&&<div className="max-h-48 overflow-y-auto bg-gray-700/50 rounded-lg p-2">{importData.filter(d=>d._valid).map((row,i)=><div key={i} className="text-sm py-1">{row.title}</div>)}</div>}{importResult&&<Alert type={importResult.errors>0?'warning':'success'}>{importResult.created>0&&<span className="text-green-400">✅ {importResult.created} créée(s) </span>}{importResult.updated>0&&<span className="text-blue-400">🔄 {importResult.updated} mise(s) à jour </span>}{importResult.errors>0&&<span className="text-red-400">❌ {importResult.errors} erreur(s)</span>}</Alert>}<div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>{importData.length>0&&!importResult&&<Button icon="Upload" onClick={handleImport} loading={importLoading}>Importer {importData.filter(d=>d._valid).length}</Button>}</div></div></Modal>
@@ -3984,7 +3986,11 @@
             
             <Input label="URL du contenu distant *" value={scormForm.package_url} onChange={e=>setScormForm({...scormForm,package_url:e.target.value})} placeholder="https://lms.codesrousseau.fr/pluginfile.php/..."/>
             
-            <Input label="Catégorie" value={scormForm.category} onChange={e=>setScormForm({...scormForm,category:e.target.value})} placeholder="Ex: Formation Moto, Code de la route..."/>
+            <div className="grid grid-cols-3 gap-4">
+              <Select label="Catégorie" value={scormForm.category_id} onChange={e=>setScormForm({...scormForm,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+              <Select label="Thème" value={scormForm.theme_id} onChange={e=>setScormForm({...scormForm,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Aucun'},...getThemesForCategory(scormForm.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!scormForm.category_id}/>
+              <Select label="Sous-thème" value={scormForm.sub_theme_id} onChange={e=>setScormForm({...scormForm,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(scormForm.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!scormForm.theme_id}/>
+            </div>
             
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
@@ -4040,7 +4046,7 @@
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
       const[editing,setEditing]=useState(null);
-      const[form,setForm]=useState({title:'',description:''});
+      const[form,setForm]=useState({title:'',description:'',category_id:'',theme_id:'',sub_theme_id:''});
       const[saving,setSaving]=useState(false);
       const[editContentModal,setEditContentModal]=useState(null);
       const[playlistVideos,setPlaylistVideos]=useState([]);
@@ -4051,9 +4057,17 @@
       const[licensedIds,setLicensedIds]=useState({courses:[],hasFullCatalog:false});
       const[extensions,setExtensions]=useState([]);
       const[extensionUploading,setExtensionUploading]=useState(false);
+      // Taxonomie
+      const[categories,setCategories]=useState([]);
+      const[themes,setThemes]=useState([]);
+      const[subThemes,setSubThemes]=useState([]);
       const extensionFileRef=useRef(null);
       const sortableRef=useRef(null);
       const sortableInstanceRef=useRef(null);
+      
+      // Helpers taxonomie
+      const getThemesForCategory=(catId)=>themes.filter(t=>t.category_id===catId);
+      const getSubThemesForTheme=(themeId)=>subThemes.filter(st=>st.theme_id===themeId);
 
       const load=useCallback(async()=>{
         // Charger les licences du centre
@@ -4119,11 +4133,25 @@
           setTrainers(t||[]);
         }
         
+        // Charger la taxonomie
+        try{
+          const{data:cats}=await supabase.from('content_categories').select('*').order('position').order('name');
+          setCategories(cats||[]);
+        }catch(e){setCategories([]);}
+        try{
+          const{data:ths}=await supabase.from('content_themes').select('*').order('position').order('name');
+          setThemes(ths||[]);
+        }catch(e){setThemes([]);}
+        try{
+          const{data:sths}=await supabase.from('content_sub_themes').select('*').order('position').order('name');
+          setSubThemes(sths||[]);
+        }catch(e){setSubThemes([]);}
+        
         setLoading(false);
       },[isSuperAdmin,center?.id,realRole,profile?.id,can]);
       useEffect(()=>{load();},[load]);
 
-      const handleSave=async()=>{setSaving(true);const payload={title:form.title,description:form.description,center_id:center?.id,created_by:profile?.id};if(editing)await supabase.from('playlists').update(payload).eq('id',editing.id);else await supabase.from('playlists').insert(payload);await load();setModal(false);setForm({title:'',description:''});setEditing(null);setSaving(false);};
+      const handleSave=async()=>{setSaving(true);const payload={title:form.title,description:form.description,category_id:form.category_id||null,theme_id:form.theme_id||null,sub_theme_id:form.sub_theme_id||null,center_id:center?.id,created_by:profile?.id};if(editing)await supabase.from('playlists').update(payload).eq('id',editing.id);else await supabase.from('playlists').insert(payload);await load();setModal(false);setForm({title:'',description:'',category_id:'',theme_id:'',sub_theme_id:''});setEditing(null);setSaving(false);};
       const handleDelete=async id=>{if(!confirm('Supprimer ?'))return;await supabase.from('playlists').delete().eq('id',id);load();};
       
       // Gestion des formateurs assignés
@@ -4302,7 +4330,7 @@
             {licensed&&(can('manage_playlists')||can('assign_content'))&&!isLocked&&<Button variant="ghost" size="sm" icon="Layers" onClick={()=>openEditContent(p)}>Contenu</Button>}
             {licensed&&isLocked&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>openEditContent(p)}>Voir contenu</Button>}
             {canModify&&<>
-              <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(p);setForm({title:p.title,description:p.description||''});setModal(true);}}>Modifier</Button>
+              <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(p);setForm({title:p.title,description:p.description||'',category_id:p.category_id||'',theme_id:p.theme_id||'',sub_theme_id:p.sub_theme_id||''});setModal(true);}}>Modifier</Button>
               <Button variant="ghost" size="sm" icon="Users" onClick={()=>openAssignModal(p)}>Formateurs</Button>
             </>}
             {canModify&&<Button variant="ghost" size="sm" icon={p.is_published?'EyeOff':'Eye'} onClick={()=>togglePublish(p)}>{p.is_published?'Dépublier':'Publier'}</Button>}
@@ -4333,7 +4361,7 @@
           </div>
         </Modal>
         
-        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier':'Créer'}><div className="space-y-4"><Input label="Titre" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier le cours':'Créer un cours'} size="lg"><div className="space-y-4"><Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><div className="grid grid-cols-3 gap-4"><Select label="Catégorie" value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/><Select label="Thème" value={form.theme_id} onChange={e=>setForm({...form,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/><Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/></div><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving} disabled={!form.title}>Enregistrer</Button></div></div></Modal>
         <Modal isOpen={!!editContentModal} onClose={()=>setEditContentModal(null)} title={`Contenu: ${editContentModal?.title}${editContentModal?.is_lms_content?' 📦':''}`} size="xl">
           <Tabs tabs={[
             {id:'videos',label:`Vidéos (${playlistVideos.length})`,icon:'Film'},
@@ -4539,19 +4567,19 @@
           const{data:pl}=await supabase.from('playlists').select('id,title').order('title');
           setPlaylists(pl||[]);
           
-          // Charger avec la nouvelle structure (category_id dans themes)
+          // Charger la taxonomie partagée (content_*)
           try{
-            const{data:cats}=await supabase.from('question_categories').select('*').order('name');
+            const{data:cats}=await supabase.from('content_categories').select('*').order('position').order('name');
             setCategories(cats||[]);
           }catch(e){setCategories([]);}
           
           try{
-            const{data:th}=await supabase.from('question_themes').select('*').order('name');
+            const{data:th}=await supabase.from('content_themes').select('*').order('position').order('name');
             setThemes(th||[]);
           }catch(e){setThemes([]);}
           
           try{
-            const{data:sth}=await supabase.from('question_sub_themes').select('*').order('name');
+            const{data:sth}=await supabase.from('content_sub_themes').select('*').order('position').order('name');
             setSubThemes(sth||[]);
           }catch(e){setSubThemes([]);}
           
@@ -4604,9 +4632,11 @@
       };
       
       // ========== GESTION CATÉGORIES/THÈMES/SOUS-THÈMES ==========
+      // Note: Utilise les tables content_* partagées avec la page Catégories
       const addCategory=async(name)=>{
         if(!name?.trim())return null;
-        const{data}=await supabase.from('question_categories').insert({name:name.trim()}).select().single();
+        const position=categories.length;
+        const{data}=await supabase.from('content_categories').insert({name:name.trim(),position,color:'#6366f1'}).select().single();
         if(data)setCategories(prev=>[...prev,data]);
         return data;
       };
@@ -4617,17 +4647,18 @@
         // Supprimer les thèmes et sous-thèmes associés
         const themeIds=themes.filter(t=>t.category_id===id).map(t=>t.id);
         if(themeIds.length>0){
-          await supabase.from('question_sub_themes').delete().in('theme_id',themeIds);
-          await supabase.from('question_themes').delete().eq('category_id',id);
+          await supabase.from('content_sub_themes').delete().in('theme_id',themeIds);
+          await supabase.from('content_themes').delete().eq('category_id',id);
         }
         await supabase.from('question_bank').update({category_id:null,theme_id:null,sub_theme_id:null}).eq('category_id',id);
-        await supabase.from('question_categories').delete().eq('id',id);
+        await supabase.from('content_categories').delete().eq('id',id);
         load();
       };
       
       const addTheme=async(name,categoryId)=>{
         if(!name?.trim()||!categoryId)return null;
-        const{data}=await supabase.from('question_themes').insert({name:name.trim(),category_id:categoryId}).select().single();
+        const position=themes.filter(t=>t.category_id===categoryId).length;
+        const{data}=await supabase.from('content_themes').insert({name:name.trim(),category_id:categoryId,position}).select().single();
         if(data)setThemes(prev=>[...prev,data]);
         return data;
       };
@@ -4635,15 +4666,16 @@
       const deleteTheme=async(id)=>{
         const count=countQuestionsForTheme(id);
         if(count>0&&!confirm(`${count} question(s) dans ce thème. Supprimer quand même ?`))return;
-        await supabase.from('question_sub_themes').delete().eq('theme_id',id);
+        await supabase.from('content_sub_themes').delete().eq('theme_id',id);
         await supabase.from('question_bank').update({theme_id:null,sub_theme_id:null}).eq('theme_id',id);
-        await supabase.from('question_themes').delete().eq('id',id);
+        await supabase.from('content_themes').delete().eq('id',id);
         load();
       };
       
       const addSubTheme=async(name,themeId)=>{
         if(!name?.trim()||!themeId)return null;
-        const{data}=await supabase.from('question_sub_themes').insert({name:name.trim(),theme_id:themeId}).select().single();
+        const position=subThemes.filter(st=>st.theme_id===themeId).length;
+        const{data}=await supabase.from('content_sub_themes').insert({name:name.trim(),theme_id:themeId,position}).select().single();
         if(data)setSubThemes(prev=>[...prev,data]);
         return data;
       };
@@ -4652,7 +4684,7 @@
         const count=countQuestionsForSubTheme(id);
         if(count>0&&!confirm(`${count} question(s) dans ce sous-thème. Supprimer quand même ?`))return;
         await supabase.from('question_bank').update({sub_theme_id:null}).eq('sub_theme_id',id);
-        await supabase.from('question_sub_themes').delete().eq('id',id);
+        await supabase.from('content_sub_themes').delete().eq('id',id);
         load();
       };
       
@@ -6838,14 +6870,22 @@
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
       const[editing,setEditing]=useState(null);
-      const[form,setForm]=useState({title:'',description:'',thumbnail_url:'',estimated_duration:''});
+      const[form,setForm]=useState({title:'',description:'',thumbnail_url:'',estimated_duration:'',category_id:'',theme_id:'',sub_theme_id:''});
       const[pathCourses,setPathCourses]=useState([]);
       const[saving,setSaving]=useState(false);
       const[contentModal,setContentModal]=useState(null);
       const[licensedIds,setLicensedIds]=useState({paths:[],hasFullCatalog:false});
       const[filterSource,setFilterSource]=useState('all');
+      // Taxonomie
+      const[categories,setCategories]=useState([]);
+      const[themes,setThemes]=useState([]);
+      const[subThemes,setSubThemes]=useState([]);
       const sortableRef=useRef(null);
       const sortableInstance=useRef(null);
+      
+      // Helpers taxonomie
+      const getThemesForCategory=(catId)=>themes.filter(t=>t.category_id===catId);
+      const getSubThemesForTheme=(themeId)=>subThemes.filter(st=>st.theme_id===themeId);
       
       const load=useCallback(async()=>{
         // Charger les licences
@@ -6881,6 +6921,20 @@
         }
         const{data:c}=await qc;
         setCourses(c||[]);
+        
+        // Charger la taxonomie
+        try{
+          const{data:cats}=await supabase.from('content_categories').select('*').order('position').order('name');
+          setCategories(cats||[]);
+        }catch(e){setCategories([]);}
+        try{
+          const{data:ths}=await supabase.from('content_themes').select('*').order('position').order('name');
+          setThemes(ths||[]);
+        }catch(e){setThemes([]);}
+        try{
+          const{data:sths}=await supabase.from('content_sub_themes').select('*').order('position').order('name');
+          setSubThemes(sths||[]);
+        }catch(e){setSubThemes([]);}
         
         setLoading(false);
       },[isSuperAdmin,center?.id]);
@@ -6927,10 +6981,10 @@
       const openModal=(path=null)=>{
         if(path){
           setEditing(path);
-          setForm({title:path.title,description:path.description||'',thumbnail_url:path.thumbnail_url||'',estimated_duration:path.estimated_duration||''});
+          setForm({title:path.title,description:path.description||'',thumbnail_url:path.thumbnail_url||'',estimated_duration:path.estimated_duration||'',category_id:path.category_id||'',theme_id:path.theme_id||'',sub_theme_id:path.sub_theme_id||''});
         }else{
           setEditing(null);
-          setForm({title:'',description:'',thumbnail_url:'',estimated_duration:''});
+          setForm({title:'',description:'',thumbnail_url:'',estimated_duration:'',category_id:'',theme_id:'',sub_theme_id:''});
         }
         setModal(true);
       };
@@ -7058,16 +7112,23 @@
         )}
         
         {/* Modal création/édition */}
-        <Modal isOpen={modal} onClose={()=>setModal(false)} title={editing?'Modifier le parcours':'Créer un parcours'} size="md">
+        <Modal isOpen={modal} onClose={()=>setModal(false)} title={editing?'Modifier le parcours':'Créer un parcours'} size="lg">
           <div className="space-y-4">
             <Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
+            <div className="grid grid-cols-3 gap-4">
+              <Select label="Catégorie" value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+              <Select label="Thème" value={form.theme_id} onChange={e=>setForm({...form,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/>
+              <Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/>
+            </div>
             <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div>
-            <Input label="Image URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})} placeholder="https://..."/>
-            <Input label="Durée estimée (minutes)" type="number" value={form.estimated_duration} onChange={e=>setForm({...form,estimated_duration:e.target.value})}/>
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Image URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})} placeholder="https://..."/>
+              <Input label="Durée estimée (minutes)" type="number" value={form.estimated_duration} onChange={e=>setForm({...form,estimated_duration:e.target.value})}/>
+            </div>
           </div>
           <div className="flex gap-2 mt-4">
             <Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button>
-            <Button className="flex-1" onClick={handleSave} loading={saving}>Enregistrer</Button>
+            <Button className="flex-1" onClick={handleSave} loading={saving} disabled={!form.title}>Enregistrer</Button>
           </div>
         </Modal>
         
