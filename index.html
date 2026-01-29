@@ -763,6 +763,7 @@
       };
       
       const menu=[
+        {id:'dashboard',label:'Tableau de bord',icon:'LayoutDashboard',show:!showAsLearner},
         {id:'scorm-tracking',label:'Suivi formation',icon:'BarChart3',show:!showAsLearner&&(canInContext('view_analytics')||canInContext('view_learner_progress'))},
         {id:'analytics',label:'Statistiques',icon:'PieChart',show:!showAsLearner&&canInContext('view_analytics')},
         {id:'categories',label:'Catégories',icon:'FolderTree',show:showAsAdmin},
@@ -890,6 +891,7 @@
             </div>
           </header>
           <div className="p-4 lg:p-6">
+            {page==='dashboard'&&<AdminDashboardPage/>}
             {page==='analytics'&&<AnalyticsPage/>}
             {page==='scorm-tracking'&&<ScormTrackingPage/>}
             {page==='categories'&&<CategoriesPage/>}
@@ -913,6 +915,467 @@
           </div>
         </main>
       </div>);
+    }
+
+    // ============================================================
+    // PAGE: Dashboard Admin (AdminDashboardPage) - v7.5.0
+    // ============================================================
+    function AdminDashboardPage(){
+      const{center,isSuperAdmin,profile,can,realRole}=useAuth();
+      const[loading,setLoading]=useState(true);
+      const[stats,setStats]=useState({});
+      const[recentActivity,setRecentActivity]=useState([]);
+      const[alerts,setAlerts]=useState([]);
+      const[topLearners,setTopLearners]=useState([]);
+      const[centers,setCenters]=useState([]);
+      const[quickStats,setQuickStats]=useState({});
+      
+      const load=useCallback(async()=>{
+        const now=new Date();
+        const todayStr=now.toISOString().slice(0,10);
+        const sevenDaysAgo=new Date(now-7*24*60*60*1000);
+        const thirtyDaysAgo=new Date(now-30*24*60*60*1000);
+        
+        // ========== DONNÉES SELON LE RÔLE ==========
+        
+        // Charger les centres (Super Admin uniquement)
+        let centersData=[];
+        if(isSuperAdmin){
+          const{data:c}=await supabase.from('centers').select('*');
+          centersData=c||[];
+          setCenters(centersData);
+        }
+        
+        // Charger les apprenants
+        let learnersQuery=supabase.from('profiles').select('id,first_name,last_name,email,created_at,center_id').eq('role','learner');
+        if(!isSuperAdmin&&center?.id)learnersQuery=learnersQuery.eq('center_id',center.id);
+        const{data:learners}=await learnersQuery;
+        const learnerIds=(learners||[]).map(l=>l.id);
+        
+        // Charger les inscriptions
+        let enrollmentsQuery=supabase.from('enrollments').select('*,playlists:playlist_id(title,center_id)');
+        if(!isSuperAdmin&&center?.id&&learnerIds.length>0)enrollmentsQuery=enrollmentsQuery.in('learner_id',learnerIds);
+        const{data:enrollments}=await enrollmentsQuery;
+        const filteredEnrollments=(enrollments||[]).filter(e=>isSuperAdmin||learnerIds.includes(e.learner_id));
+        
+        // Charger la progression SCORM
+        let scormQuery=supabase.from('scorm_progress').select('*');
+        if(!isSuperAdmin&&learnerIds.length>0)scormQuery=scormQuery.in('learner_id',learnerIds);
+        const{data:scormProgress}=await scormQuery;
+        
+        // Charger les quiz
+        let quizQuery=supabase.from('quiz_attempts').select('*');
+        if(!isSuperAdmin&&learnerIds.length>0)quizQuery=quizQuery.in('learner_id',learnerIds);
+        const{data:quizAttempts}=await quizQuery;
+        
+        // Charger les cours
+        let coursesQuery=supabase.from('playlists').select('id,title,is_published,is_lms_content');
+        if(!isSuperAdmin&&center?.id)coursesQuery=coursesQuery.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
+        const{data:courses}=await coursesQuery;
+        
+        // ========== CALCUL DES STATS ==========
+        
+        const totalLearners=learners?.length||0;
+        const newLearnersThisWeek=(learners||[]).filter(l=>new Date(l.created_at)>sevenDaysAgo).length;
+        const activeLearners=[...new Set([
+          ...filteredEnrollments.map(e=>e.learner_id),
+          ...(scormProgress||[]).filter(s=>s.last_accessed_at&&new Date(s.last_accessed_at)>sevenDaysAgo).map(s=>s.learner_id)
+        ])].length;
+        
+        const totalEnrollments=filteredEnrollments.length;
+        const completedEnrollments=filteredEnrollments.filter(e=>e.status==='completed').length;
+        const inProgressEnrollments=filteredEnrollments.filter(e=>e.status==='in_progress').length;
+        const enrollmentsThisWeek=filteredEnrollments.filter(e=>new Date(e.created_at)>sevenDaysAgo).length;
+        
+        const totalScorm=(scormProgress||[]).length;
+        const completedScorm=(scormProgress||[]).filter(s=>s.completion_status==='completed'||s.completion_status==='passed').length;
+        const scormThisWeek=(scormProgress||[]).filter(s=>s.last_accessed_at&&new Date(s.last_accessed_at)>sevenDaysAgo).length;
+        const avgScormScore=(scormProgress||[]).filter(s=>s.score_scaled).reduce((a,s)=>a+(s.score_scaled>1?s.score_scaled:s.score_scaled*100),0)/Math.max(1,(scormProgress||[]).filter(s=>s.score_scaled).length);
+        
+        const totalQuiz=(quizAttempts||[]).length;
+        const passedQuiz=(quizAttempts||[]).filter(q=>q.passed).length;
+        const quizThisWeek=(quizAttempts||[]).filter(q=>new Date(q.created_at)>sevenDaysAgo).length;
+        const avgQuizScore=totalQuiz>0?(quizAttempts||[]).reduce((a,q)=>a+(q.score_percent||0),0)/totalQuiz:0;
+        
+        const totalCourses=(courses||[]).length;
+        const publishedCourses=(courses||[]).filter(c=>c.is_published).length;
+        
+        // Taux de complétion global
+        const completionRate=totalEnrollments>0?Math.round((completedEnrollments/totalEnrollments)*100):0;
+        
+        // Temps total de formation
+        const totalTime=filteredEnrollments.reduce((a,e)=>a+(e.time_spent_seconds||0),0);
+        
+        setStats({
+          totalLearners,newLearnersThisWeek,activeLearners,
+          totalEnrollments,completedEnrollments,inProgressEnrollments,enrollmentsThisWeek,
+          totalScorm,completedScorm,scormThisWeek,avgScormScore,
+          totalQuiz,passedQuiz,quizThisWeek,avgQuizScore,
+          totalCourses,publishedCourses,
+          completionRate,totalTime
+        });
+        
+        // ========== ALERTES ==========
+        
+        const alertsList=[];
+        
+        // Apprenants inactifs
+        const inactiveLearners=(learners||[]).filter(l=>{
+          const hasEnrollment=filteredEnrollments.some(e=>e.learner_id===l.id);
+          if(!hasEnrollment)return false;
+          const lastActivity=(scormProgress||[]).filter(s=>s.learner_id===l.id).map(s=>s.last_accessed_at).sort().pop();
+          return !lastActivity||new Date(lastActivity)<sevenDaysAgo;
+        });
+        if(inactiveLearners.length>0){
+          alertsList.push({type:'warning',icon:'UserX',title:`${inactiveLearners.length} apprenant${inactiveLearners.length>1?'s':''} inactif${inactiveLearners.length>1?'s':''}`,desc:'Aucune activité depuis 7 jours',count:inactiveLearners.length});
+        }
+        
+        // Apprenants en difficulté (score < 50%)
+        const learnerScores={};
+        (scormProgress||[]).forEach(s=>{
+          if(s.score_scaled){
+            if(!learnerScores[s.learner_id])learnerScores[s.learner_id]=[];
+            learnerScores[s.learner_id].push(s.score_scaled>1?s.score_scaled:s.score_scaled*100);
+          }
+        });
+        const strugglingLearners=Object.entries(learnerScores).filter(([id,scores])=>{
+          const avg=scores.reduce((a,b)=>a+b,0)/scores.length;
+          return avg<50;
+        }).length;
+        if(strugglingLearners>0){
+          alertsList.push({type:'danger',icon:'AlertTriangle',title:`${strugglingLearners} apprenant${strugglingLearners>1?'s':''} en difficulté`,desc:'Score moyen < 50%',count:strugglingLearners});
+        }
+        
+        // Nouvelles inscriptions
+        if(enrollmentsThisWeek>0){
+          alertsList.push({type:'info',icon:'UserPlus',title:`${enrollmentsThisWeek} nouvelle${enrollmentsThisWeek>1?'s':''} inscription${enrollmentsThisWeek>1?'s':''}`,desc:'Cette semaine',count:enrollmentsThisWeek});
+        }
+        
+        // Cours presque terminés
+        const almostDone=filteredEnrollments.filter(e=>(e.progress_percent||0)>=80&&e.status!=='completed').length;
+        if(almostDone>0){
+          alertsList.push({type:'success',icon:'TrendingUp',title:`${almostDone} formation${almostDone>1?'s':''} presque terminée${almostDone>1?'s':''}`,desc:'Progression > 80%',count:almostDone});
+        }
+        
+        setAlerts(alertsList);
+        
+        // ========== TOP APPRENANTS ==========
+        
+        const learnerStats=(learners||[]).map(l=>{
+          const lEnrollments=filteredEnrollments.filter(e=>e.learner_id===l.id);
+          const lScorm=(scormProgress||[]).filter(s=>s.learner_id===l.id);
+          const lQuiz=(quizAttempts||[]).filter(q=>q.learner_id===l.id);
+          const completed=lEnrollments.filter(e=>e.status==='completed').length;
+          const total=lEnrollments.length;
+          const progress=total>0?Math.round((completed/total)*100):0;
+          const scormDone=lScorm.filter(s=>s.completion_status==='completed'||s.completion_status==='passed').length;
+          const quizPassed=lQuiz.filter(q=>q.passed).length;
+          const lastActivity=[
+            ...lEnrollments.map(e=>e.updated_at),
+            ...lScorm.map(s=>s.last_accessed_at)
+          ].filter(Boolean).sort((a,b)=>new Date(b)-new Date(a))[0];
+          
+          return{...l,completed,total,progress,scormDone,scormTotal:lScorm.length,quizPassed,quizTotal:lQuiz.length,lastActivity};
+        }).filter(l=>l.total>0).sort((a,b)=>b.progress-a.progress);
+        
+        setTopLearners(learnerStats.slice(0,10));
+        
+        // ========== ACTIVITÉ RÉCENTE ==========
+        
+        const activities=[];
+        
+        // Inscriptions récentes
+        filteredEnrollments.filter(e=>new Date(e.created_at)>sevenDaysAgo).forEach(e=>{
+          const learner=(learners||[]).find(l=>l.id===e.learner_id);
+          activities.push({
+            type:'enrollment',
+            icon:'UserPlus',
+            color:'blue',
+            title:`${learner?.first_name||'?'} ${learner?.last_name||'?'}`,
+            desc:`inscrit à "${e.playlists?.title||'cours'}"`,
+            date:e.created_at
+          });
+        });
+        
+        // Cours terminés récemment
+        filteredEnrollments.filter(e=>e.status==='completed'&&e.updated_at&&new Date(e.updated_at)>sevenDaysAgo).forEach(e=>{
+          const learner=(learners||[]).find(l=>l.id===e.learner_id);
+          activities.push({
+            type:'completion',
+            icon:'CheckCircle',
+            color:'green',
+            title:`${learner?.first_name||'?'} ${learner?.last_name||'?'}`,
+            desc:`a terminé "${e.playlists?.title||'cours'}"`,
+            date:e.updated_at
+          });
+        });
+        
+        // SCORM réussis
+        (scormProgress||[]).filter(s=>s.completion_status==='passed'&&s.last_accessed_at&&new Date(s.last_accessed_at)>sevenDaysAgo).forEach(s=>{
+          const learner=(learners||[]).find(l=>l.id===s.learner_id);
+          activities.push({
+            type:'scorm',
+            icon:'Package',
+            color:'orange',
+            title:`${learner?.first_name||'?'} ${learner?.last_name||'?'}`,
+            desc:`SCORM réussi (${Math.round(s.score_scaled>1?s.score_scaled:s.score_scaled*100)}%)`,
+            date:s.last_accessed_at
+          });
+        });
+        
+        setRecentActivity(activities.sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,15));
+        
+        // ========== STATS PAR CENTRE (Super Admin) ==========
+        
+        if(isSuperAdmin&&centersData.length>0){
+          const centerStats=centersData.map(c=>{
+            const cLearners=(learners||[]).filter(l=>l.center_id===c.id).length;
+            const cLearnerIds=(learners||[]).filter(l=>l.center_id===c.id).map(l=>l.id);
+            const cEnrollments=filteredEnrollments.filter(e=>cLearnerIds.includes(e.learner_id)).length;
+            const cCompleted=filteredEnrollments.filter(e=>cLearnerIds.includes(e.learner_id)&&e.status==='completed').length;
+            return{...c,learners:cLearners,enrollments:cEnrollments,completed:cCompleted,rate:cEnrollments>0?Math.round((cCompleted/cEnrollments)*100):0};
+          }).sort((a,b)=>b.learners-a.learners);
+          setQuickStats({centerStats});
+        }
+        
+        setLoading(false);
+      },[isSuperAdmin,center?.id]);
+      
+      useEffect(()=>{load();},[load]);
+      
+      if(loading)return<Loading/>;
+      
+      const roleTitle=isSuperAdmin?'Super Administrateur':realRole==='center_admin'?'Administrateur Centre':'Formateur';
+      const greeting=new Date().getHours()<12?'Bonjour':new Date().getHours()<18?'Bon après-midi':'Bonsoir';
+      
+      return<div className="space-y-6">
+        {/* Header avec salutation */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">{greeting}{profile?.first_name?`, ${profile.first_name}`:''} 👋</h1>
+            <p className="text-gray-400">{roleTitle}{center?.name?` • ${center.name}`:isSuperAdmin?' • Tous les centres':''}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" icon="RefreshCw" onClick={load}>Actualiser</Button>
+            {isSuperAdmin&&<Button variant="secondary" icon="Building2" onClick={()=>window.location.hash='centers'}>Gérer les centres</Button>}
+          </div>
+        </div>
+        
+        {/* Alertes */}
+        {alerts.length>0&&(
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {alerts.map((alert,i)=>(
+              <Card key={i} className={`p-4 cursor-pointer hover:scale-[1.02] transition-transform border-l-4 ${
+                alert.type==='danger'?'border-l-red-500 bg-red-500/5':
+                alert.type==='warning'?'border-l-yellow-500 bg-yellow-500/5':
+                alert.type==='success'?'border-l-green-500 bg-green-500/5':
+                'border-l-blue-500 bg-blue-500/5'
+              }`} onClick={()=>window.location.hash='scorm-tracking'}>
+                <div className="flex items-center gap-3">
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                    alert.type==='danger'?'bg-red-500/20':
+                    alert.type==='warning'?'bg-yellow-500/20':
+                    alert.type==='success'?'bg-green-500/20':
+                    'bg-blue-500/20'
+                  }`}>
+                    <Icon name={alert.icon} size={24} className={
+                      alert.type==='danger'?'text-red-400':
+                      alert.type==='warning'?'text-yellow-400':
+                      alert.type==='success'?'text-green-400':
+                      'text-blue-400'
+                    }/>
+                  </div>
+                  <div>
+                    <p className="font-semibold">{alert.title}</p>
+                    <p className="text-xs text-gray-400">{alert.desc}</p>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+        
+        {/* Stats principales */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          <Card className="p-4 text-center bg-gradient-to-br from-indigo-600/20 to-indigo-800/20 border-indigo-500/30">
+            <Icon name="Users" size={28} className="mx-auto text-indigo-400 mb-2"/>
+            <p className="text-3xl font-bold">{stats.totalLearners}</p>
+            <p className="text-xs text-gray-400">Apprenants</p>
+            {stats.newLearnersThisWeek>0&&<p className="text-xs text-green-400 mt-1">+{stats.newLearnersThisWeek} cette semaine</p>}
+          </Card>
+          
+          <Card className="p-4 text-center">
+            <Icon name="UserCheck" size={28} className="mx-auto text-green-400 mb-2"/>
+            <p className="text-3xl font-bold">{stats.activeLearners}</p>
+            <p className="text-xs text-gray-400">Actifs (7j)</p>
+            <p className="text-xs text-gray-500">{stats.totalLearners>0?Math.round((stats.activeLearners/stats.totalLearners)*100):0}% du total</p>
+          </Card>
+          
+          <Card className="p-4 text-center">
+            <Icon name="BookOpen" size={28} className="mx-auto text-blue-400 mb-2"/>
+            <p className="text-3xl font-bold">{stats.completedEnrollments}<span className="text-lg text-gray-500">/{stats.totalEnrollments}</span></p>
+            <p className="text-xs text-gray-400">Cours terminés</p>
+            {stats.enrollmentsThisWeek>0&&<p className="text-xs text-blue-400 mt-1">+{stats.enrollmentsThisWeek} inscriptions</p>}
+          </Card>
+          
+          <Card className="p-4 text-center">
+            <Icon name="Target" size={28} className="mx-auto text-purple-400 mb-2"/>
+            <p className="text-3xl font-bold">{stats.completionRate}%</p>
+            <p className="text-xs text-gray-400">Taux complétion</p>
+            <div className="w-full bg-gray-700 rounded-full h-1.5 mt-2">
+              <div className="bg-purple-500 rounded-full h-1.5" style={{width:`${stats.completionRate}%`}}/>
+            </div>
+          </Card>
+          
+          <Card className="p-4 text-center">
+            <Icon name="Package" size={28} className="mx-auto text-orange-400 mb-2"/>
+            <p className="text-3xl font-bold">{stats.completedScorm}<span className="text-lg text-gray-500">/{stats.totalScorm}</span></p>
+            <p className="text-xs text-gray-400">SCORM réussis</p>
+            {stats.avgScormScore>0&&<p className="text-xs text-orange-400 mt-1">Moy: {Math.round(stats.avgScormScore)}%</p>}
+          </Card>
+          
+          <Card className="p-4 text-center">
+            <Icon name="Clock" size={28} className="mx-auto text-cyan-400 mb-2"/>
+            <p className="text-3xl font-bold">{formatDuration(stats.totalTime)}</p>
+            <p className="text-xs text-gray-400">Temps formation</p>
+          </Card>
+        </div>
+        
+        {/* Super Admin: Stats par centre */}
+        {isSuperAdmin&&quickStats.centerStats&&quickStats.centerStats.length>0&&(
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold flex items-center gap-2"><Icon name="Building2" size={20}/>Performance par centre</h3>
+              <Button variant="ghost" size="sm" onClick={()=>window.location.hash='centers'}>Voir tous</Button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead><tr className="text-left text-gray-400 text-sm">
+                  <th className="pb-3">Centre</th>
+                  <th className="pb-3 text-center">Apprenants</th>
+                  <th className="pb-3 text-center">Inscriptions</th>
+                  <th className="pb-3 text-center">Terminés</th>
+                  <th className="pb-3">Taux</th>
+                </tr></thead>
+                <tbody className="divide-y divide-gray-700">
+                  {quickStats.centerStats.slice(0,5).map(c=>(
+                    <tr key={c.id} className="hover:bg-gray-800/50">
+                      <td className="py-3 font-medium">{c.name}</td>
+                      <td className="py-3 text-center">{c.learners}</td>
+                      <td className="py-3 text-center">{c.enrollments}</td>
+                      <td className="py-3 text-center text-green-400">{c.completed}</td>
+                      <td className="py-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-20 bg-gray-700 rounded-full h-2">
+                            <div className={`h-2 rounded-full ${c.rate>=70?'bg-green-500':c.rate>=40?'bg-yellow-500':'bg-red-500'}`} style={{width:`${c.rate}%`}}/>
+                          </div>
+                          <span className="text-sm">{c.rate}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+        
+        {/* 2 colonnes: Top apprenants + Activité récente */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Top apprenants */}
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold flex items-center gap-2"><Icon name="Trophy" size={20} className="text-yellow-400"/>Top apprenants</h3>
+              <Button variant="ghost" size="sm" onClick={()=>window.location.hash='scorm-tracking'}>Voir tous</Button>
+            </div>
+            <div className="space-y-3">
+              {topLearners.length===0?<p className="text-gray-500 text-center py-4">Aucune donnée</p>:
+              topLearners.slice(0,5).map((l,i)=>(
+                <div key={l.id} className="flex items-center gap-3 p-3 bg-gray-800/50 rounded-lg hover:bg-gray-800 transition-colors">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
+                    i===0?'bg-yellow-500 text-yellow-900':
+                    i===1?'bg-gray-400 text-gray-900':
+                    i===2?'bg-orange-600 text-orange-100':
+                    'bg-gray-700'
+                  }`}>{i+1}</div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium truncate">{l.first_name} {l.last_name}</p>
+                    <p className="text-xs text-gray-400">{l.completed}/{l.total} cours • {l.scormDone} SCORM</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-lg">{l.progress}%</p>
+                    <div className="w-16 bg-gray-700 rounded-full h-1.5">
+                      <div className="bg-indigo-500 rounded-full h-1.5" style={{width:`${l.progress}%`}}/>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+          
+          {/* Activité récente */}
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold flex items-center gap-2"><Icon name="Activity" size={20} className="text-blue-400"/>Activité récente</h3>
+            </div>
+            <div className="space-y-3 max-h-80 overflow-y-auto">
+              {recentActivity.length===0?<p className="text-gray-500 text-center py-4">Aucune activité récente</p>:
+              recentActivity.map((a,i)=>(
+                <div key={i} className="flex items-start gap-3 p-2">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                    a.color==='green'?'bg-green-500/20':
+                    a.color==='orange'?'bg-orange-500/20':
+                    a.color==='red'?'bg-red-500/20':
+                    'bg-blue-500/20'
+                  }`}>
+                    <Icon name={a.icon} size={16} className={
+                      a.color==='green'?'text-green-400':
+                      a.color==='orange'?'text-orange-400':
+                      a.color==='red'?'text-red-400':
+                      'text-blue-400'
+                    }/>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm"><span className="font-medium">{a.title}</span> <span className="text-gray-400">{a.desc}</span></p>
+                    <p className="text-xs text-gray-500">{a.date?new Date(a.date).toLocaleString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):''}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+        
+        {/* Actions rapides */}
+        <Card className="p-6">
+          <h3 className="font-semibold mb-4 flex items-center gap-2"><Icon name="Zap" size={20} className="text-yellow-400"/>Actions rapides</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            <Button variant="secondary" className="flex-col h-auto py-4" onClick={()=>window.location.hash='enrollments'}>
+              <Icon name="UserPlus" size={24} className="mb-2"/>
+              <span className="text-sm">Inscrire</span>
+            </Button>
+            <Button variant="secondary" className="flex-col h-auto py-4" onClick={()=>window.location.hash='scorm-tracking'}>
+              <Icon name="BarChart3" size={24} className="mb-2"/>
+              <span className="text-sm">Suivi</span>
+            </Button>
+            <Button variant="secondary" className="flex-col h-auto py-4" onClick={()=>window.location.hash='videos'}>
+              <Icon name="Film" size={24} className="mb-2"/>
+              <span className="text-sm">Bibliothèque</span>
+            </Button>
+            <Button variant="secondary" className="flex-col h-auto py-4" onClick={()=>window.location.hash='playlists'}>
+              <Icon name="BookOpen" size={24} className="mb-2"/>
+              <span className="text-sm">Cours</span>
+            </Button>
+            <Button variant="secondary" className="flex-col h-auto py-4" onClick={()=>window.location.hash='quizzes'}>
+              <Icon name="HelpCircle" size={24} className="mb-2"/>
+              <span className="text-sm">Quiz</span>
+            </Button>
+            <Button variant="secondary" className="flex-col h-auto py-4" onClick={()=>window.location.hash='users'}>
+              <Icon name="Users" size={24} className="mb-2"/>
+              <span className="text-sm">Utilisateurs</span>
+            </Button>
+          </div>
+        </Card>
+      </div>;
     }
 
     // ============================================================
@@ -1269,17 +1732,203 @@
 
       if(!can('view_analytics')&&!can('manage_enrollments'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
+      
+      // Calculer les alertes
+      const alerts=useMemo(()=>{
+        const list=[];
+        const now=new Date();
+        const sevenDaysAgo=new Date(now-7*24*60*60*1000);
+        const threeDaysAgo=new Date(now-3*24*60*60*1000);
+        
+        // Apprenants inactifs (>7 jours sans activité)
+        const inactiveLearners=learnerData.filter(l=>{
+          if(!l.lastActivity)return l.coursesTotal>0;
+          return new Date(l.lastActivity)<sevenDaysAgo&&l.coursesCompleted<l.coursesTotal;
+        });
+        if(inactiveLearners.length>0){
+          list.push({
+            type:'warning',
+            icon:'UserX',
+            title:`${inactiveLearners.length} apprenant${inactiveLearners.length>1?'s':''} inactif${inactiveLearners.length>1?'s':''}`,
+            desc:'Plus de 7 jours sans activité',
+            action:()=>setFilter({...filter,search:''}),
+            learners:inactiveLearners.slice(0,3)
+          });
+        }
+        
+        // Apprenants en difficulté (score SCORM < 50%)
+        const strugglingLearners=learnerData.filter(l=>l.avgScorm!==null&&l.avgScorm<50&&l.scormTotal>0);
+        if(strugglingLearners.length>0){
+          list.push({
+            type:'danger',
+            icon:'AlertTriangle',
+            title:`${strugglingLearners.length} apprenant${strugglingLearners.length>1?'s':''} en difficulté`,
+            desc:'Score SCORM moyen < 50%',
+            learners:strugglingLearners.slice(0,3)
+          });
+        }
+        
+        // Nouveaux apprenants cette semaine
+        const newLearners=learnerData.filter(l=>{
+          const enrolled=enrollments.find(e=>e.learner_id===l.id);
+          return enrolled&&new Date(enrolled.created_at)>sevenDaysAgo;
+        });
+        if(newLearners.length>0){
+          list.push({
+            type:'info',
+            icon:'UserPlus',
+            title:`${newLearners.length} nouvelle${newLearners.length>1?'s':''} inscription${newLearners.length>1?'s':''}`,
+            desc:'Cette semaine',
+            learners:newLearners.slice(0,3)
+          });
+        }
+        
+        // Cours presque terminés (>80%)
+        const almostDone=learnerData.filter(l=>l.courseProgress>=80&&l.courseProgress<100&&l.coursesTotal>0);
+        if(almostDone.length>0){
+          list.push({
+            type:'success',
+            icon:'TrendingUp',
+            title:`${almostDone.length} apprenant${almostDone.length>1?'s':''} presque terminé${almostDone.length>1?'s':''}`,
+            desc:'Progression > 80%',
+            learners:almostDone.slice(0,3)
+          });
+        }
+        
+        return list;
+      },[learnerData,enrollments,filter]);
+      
+      // Tendances (cette semaine vs semaine précédente)
+      const trends=useMemo(()=>{
+        const now=new Date();
+        const thisWeekStart=new Date(now-7*24*60*60*1000);
+        const lastWeekStart=new Date(now-14*24*60*60*1000);
+        
+        const thisWeekScorm=scormProgress.filter(s=>s.last_accessed_at&&new Date(s.last_accessed_at)>thisWeekStart).length;
+        const lastWeekScorm=scormProgress.filter(s=>s.last_accessed_at&&new Date(s.last_accessed_at)>lastWeekStart&&new Date(s.last_accessed_at)<=thisWeekStart).length;
+        
+        const thisWeekQuiz=quizAttempts.filter(q=>new Date(q.created_at)>thisWeekStart).length;
+        const lastWeekQuiz=quizAttempts.filter(q=>new Date(q.created_at)>lastWeekStart&&new Date(q.created_at)<=thisWeekStart).length;
+        
+        const thisWeekEnrollments=enrollments.filter(e=>new Date(e.created_at)>thisWeekStart).length;
+        const lastWeekEnrollments=enrollments.filter(e=>new Date(e.created_at)>lastWeekStart&&new Date(e.created_at)<=thisWeekStart).length;
+        
+        return{
+          scorm:{current:thisWeekScorm,previous:lastWeekScorm,change:lastWeekScorm>0?Math.round(((thisWeekScorm-lastWeekScorm)/lastWeekScorm)*100):0},
+          quiz:{current:thisWeekQuiz,previous:lastWeekQuiz,change:lastWeekQuiz>0?Math.round(((thisWeekQuiz-lastWeekQuiz)/lastWeekQuiz)*100):0},
+          enrollments:{current:thisWeekEnrollments,previous:lastWeekEnrollments,change:lastWeekEnrollments>0?Math.round(((thisWeekEnrollments-lastWeekEnrollments)/lastWeekEnrollments)*100):0}
+        };
+      },[scormProgress,quizAttempts,enrollments]);
 
       return<div>
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
           <div>
-            <h1 className="text-2xl font-bold">Suivi de formation</h1>
+            <h1 className="text-2xl font-bold">📊 Suivi de formation</h1>
             <p className="text-sm text-gray-400">{stats.totalLearners} apprenant{stats.totalLearners>1?'s':''} • {stats.totalEnrollments} inscription{stats.totalEnrollments>1?'s':''}</p>
           </div>
           <div className="flex gap-2">
             <Button variant="ghost" icon="RefreshCw" onClick={load}>Actualiser</Button>
             <Button variant="secondary" icon="Download" onClick={exportExcel}>Exporter Excel</Button>
           </div>
+        </div>
+        
+        {/* Section Alertes */}
+        {alerts.length>0&&(
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            {alerts.map((alert,i)=>(
+              <Card key={i} className={`p-4 border-l-4 ${
+                alert.type==='danger'?'border-l-red-500 bg-red-500/5':
+                alert.type==='warning'?'border-l-yellow-500 bg-yellow-500/5':
+                alert.type==='success'?'border-l-green-500 bg-green-500/5':
+                'border-l-blue-500 bg-blue-500/5'
+              }`}>
+                <div className="flex items-start gap-3">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                    alert.type==='danger'?'bg-red-500/20':
+                    alert.type==='warning'?'bg-yellow-500/20':
+                    alert.type==='success'?'bg-green-500/20':
+                    'bg-blue-500/20'
+                  }`}>
+                    <Icon name={alert.icon} size={20} className={
+                      alert.type==='danger'?'text-red-400':
+                      alert.type==='warning'?'text-yellow-400':
+                      alert.type==='success'?'text-green-400':
+                      'text-blue-400'
+                    }/>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm">{alert.title}</p>
+                    <p className="text-xs text-gray-400">{alert.desc}</p>
+                    {alert.learners&&alert.learners.length>0&&(
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {alert.learners.map(l=>(
+                          <span key={l.id} className="text-xs px-2 py-0.5 bg-gray-700 rounded-full truncate max-w-[120px]" title={l.first_name+' '+l.last_name}>
+                            {l.first_name}
+                          </span>
+                        ))}
+                        {alert.learners.length<(alert.type==='warning'?inactiveLearners?.length||0:0)&&<span className="text-xs text-gray-500">+{(inactiveLearners?.length||0)-3}</span>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+        
+        {/* Tendances de la semaine */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <Card className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-400 uppercase">Activité SCORM</p>
+                <p className="text-2xl font-bold">{trends.scorm.current}</p>
+                <p className="text-xs text-gray-500">cette semaine</p>
+              </div>
+              <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+                trends.scorm.change>0?'bg-green-500/20 text-green-400':
+                trends.scorm.change<0?'bg-red-500/20 text-red-400':
+                'bg-gray-500/20 text-gray-400'
+              }`}>
+                <Icon name={trends.scorm.change>0?'TrendingUp':trends.scorm.change<0?'TrendingDown':'Minus'} size={14}/>
+                {trends.scorm.change>0?'+':''}{trends.scorm.change}%
+              </div>
+            </div>
+          </Card>
+          <Card className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-400 uppercase">Quiz passés</p>
+                <p className="text-2xl font-bold">{trends.quiz.current}</p>
+                <p className="text-xs text-gray-500">cette semaine</p>
+              </div>
+              <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+                trends.quiz.change>0?'bg-green-500/20 text-green-400':
+                trends.quiz.change<0?'bg-red-500/20 text-red-400':
+                'bg-gray-500/20 text-gray-400'
+              }`}>
+                <Icon name={trends.quiz.change>0?'TrendingUp':trends.quiz.change<0?'TrendingDown':'Minus'} size={14}/>
+                {trends.quiz.change>0?'+':''}{trends.quiz.change}%
+              </div>
+            </div>
+          </Card>
+          <Card className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-400 uppercase">Inscriptions</p>
+                <p className="text-2xl font-bold">{trends.enrollments.current}</p>
+                <p className="text-xs text-gray-500">cette semaine</p>
+              </div>
+              <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+                trends.enrollments.change>0?'bg-green-500/20 text-green-400':
+                trends.enrollments.change<0?'bg-red-500/20 text-red-400':
+                'bg-gray-500/20 text-gray-400'
+              }`}>
+                <Icon name={trends.enrollments.change>0?'TrendingUp':trends.enrollments.change<0?'TrendingDown':'Minus'} size={14}/>
+                {trends.enrollments.change>0?'+':''}{trends.enrollments.change}%
+              </div>
+            </div>
+          </Card>
         </div>
 
         {/* Stats globales */}
@@ -9818,14 +10467,182 @@
       },[loading,activeTab,videoProgress,scormProgress,quizAttempts,stats]);
 
       if(loading)return<Loading/>;
+      
+      // Calculer le streak (jours consécutifs)
+      const calculateStreak=()=>{
+        const localSessions=JSON.parse(localStorage.getItem(`lms_sessions_${user.id}`)||'[]');
+        const uniqueDays=[...new Set([
+          ...localSessions.filter(s=>s.start).map(s=>s.start.slice(0,10)),
+          ...scormProgress.filter(s=>s.last_accessed_at).map(s=>s.last_accessed_at.slice(0,10)),
+          ...videoProgress.filter(v=>v.updated_at).map(v=>v.updated_at.slice(0,10)),
+          ...quizAttempts.filter(q=>q.created_at).map(q=>q.created_at.slice(0,10))
+        ])].sort((a,b)=>b.localeCompare(a));
+        
+        if(uniqueDays.length===0)return 0;
+        
+        let streak=0;
+        const today=new Date().toISOString().slice(0,10);
+        const yesterday=new Date(Date.now()-86400000).toISOString().slice(0,10);
+        
+        // Vérifier si actif aujourd'hui ou hier
+        if(uniqueDays[0]!==today&&uniqueDays[0]!==yesterday)return 0;
+        
+        let checkDate=new Date(uniqueDays[0]);
+        for(const day of uniqueDays){
+          const dayDate=new Date(day);
+          const diff=Math.round((checkDate-dayDate)/(86400000));
+          if(diff<=1){
+            streak++;
+            checkDate=dayDate;
+          }else break;
+        }
+        return streak;
+      };
+      
+      const streak=calculateStreak();
+      
+      // Trouver le dernier contenu consulté
+      const getLastContent=()=>{
+        const activities=[
+          ...scormProgress.map(s=>({type:'scorm',title:s.scorm_modules?.title||'Module SCORM',id:s.module_id,enrollmentId:s.enrollment_id,progress:s.completion_status==='completed'?100:50,date:s.last_accessed_at})),
+          ...videoProgress.map(v=>({type:'video',title:v.playlist_videos?.videos?.title||'Vidéo',id:v.video_id,progress:v.watch_percent||0,date:v.updated_at})),
+          ...enrollments.filter(e=>e.status!=='completed').map(e=>({type:'course',title:e.playlists?.title||'Cours',id:e.id,progress:e.progress_percent||0,date:e.updated_at}))
+        ].filter(a=>a.date).sort((a,b)=>new Date(b.date)-new Date(a.date));
+        return activities[0]||null;
+      };
+      
+      const lastContent=getLastContent();
+      
+      // Message motivationnel
+      const getMotivation=()=>{
+        const progress=stats.totalCourses>0?Math.round((stats.completedCourses/stats.totalCourses)*100):0;
+        if(progress===100)return{emoji:'🎉',text:'Félicitations ! Vous avez terminé toutes vos formations !'};
+        if(progress>=75)return{emoji:'🚀',text:'Excellent travail ! Plus que quelques modules et vous aurez tout terminé !'};
+        if(progress>=50)return{emoji:'💪',text:'Vous êtes à mi-chemin ! Continuez sur cette lancée !'};
+        if(progress>=25)return{emoji:'🌱',text:'Bon début ! Chaque module compte, continuez !'};
+        if(stats.totalCourses>0)return{emoji:'👋',text:'Prêt à commencer votre parcours de formation ?'};
+        return{emoji:'📚',text:'Bienvenue ! Inscrivez-vous à des formations pour commencer.'};
+      };
+      
+      const motivation=getMotivation();
+      
+      // Objectifs du jour
+      const getDailyGoals=()=>{
+        const goals=[];
+        const today=new Date().toISOString().slice(0,10);
+        const todayScorm=scormProgress.filter(s=>s.last_accessed_at?.slice(0,10)===today).length;
+        const todayVideos=videoProgress.filter(v=>v.updated_at?.slice(0,10)===today).length;
+        
+        if(todayScorm===0&&stats.totalScorm>stats.completedScorm){
+          goals.push({icon:'Package',text:'Compléter 1 module SCORM',done:false});
+        }else if(todayScorm>0){
+          goals.push({icon:'Package',text:`${todayScorm} module(s) SCORM aujourd'hui`,done:true});
+        }
+        
+        if(todayVideos<3&&stats.totalVideos>stats.watchedVideos){
+          goals.push({icon:'Play',text:`Regarder ${3-todayVideos} vidéo(s)`,done:todayVideos>=3});
+        }else if(todayVideos>=3){
+          goals.push({icon:'Play',text:`${todayVideos} vidéos aujourd'hui`,done:true});
+        }
+        
+        if(streak>0){
+          goals.push({icon:'Flame',text:`Maintenir votre série de ${streak} jour(s)`,done:true});
+        }else{
+          goals.push({icon:'Flame',text:'Démarrer une série de jours consécutifs',done:false});
+        }
+        
+        return goals;
+      };
+      
+      const dailyGoals=getDailyGoals();
 
       return<div>
+        {/* Header avec message motivationnel */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold">Mon suivi</h1>
-            <p className="text-gray-400 text-sm">Tableau de bord de votre progression</p>
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <span>{motivation.emoji}</span>
+              Bonjour{profile?.first_name?`, ${profile.first_name}`:''} !
+            </h1>
+            <p className="text-gray-400 text-sm">{motivation.text}</p>
           </div>
-          {stats.lastActivity&&<p className="text-sm text-gray-500">Dernière activité: {new Date(stats.lastActivity).toLocaleDateString('fr-FR')}</p>}
+          <div className="flex items-center gap-4">
+            {streak>0&&(
+              <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500/20 to-red-500/20 border border-orange-500/30 rounded-xl">
+                <span className="text-2xl">🔥</span>
+                <div>
+                  <p className="font-bold text-orange-400">{streak} jour{streak>1?'s':''}</p>
+                  <p className="text-xs text-gray-400">série en cours</p>
+                </div>
+              </div>
+            )}
+            {stats.lastActivity&&<p className="text-sm text-gray-500">Dernière activité: {new Date(stats.lastActivity).toLocaleDateString('fr-FR')}</p>}
+          </div>
+        </div>
+        
+        {/* Widget Reprendre + Objectifs */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+          {/* Reprendre là où j'en étais */}
+          {lastContent&&lastContent.progress<100?(
+            <Card className="lg:col-span-2 p-6 bg-gradient-to-br from-indigo-600/20 to-purple-600/20 border-indigo-500/30">
+              <div className="flex items-start gap-4">
+                <div className="w-16 h-16 bg-indigo-600/30 rounded-xl flex items-center justify-center shrink-0">
+                  <Icon name={lastContent.type==='scorm'?'Package':lastContent.type==='video'?'Play':'BookOpen'} size={32} className="text-indigo-400"/>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-indigo-400 uppercase tracking-wide mb-1">▶️ Reprendre là où vous en étiez</p>
+                  <h3 className="font-semibold text-lg truncate">{lastContent.title}</h3>
+                  <div className="flex items-center gap-3 mt-2">
+                    <div className="flex-1 max-w-xs">
+                      <div className="w-full bg-gray-700 rounded-full h-2">
+                        <div className="bg-indigo-500 rounded-full h-2 transition-all" style={{width:`${lastContent.progress}%`}}/>
+                      </div>
+                    </div>
+                    <span className="text-sm text-gray-400">{Math.round(lastContent.progress)}%</span>
+                  </div>
+                </div>
+                <Button onClick={()=>{
+                  if(lastContent.type==='course')window.location.hash='my-courses';
+                  else window.location.hash='my-courses';
+                }} className="shrink-0">
+                  Continuer <Icon name="ArrowRight" size={16} className="ml-1"/>
+                </Button>
+              </div>
+            </Card>
+          ):(
+            <Card className="lg:col-span-2 p-6 bg-gradient-to-br from-green-600/20 to-emerald-600/20 border-green-500/30">
+              <div className="flex items-center gap-4">
+                <div className="w-16 h-16 bg-green-600/30 rounded-xl flex items-center justify-center">
+                  <Icon name="CheckCircle" size={32} className="text-green-400"/>
+                </div>
+                <div>
+                  <p className="text-xs text-green-400 uppercase tracking-wide mb-1">✨ Tout est à jour</p>
+                  <h3 className="font-semibold text-lg">Aucune formation en cours</h3>
+                  <p className="text-sm text-gray-400">Explorez le catalogue pour de nouvelles formations</p>
+                </div>
+              </div>
+            </Card>
+          )}
+          
+          {/* Objectifs du jour */}
+          <Card className="p-4">
+            <h4 className="font-semibold text-sm text-gray-400 uppercase tracking-wide mb-3">🎯 Objectifs du jour</h4>
+            <div className="space-y-2">
+              {dailyGoals.map((goal,i)=>(
+                <div key={i} className={`flex items-center gap-3 p-2 rounded-lg ${goal.done?'bg-green-500/10':'bg-gray-700/50'}`}>
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center ${goal.done?'bg-green-500':'bg-gray-600'}`}>
+                    {goal.done?<Icon name="Check" size={14}/>:<Icon name={goal.icon} size={14}/>}
+                  </div>
+                  <span className={`text-sm ${goal.done?'text-green-400 line-through':'text-gray-300'}`}>{goal.text}</span>
+                </div>
+              ))}
+            </div>
+            {dailyGoals.filter(g=>g.done).length===dailyGoals.length&&(
+              <div className="mt-3 p-2 bg-green-500/20 rounded-lg text-center">
+                <span className="text-green-400 text-sm font-medium">🎉 Tous les objectifs atteints !</span>
+              </div>
+            )}
+          </Card>
         </div>
 
         {/* Stats principales - Temps total en premier */}
