@@ -5541,18 +5541,18 @@
           
           {contentTab==='videos'&&<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
-              <h4 className="font-medium mb-3">Dans le cours ({playlistVideos.length}) {!editContentModal?.is_locked&&<span className="text-gray-500 text-sm font-normal">- Glissez pour réorganiser</span>}</h4>
+              <h4 className="font-medium mb-3">Dans le cours ({playlistVideos.length}) {!editContentModal?.is_locked&&realRole!=='trainer'&&<span className="text-gray-500 text-sm font-normal">- Glissez pour réorganiser</span>}</h4>
               <div ref={sortableRef} className="space-y-2 max-h-96 overflow-y-auto">
                 {playlistVideos.map((pv,i)=><div key={pv.id} data-id={pv.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg">
-                  {!editContentModal?.is_locked&&<div className="drag-handle cursor-grab active:cursor-grabbing p-1 hover:bg-gray-600 rounded"><Icon name="GripVertical" size={16} className="text-gray-400"/></div>}
+                  {!editContentModal?.is_locked&&realRole!=='trainer'&&<div className="drag-handle cursor-grab active:cursor-grabbing p-1 hover:bg-gray-600 rounded"><Icon name="GripVertical" size={16} className="text-gray-400"/></div>}
                   <span className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{i+1}</span>
                   <div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{pv.videos?.title}</p></div>
-                  {(!editContentModal?.is_locked||isSuperAdmin)&&<button onClick={()=>removeVideoFromPlaylist(pv.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button>}
+                  {(!editContentModal?.is_locked||isSuperAdmin)&&realRole!=='trainer'&&<button onClick={()=>removeVideoFromPlaylist(pv.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button>}
                 </div>)}
                 {playlistVideos.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucune vidéo</p>}
               </div>
             </div>
-            {(!editContentModal?.is_locked||isSuperAdmin)&&<div>
+            {(!editContentModal?.is_locked||isSuperAdmin)&&realRole!=='trainer'&&<div>
               <h4 className="font-medium mb-3">Vidéos disponibles</h4>
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)).map(v=>{
@@ -5570,6 +5570,7 @@
                 {videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)&&(!v.is_lms_content||v.center_id===center?.id||isLicensed('video',v.id)||isSuperAdmin)).length===0&&<p className="text-gray-500 text-sm text-center py-4">Toutes les vidéos ajoutées</p>}
               </div>
             </div>}
+            {realRole==='trainer'&&<div className="lg:col-span-2 text-center py-4"><p className="text-gray-500 text-sm"><Icon name="Lock" size={14} className="inline mr-1"/>Seul l'administrateur du centre peut modifier le contenu des cours.</p></div>}
           </div>}
           
           {contentTab==='scorm'&&<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -5582,12 +5583,12 @@
                     <p className="font-medium truncate text-sm">{ps.scorm_modules?.title}</p>
                     <p className="text-xs text-gray-400">{ps.scorm_modules?.module_type}</p>
                   </div>
-                  {(!editContentModal?.is_locked||isSuperAdmin)&&<button onClick={()=>removeScormFromPlaylist(ps.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button>}
+                  {(!editContentModal?.is_locked||isSuperAdmin)&&realRole!=='trainer'&&<button onClick={()=>removeScormFromPlaylist(ps.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button>}
                 </div>)}
                 {playlistScorm.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucun module SCORM</p>}
               </div>
             </div>
-            {(!editContentModal?.is_locked||isSuperAdmin)&&<div>
+            {(!editContentModal?.is_locked||isSuperAdmin)&&realRole!=='trainer'&&<div>
               <h4 className="font-medium mb-3">Modules disponibles</h4>
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {scormModules.filter(m=>!playlistScorm.find(ps=>ps.scorm_module_id===m.id)).map(m=>{
@@ -5605,9 +5606,17 @@
                 {scormModules.filter(m=>!playlistScorm.find(ps=>ps.scorm_module_id===m.id)&&(!m.is_lms_content||m.center_id===center?.id||isLicensed('scorm',m.id)||isSuperAdmin)).length===0&&<p className="text-gray-500 text-sm text-center py-4">{scormModules.length===0?'Aucun module SCORM disponible':'Tous les modules ajoutés'}</p>}
               </div>
             </div>}
+            {realRole==='trainer'&&<div className="lg:col-span-2 text-center py-4"><p className="text-gray-500 text-sm"><Icon name="Lock" size={14} className="inline mr-1"/>Seul l'administrateur du centre peut modifier le contenu des cours.</p></div>}
           </div>}
           
           {contentTab==='extensions'&&<div className="space-y-4">
+            {realRole==='trainer'&&editContentModal?.is_lms_content?(
+              <div className="text-center py-8">
+                <Icon name="Lock" size={48} className="mx-auto text-gray-500 mb-4"/>
+                <p className="text-gray-400">Seul l'administrateur du centre peut gérer les documents complémentaires.</p>
+              </div>
+            ):(
+            <>
             <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-lg p-4">
               <p className="text-sm text-indigo-300"><Icon name="Info" size={14} className="inline mr-2"/>Ces documents sont visibles uniquement par les apprenants de votre centre. Ils complètent le cours LMS officiel.</p>
             </div>
@@ -5634,6 +5643,8 @@
                   </div>
                 ))}
               </div>
+            )}
+            </>
             )}
           </div>}
         </Modal>
