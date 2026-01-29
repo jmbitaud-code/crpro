@@ -61,7 +61,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '7.4.1';
+    const APP_VERSION = '7.4.2';
     // =======================================
 
     // Masquer l'écran de chargement une fois React prêt
@@ -237,55 +237,96 @@
       
       // Mode "Vue comme" pour Super Admin
       const[viewAs,setViewAs]=useState(null);
+      
+      // Ref pour éviter les appels multiples
+      const isRefreshingRef=useRef(false);
+      const lastRefreshRef=useRef(0);
 
       const loadProfile=useCallback(async(userId)=>{
         try{
           const{data,error:err}=await supabase.from('profiles').select('*,centers(*)').eq('id',userId).single();
-          if(err)throw err;
+          // Ignorer les erreurs AbortError (requête annulée)
+          if(err){
+            if(err.message?.includes('AbortError')||err.code==='PGRST301')return profile; // Retourner le profil existant
+            throw err;
+          }
           setProfile(data);
           setCenter(data?.centers);
           const{data:perms}=await supabase.from('role_permissions').select('permissions').eq('role',data?.role).single();
           setPermissions(perms?.permissions||{});
           return data;
-        }catch(e){console.error('Erreur loadProfile:',e);return null;}
-      },[]);
+        }catch(e){
+          // Ignorer AbortError
+          if(e.message?.includes('AbortError')||e.name==='AbortError'){
+            console.log('Requête profile annulée (AbortError) - ignorée');
+            return profile;
+          }
+          console.error('Erreur loadProfile:',e);
+          return null;
+        }
+      },[profile]);
 
-      // Fonction pour vérifier et rafraîchir la session
-      const checkAndRefreshSession=useCallback(async()=>{
+      // Fonction pour vérifier et rafraîchir la session (avec protection contre les appels multiples)
+      const checkAndRefreshSession=useCallback(async(force=false)=>{
+        // Éviter les appels multiples rapprochés (debounce 2 secondes)
+        const now=Date.now();
+        if(!force&&(isRefreshingRef.current||(now-lastRefreshRef.current)<2000)){
+          console.log('Check session ignoré (déjà en cours ou trop récent)');
+          return null;
+        }
+        
+        isRefreshingRef.current=true;
+        lastRefreshRef.current=now;
+        
         try{
           const{data:{session},error}=await supabase.auth.getSession();
           if(error){
+            // Ignorer AbortError
+            if(error.message?.includes('AbortError')){
+              isRefreshingRef.current=false;
+              return null;
+            }
             console.error('Erreur getSession:',error);
             if(error.message?.includes('refresh_token')||error.message?.includes('invalid')||error.message?.includes('expired')){
               console.warn('Session invalide, déconnexion...');
               setSessionError(true);
               await supabase.auth.signOut();
+              isRefreshingRef.current=false;
               return null;
             }
           }
           if(session?.user){
             // Tenter de rafraîchir le token si proche de l'expiration
             const expiresAt=session.expires_at;
-            const now=Math.floor(Date.now()/1000);
-            const timeUntilExpiry=expiresAt-now;
+            const nowSec=Math.floor(Date.now()/1000);
+            const timeUntilExpiry=expiresAt-nowSec;
             
             // Si le token expire dans moins de 5 minutes, le rafraîchir
             if(timeUntilExpiry<300){
               console.log('Token proche expiration, rafraîchissement...');
               const{data:refreshData,error:refreshError}=await supabase.auth.refreshSession();
               if(refreshError){
-                console.error('Erreur refresh:',refreshError);
-                setSessionError(true);
+                if(!refreshError.message?.includes('AbortError')){
+                  console.error('Erreur refresh:',refreshError);
+                  setSessionError(true);
+                }
+                isRefreshingRef.current=false;
                 return null;
               }
+              isRefreshingRef.current=false;
               return refreshData.session;
             }
             setSessionError(false);
+            isRefreshingRef.current=false;
             return session;
           }
+          isRefreshingRef.current=false;
           return null;
         }catch(e){
-          console.error('Erreur checkSession:',e);
+          if(!e.message?.includes('AbortError')){
+            console.error('Erreur checkSession:',e);
+          }
+          isRefreshingRef.current=false;
           return null;
         }
       },[]);
@@ -303,13 +344,15 @@
         
         const init=async()=>{
           try{
-            const session=await checkAndRefreshSession();
+            const session=await checkAndRefreshSession(true); // Force le premier check
             if(mounted&&session?.user){
               setUser(session.user);
               await loadProfile(session.user.id);
             }
           }catch(e){
-            console.error('Erreur init auth:',e);
+            if(!e.message?.includes('AbortError')){
+              console.error('Erreur init auth:',e);
+            }
           }finally{
             clearTimeout(timeout);
             if(mounted)setLoading(false);
@@ -325,7 +368,10 @@
           if(event==='SIGNED_IN'&&session?.user){
             setUser(session.user);
             setSessionError(false);
-            await loadProfile(session.user.id);
+            // Ne recharger le profil que si c'est un nouvel utilisateur
+            if(!profile||profile.id!==session.user.id){
+              await loadProfile(session.user.id);
+            }
           }
           else if(event==='SIGNED_OUT'){
             setUser(null);
@@ -351,26 +397,26 @@
           }
         });
         
-        // Listener pour la visibilité de l'onglet
-        const handleVisibilityChange=async()=>{
+        // Listener pour la visibilité de l'onglet (avec délai pour éviter les conflits)
+        let visibilityTimeout=null;
+        const handleVisibilityChange=()=>{
           if(document.visibilityState==='visible'&&mounted){
-            console.log('Onglet redevenu visible, vérification session...');
-            const session=await checkAndRefreshSession();
-            if(session?.user){
-              // Session valide, s'assurer que le profil est chargé
-              if(!profile||profile.id!==session.user.id){
-                await loadProfile(session.user.id);
+            // Délai de 500ms pour laisser Supabase gérer d'abord
+            if(visibilityTimeout)clearTimeout(visibilityTimeout);
+            visibilityTimeout=setTimeout(async()=>{
+              console.log('Onglet redevenu visible, vérification session...');
+              const session=await checkAndRefreshSession();
+              if(!session&&user){
+                // Avait un user mais plus de session valide
+                console.warn('Session perdue, déconnexion...');
+                setUser(null);
+                setProfile(null);
+                setCenter(null);
+                setPermissions({});
+                setViewAs(null);
+                setSessionError(true);
               }
-              setUser(session.user);
-            }else if(user){
-              // Avait un user mais plus de session valide
-              console.warn('Session perdue, déconnexion...');
-              setUser(null);
-              setProfile(null);
-              setCenter(null);
-              setPermissions({});
-              setViewAs(null);
-            }
+            },500);
           }
         };
         
@@ -387,6 +433,7 @@
         return()=>{
           mounted=false;
           clearTimeout(timeout);
+          if(visibilityTimeout)clearTimeout(visibilityTimeout);
           clearInterval(heartbeatInterval);
           document.removeEventListener('visibilitychange',handleVisibilityChange);
           subscription.unsubscribe();
