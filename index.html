@@ -61,7 +61,8 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '7.4.4';
+    const APP_VERSION = '7.7.0';
+    const APP_URL = window.location.origin;
     // =======================================
 
     // Masquer l'écran de chargement une fois React prêt
@@ -82,6 +83,46 @@
     const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{
       auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}
     });
+    
+    // ============ SYSTÈME D'EMAILS UNIFIÉ ============
+    // Fonction pour envoyer des emails via Edge Function
+    const sendEmail = async ({
+      template_code,    // Code du template (ex: 'welcome', 'course_completed')
+      to_email,         // Email destinataire
+      to_user_id,       // ID utilisateur (optionnel)
+      variables,        // Variables à remplacer {{variable}}
+      custom_subject,   // Sujet personnalisé (bypass template)
+      custom_body,      // Corps personnalisé (bypass template)
+      attachments       // Pièces jointes [{filename, content}]
+    }) => {
+      try {
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/send-email`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+          },
+          body: JSON.stringify({
+            template_code,
+            to_email,
+            to_user_id,
+            variables: { ...variables, app_url: APP_URL },
+            custom_subject,
+            custom_body,
+            attachments
+          })
+        });
+        const result = await response.json();
+        if (!result.success) {
+          console.warn('Email non envoyé:', result.error);
+        }
+        return result;
+      } catch (err) {
+        console.error('Erreur envoi email:', err);
+        return { success: false, error: err.message };
+      }
+    };
+    // ================================================
     
     // Exposer lms_origin globalement pour SCORM Dispatch (Codes Rousseau)
     window.lms_origin = window.location.origin;
@@ -637,19 +678,220 @@
     // Login
     function LoginPage(){
       const{signIn}=useAuth();
+      const[activeTab,setActiveTab]=useState('login'); // login, register, forgot
       const[email,setEmail]=useState('');
       const[password,setPassword]=useState('');
+      const[confirmPassword,setConfirmPassword]=useState('');
+      const[firstName,setFirstName]=useState('');
+      const[lastName,setLastName]=useState('');
+      const[centerCode,setCenterCode]=useState('');
       const[loading,setLoading]=useState(false);
       const[msg,setMsg]=useState(null);
 
-      const handleSubmit=async e=>{
+      const handleLogin=async e=>{
         e.preventDefault();setLoading(true);setMsg(null);
         const r=await signIn(email,password);
         if(!r.success)setMsg({type:'error',text:r.error});
         setLoading(false);
       };
+      
+      const handleForgotPassword=async e=>{
+        e.preventDefault();setLoading(true);setMsg(null);
+        
+        if(!email.trim()){
+          setMsg({type:'error',text:'Veuillez entrer votre adresse email'});setLoading(false);return;
+        }
+        
+        try{
+          const{error}=await supabase.auth.resetPasswordForEmail(email.toLowerCase().trim(),{
+            redirectTo:window.location.origin
+          });
+          
+          if(error){
+            setMsg({type:'error',text:error.message});
+          }else{
+            setMsg({type:'success',text:'📧 Si cette adresse existe, un email de réinitialisation a été envoyé. Vérifiez votre boîte de réception (et les spams).'});
+          }
+        }catch(err){
+          setMsg({type:'error',text:'Erreur: '+err.message});
+        }
+        setLoading(false);
+      };
+      
+      const handleRegister=async e=>{
+        e.preventDefault();setLoading(true);setMsg(null);
+        
+        // Validations
+        if(!firstName.trim()||!lastName.trim()){
+          setMsg({type:'error',text:'Prénom et nom requis'});setLoading(false);return;
+        }
+        if(password.length<6){
+          setMsg({type:'error',text:'Le mot de passe doit contenir au moins 6 caractères'});setLoading(false);return;
+        }
+        if(password!==confirmPassword){
+          setMsg({type:'error',text:'Les mots de passe ne correspondent pas'});setLoading(false);return;
+        }
+        if(!centerCode.trim()){
+          setMsg({type:'error',text:'Le code centre est requis'});setLoading(false);return;
+        }
+        
+        try{
+          // Vérifier le code centre
+          const{data:center,error:centerErr}=await supabase.from('centers').select('id,name').eq('registration_code',centerCode.toUpperCase().trim()).single();
+          if(centerErr||!center){
+            setMsg({type:'error',text:'Code centre invalide. Vérifiez auprès de votre centre de formation.'});setLoading(false);return;
+          }
+          
+          // Créer le compte utilisateur
+          const{data:authData,error:authErr}=await supabase.auth.signUp({
+            email:email.toLowerCase().trim(),
+            password,
+            options:{
+              data:{
+                first_name:firstName.trim(),
+                last_name:lastName.trim(),
+                role:'learner',
+                center_id:center.id
+              }
+            }
+          });
+          
+          if(authErr){
+            if(authErr.message.includes('already registered'))setMsg({type:'error',text:'Cet email est déjà utilisé'});
+            else setMsg({type:'error',text:authErr.message});
+            setLoading(false);return;
+          }
+          
+          // Créer/mettre à jour le profil
+          if(authData.user){
+            await supabase.from('profiles').upsert({
+              id:authData.user.id,
+              email:email.toLowerCase().trim(),
+              first_name:firstName.trim(),
+              last_name:lastName.trim(),
+              role:'learner',
+              center_id:center.id
+            });
+            
+            // Envoyer email de bienvenue
+            sendEmail({
+              template_code:'welcome',
+              to_email:email.toLowerCase().trim(),
+              to_user_id:authData.user.id,
+              variables:{
+                first_name:firstName.trim(),
+                last_name:lastName.trim(),
+                center_name:center.name
+              }
+            });
+          }
+          
+          setMsg({type:'success',text:`✅ Compte créé ! Bienvenue chez ${center.name}. Vous pouvez maintenant vous connecter.`});
+          // Reset form et basculer sur login
+          setFirstName('');setLastName('');setPassword('');setConfirmPassword('');setCenterCode('');
+          setTimeout(()=>setActiveTab('login'),2000);
+          
+        }catch(err){
+          setMsg({type:'error',text:'Erreur: '+err.message});
+        }
+        setLoading(false);
+      };
 
-      return(<div className="min-h-screen bg-gray-900 flex items-center justify-center p-4"><div className="w-full max-w-md"><div className="text-center mb-8"><div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl mb-4"><Icon name="GraduationCap" size={32} className="text-white"/></div><h1 className="text-2xl font-bold text-white">Course Builder Pro</h1><p className="text-gray-400 mt-1">Plateforme de formation vidéo</p></div><Card className="p-6">{msg&&<Alert type={msg.type}>{msg.text}</Alert>}<form onSubmit={handleSubmit} className="space-y-4 mt-4"><Input label="Email" type="email" icon="Mail" value={email} onChange={e=>setEmail(e.target.value)} required/><Input label="Mot de passe" type="password" icon="Lock" value={password} onChange={e=>setPassword(e.target.value)} required/><Button type="submit" className="w-full" loading={loading}>Se connecter</Button></form></Card><p className="text-center text-gray-500 text-xs mt-4">v{APP_VERSION}</p></div></div>);
+      return(<div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl mb-4">
+              <Icon name="GraduationCap" size={32} className="text-white"/>
+            </div>
+            <h1 className="text-2xl font-bold text-white">Course Builder Pro</h1>
+            <p className="text-gray-400 mt-1">Plateforme de formation</p>
+          </div>
+          
+          <Card className="p-6">
+            {/* Onglets - sauf pour mot de passe oublié */}
+            {activeTab!=='forgot'&&(
+              <div className="flex gap-1 p-1 bg-gray-700 rounded-lg mb-6">
+                <button onClick={()=>{setActiveTab('login');setMsg(null);}} className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab==='login'?'bg-indigo-600 text-white':'text-gray-400 hover:text-white'}`}>
+                  Se connecter
+                </button>
+                <button onClick={()=>{setActiveTab('register');setMsg(null);}} className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab==='register'?'bg-indigo-600 text-white':'text-gray-400 hover:text-white'}`}>
+                  S'inscrire
+                </button>
+              </div>
+            )}
+            
+            {/* Titre pour mot de passe oublié */}
+            {activeTab==='forgot'&&(
+              <div className="text-center mb-6">
+                <Icon name="KeyRound" size={32} className="mx-auto text-indigo-400 mb-2"/>
+                <h2 className="text-lg font-semibold">Mot de passe oublié</h2>
+                <p className="text-sm text-gray-400">Entrez votre email pour recevoir un lien de réinitialisation</p>
+              </div>
+            )}
+            
+            {msg&&<Alert type={msg.type} className="mb-4">{msg.text}</Alert>}
+            
+            {/* Formulaire Connexion */}
+            {activeTab==='login'&&(
+              <form onSubmit={handleLogin} className="space-y-4">
+                <Input label="Email" type="email" icon="Mail" value={email} onChange={e=>setEmail(e.target.value)} required/>
+                <Input label="Mot de passe" type="password" icon="Lock" value={password} onChange={e=>setPassword(e.target.value)} required/>
+                <Button type="submit" className="w-full" loading={loading}>Se connecter</Button>
+                <div className="text-center">
+                  <button type="button" onClick={()=>{setActiveTab('forgot');setMsg(null);}} className="text-sm text-indigo-400 hover:text-indigo-300">
+                    Mot de passe oublié ?
+                  </button>
+                </div>
+              </form>
+            )}
+            
+            {/* Formulaire Mot de passe oublié */}
+            {activeTab==='forgot'&&(
+              <form onSubmit={handleForgotPassword} className="space-y-4">
+                <Input label="Votre adresse email" type="email" icon="Mail" value={email} onChange={e=>setEmail(e.target.value)} required placeholder="exemple@email.com"/>
+                <Button type="submit" className="w-full" loading={loading} icon="Send">Envoyer le lien</Button>
+                <div className="text-center">
+                  <button type="button" onClick={()=>{setActiveTab('login');setMsg(null);}} className="text-sm text-gray-400 hover:text-white">
+                    ← Retour à la connexion
+                  </button>
+                </div>
+              </form>
+            )}
+            
+            {/* Formulaire Inscription */}
+            {activeTab==='register'&&(
+              <form onSubmit={handleRegister} className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <Input label="Prénom" icon="User" value={firstName} onChange={e=>setFirstName(e.target.value)} required/>
+                  <Input label="Nom" value={lastName} onChange={e=>setLastName(e.target.value)} required/>
+                </div>
+                <Input label="Email" type="email" icon="Mail" value={email} onChange={e=>setEmail(e.target.value)} required/>
+                <Input label="Mot de passe" type="password" icon="Lock" value={password} onChange={e=>setPassword(e.target.value)} required placeholder="Min. 6 caractères"/>
+                <Input label="Confirmer le mot de passe" type="password" icon="Lock" value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} required/>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">Code centre *</label>
+                  <div className="relative">
+                    <Icon name="Building2" size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+                    <input 
+                      type="text" 
+                      value={centerCode} 
+                      onChange={e=>setCenterCode(e.target.value.toUpperCase())} 
+                      className="w-full pl-10 pr-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white font-mono tracking-wider uppercase" 
+                      placeholder="XXXXXX"
+                      maxLength={10}
+                      required
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">Demandez ce code à votre centre de formation</p>
+                </div>
+                <Button type="submit" className="w-full" loading={loading}>Créer mon compte</Button>
+              </form>
+            )}
+          </Card>
+          
+          <p className="text-center text-gray-500 text-xs mt-4">v{APP_VERSION}</p>
+        </div>
+      </div>);
     }
 
     // Layout
@@ -2902,27 +3144,140 @@
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
       const[editing,setEditing]=useState(null);
-      const[form,setForm]=useState({name:'',slug:'',description:''});
+      const[form,setForm]=useState({name:'',slug:'',description:'',registration_code:''});
       const[saving,setSaving]=useState(false);
+      const[copiedCode,setCopiedCode]=useState(null);
+
+      // Générer un slug à partir du nom
+      const generateSlug=(name)=>name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+      
+      // Générer un code d'inscription aléatoire (6 caractères)
+      const generateCode=()=>{
+        const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Sans O/0/1/I pour éviter confusion
+        let code='';
+        for(let i=0;i<6;i++)code+=chars.charAt(Math.floor(Math.random()*chars.length));
+        return code;
+      };
+      
+      // Copier le code dans le presse-papier
+      const copyCode=(code)=>{
+        navigator.clipboard.writeText(code);
+        setCopiedCode(code);
+        setTimeout(()=>setCopiedCode(null),2000);
+      };
 
       const load=useCallback(async()=>{const{data}=await supabase.from('centers').select('*').order('name');setCenters(data||[]);setLoading(false);},[]);
       useEffect(()=>{load();},[load]);
 
       const handleSave=async()=>{
+        if(!form.name.trim()){alert('Le nom est requis');return;}
         setSaving(true);
-        const payload={name:form.name,slug:form.slug.toLowerCase().replace(/[^a-z0-9-]/g,'-'),description:form.description};
-        if(editing)await supabase.from('centers').update(payload).eq('id',editing.id);
-        else await supabase.from('centers').insert(payload);
-        await load();setModal(false);setForm({name:'',slug:'',description:''});setEditing(null);setSaving(false);
+        const slug=form.slug||generateSlug(form.name);
+        const registration_code=form.registration_code||generateCode();
+        const payload={name:form.name.trim(),slug,description:form.description,registration_code};
+        try{
+          if(editing){
+            const{error}=await supabase.from('centers').update(payload).eq('id',editing.id);
+            if(error)throw error;
+          }else{
+            const{error}=await supabase.from('centers').insert(payload);
+            if(error)throw error;
+          }
+          await load();setModal(false);setForm({name:'',slug:'',description:'',registration_code:''});setEditing(null);
+        }catch(err){
+          if(err.code==='23505')alert('❌ Un centre avec ce nom ou ce code existe déjà');
+          else alert('Erreur: '+err.message);
+        }
+        setSaving(false);
       };
-      const handleDelete=async id=>{if(!confirm('Supprimer ?'))return;await supabase.from('centers').delete().eq('id',id);load();};
+      const handleDelete=async id=>{if(!confirm('Supprimer ce centre ? Les utilisateurs associés perdront leur accès.'))return;await supabase.from('centers').delete().eq('id',id);load();};
+      
+      // Ouvrir le modal pour nouveau centre avec code généré
+      const openNewModal=()=>{
+        setForm({name:'',slug:'',description:'',registration_code:generateCode()});
+        setEditing(null);
+        setModal(true);
+      };
 
       if(!can('manage_centers'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
       return<div>
-        <div className="flex items-center justify-between mb-6"><h1 className="text-2xl font-bold">Centres</h1><Button icon="Plus" onClick={()=>{setForm({name:'',slug:'',description:''});setEditing(null);setModal(true);}}>Nouveau</Button></div>
-        {centers.length===0?<Empty icon="Building2" title="Aucun centre"/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{centers.map(c=><Card key={c.id} className="p-4"><div className="flex items-center gap-3 mb-3"><div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center"><Icon name="Building2" size={24}/></div><div><h3 className="font-semibold">{c.name}</h3><p className="text-sm text-gray-400">/{c.slug}</p></div></div><div className="flex gap-2"><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(c);setForm({name:c.name,slug:c.slug,description:c.description||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(c.id)}>Supprimer</Button></div></Card>)}</div>}
-        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier':'Nouveau centre'}><div className="space-y-4"><Input label="Nom" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/><Input label="Slug" value={form.slug} onChange={e=>setForm({...form,slug:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold">Centres</h1>
+            <p className="text-sm text-gray-400">Gérez vos centres de formation et leurs codes d'inscription</p>
+          </div>
+          <Button icon="Plus" onClick={openNewModal}>Nouveau centre</Button>
+        </div>
+        
+        {/* Info sur les codes */}
+        <Alert type="info" className="mb-6">
+          <p className="font-medium">💡 Code d'inscription</p>
+          <p className="text-sm">Partagez le code avec vos apprenants. Ils pourront s'inscrire eux-mêmes sur la page de connexion en utilisant ce code.</p>
+        </Alert>
+        
+        {centers.length===0?<Empty icon="Building2" title="Aucun centre" desc="Créez votre premier centre de formation"/>:
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{centers.map(c=><Card key={c.id} className="p-4">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center"><Icon name="Building2" size={24}/></div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold truncate">{c.name}</h3>
+              <p className="text-sm text-gray-400">/{c.slug}</p>
+            </div>
+          </div>
+          
+          {/* Code d'inscription */}
+          <div className="bg-gray-700/50 rounded-lg p-3 mb-4">
+            <p className="text-xs text-gray-400 mb-1">Code d'inscription</p>
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-lg font-bold text-indigo-400 tracking-wider">{c.registration_code||'—'}</span>
+              {c.registration_code&&<button onClick={()=>copyCode(c.registration_code)} className="p-1.5 hover:bg-gray-600 rounded" title="Copier le code">
+                <Icon name={copiedCode===c.registration_code?"Check":"Copy"} size={16} className={copiedCode===c.registration_code?"text-green-400":"text-gray-400"}/>
+              </button>}
+            </div>
+          </div>
+          
+          {c.description&&<p className="text-sm text-gray-400 mb-4 line-clamp-2">{c.description}</p>}
+          
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(c);setForm({name:c.name,slug:c.slug,description:c.description||'',registration_code:c.registration_code||''});setModal(true);}}>Modifier</Button>
+            <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(c.id)}>Supprimer</Button>
+          </div>
+        </Card>)}</div>}
+        
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier le centre':'Nouveau centre'}>
+          <div className="space-y-4">
+            <Input label="Nom du centre *" value={form.name} onChange={e=>{setForm({...form,name:e.target.value,slug:generateSlug(e.target.value)});}} placeholder="Ex: Auto-École Centrale"/>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Code d'inscription</label>
+              <div className="flex gap-2">
+                <input value={form.registration_code} onChange={e=>setForm({...form,registration_code:e.target.value.toUpperCase()})} className="flex-1 px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white font-mono tracking-wider" placeholder="XXXXXX" maxLength={10}/>
+                <Button variant="secondary" icon="RefreshCw" onClick={()=>setForm({...form,registration_code:generateCode()})} title="Générer un nouveau code"/>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">Ce code permet aux apprenants de s'inscrire directement</p>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Slug (URL)</label>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500">/</span>
+                <input value={form.slug} onChange={e=>setForm({...form,slug:e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,'-')})} className="flex-1 px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white" placeholder="auto-ecole-centrale"/>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">Généré automatiquement à partir du nom</p>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
+              <textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Description optionnelle..."/>
+            </div>
+            
+            <div className="flex justify-end gap-3 pt-2">
+              <Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button>
+              <Button onClick={handleSave} loading={saving} disabled={!form.name.trim()}>Enregistrer</Button>
+            </div>
+          </div>
+        </Modal>
       </div>;
     }
 
@@ -7083,6 +7438,24 @@
         if(!check.allowed){alert(check.reason);return;}
         setSaving(true);
         await supabase.from('enrollments').insert({playlist_id:form.playlist_id,learner_id:form.learner_id,enrolled_by:profile?.id});
+        
+        // Envoyer email de confirmation d'inscription
+        const course=playlists.find(p=>p.id===form.playlist_id);
+        const learner=learners.find(l=>l.id===form.learner_id);
+        if(course&&learner){
+          sendEmail({
+            template_code:'enrollment_new',
+            to_email:learner.email,
+            to_user_id:learner.id,
+            variables:{
+              first_name:learner.first_name,
+              course_title:course.title,
+              course_description:course.description||'',
+              center_name:center?.name||'CRPro'
+            }
+          });
+        }
+        
         await load();setModal(false);setForm({playlist_id:'',learner_id:''});setSaving(false);
       };
       
@@ -10747,68 +11120,273 @@
 
     // Emails Page (Admin)
     function EmailsPage(){
-      const{can}=useAuth();
+      const{can,isSuperAdmin,center}=useAuth();
       const[templates,setTemplates]=useState([]);
       const[logs,setLogs]=useState([]);
+      const[learners,setLearners]=useState([]);
       const[loading,setLoading]=useState(true);
       const[tab,setTab]=useState('templates');
       const[editModal,setEditModal]=useState(null);
+      const[previewModal,setPreviewModal]=useState(null);
+      const[sendModal,setSendModal]=useState(null);
       const[saving,setSaving]=useState(false);
+      const[sending,setSending]=useState(false);
+      const[sendForm,setSendForm]=useState({to_email:'',learner_id:'',test_mode:true});
+      const[sendResult,setSendResult]=useState(null);
 
       const load=useCallback(async()=>{
-        const[{data:t},{data:l}]=await Promise.all([
+        const[{data:t},{data:l},{data:lrn}]=await Promise.all([
           supabase.from('email_templates').select('*').order('name'),
-          supabase.from('email_logs').select('*,profiles:recipient_id(first_name,last_name)').order('created_at',{ascending:false}).limit(50)
+          supabase.from('email_logs').select('*,profiles:recipient_id(first_name,last_name)').order('created_at',{ascending:false}).limit(100),
+          supabase.from('profiles').select('id,first_name,last_name,email,center_id').eq('role','learner').order('first_name')
         ]);
-        setTemplates(t||[]);setLogs(l||[]);setLoading(false);
-      },[]);
+        setTemplates(t||[]);setLogs(l||[]);setLearners(isSuperAdmin?lrn||[]:(lrn||[]).filter(x=>x.center_id===center?.id));setLoading(false);
+      },[isSuperAdmin,center?.id]);
       useEffect(()=>{load();},[load]);
 
       const saveTemplate=async()=>{
         setSaving(true);
-        await supabase.from('email_templates').update({subject:editModal.subject,body_html:editModal.body_html,is_active:editModal.is_active}).eq('id',editModal.id);
+        const{error}=await supabase.from('email_templates').update({
+          subject:editModal.subject,
+          body_html:editModal.body_html,
+          is_active:editModal.is_active,
+          description:editModal.description||''
+        }).eq('id',editModal.id);
+        if(error)alert('Erreur: '+error.message);
         await load();setEditModal(null);setSaving(false);
+      };
+      
+      // Envoyer un email
+      const handleSendEmail=async()=>{
+        if(!sendModal)return;
+        const toEmail=sendForm.test_mode?sendForm.to_email:(learners.find(l=>l.id===sendForm.learner_id)?.email);
+        if(!toEmail){alert('Email destinataire requis');return;}
+        
+        setSending(true);setSendResult(null);
+        
+        // Préparer les variables avec des valeurs de test ou réelles
+        const learner=sendForm.test_mode?null:learners.find(l=>l.id===sendForm.learner_id);
+        const variables={
+          first_name:learner?.first_name||'[Prénom]',
+          last_name:learner?.last_name||'[Nom]',
+          center_name:center?.name||'CRPro',
+          course_title:'[Titre du cours]',
+          course_description:'[Description du cours]',
+          score:'85',
+          duration:'2h 30min',
+          progress:'75',
+          days_inactive:'7',
+          pack_name:'[Pack]',
+          start_date:new Date().toLocaleDateString('fr-FR'),
+          end_date:new Date(Date.now()+365*24*60*60*1000).toLocaleDateString('fr-FR'),
+          max_learners:'50',
+          days_remaining:'30',
+          requester_name:'[Demandeur]',
+          message:'[Message]',
+          reset_link:APP_URL+'#reset'
+        };
+        
+        const result=await sendEmail({
+          template_code:sendModal.code,
+          to_email:toEmail,
+          to_user_id:learner?.id,
+          variables
+        });
+        
+        setSendResult(result);
+        if(result.success)await load();
+        setSending(false);
       };
 
       const statusColors={pending:'bg-yellow-500/20 text-yellow-400',sent:'bg-green-500/20 text-green-400',failed:'bg-red-500/20 text-red-400'};
+      const statusLabels={pending:'En attente',sent:'Envoyé',failed:'Échec'};
 
       if(!can('send_emails')&&!can('manage_email_templates'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
 
+      // Stats
+      const sentCount=logs.filter(l=>l.status==='sent').length;
+      const failedCount=logs.filter(l=>l.status==='failed').length;
+      const todayCount=logs.filter(l=>new Date(l.created_at).toDateString()===new Date().toDateString()).length;
+
       return<div>
-        <h1 className="text-2xl font-bold mb-6">Gestion des Emails</h1>
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold">📧 Gestion des Emails</h1>
+            <p className="text-sm text-gray-400">{templates.length} templates • {logs.length} emails envoyés</p>
+          </div>
+          <Button icon="RefreshCw" variant="ghost" onClick={load}>Actualiser</Button>
+        </div>
+        
+        {/* Stats rapides */}
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          <Card className="p-4 text-center">
+            <p className="text-2xl font-bold text-green-400">{sentCount}</p>
+            <p className="text-xs text-gray-400">Envoyés</p>
+          </Card>
+          <Card className="p-4 text-center">
+            <p className="text-2xl font-bold text-red-400">{failedCount}</p>
+            <p className="text-xs text-gray-400">Échecs</p>
+          </Card>
+          <Card className="p-4 text-center">
+            <p className="text-2xl font-bold text-blue-400">{todayCount}</p>
+            <p className="text-xs text-gray-400">Aujourd'hui</p>
+          </Card>
+        </div>
         
         <div className="flex gap-2 mb-6">
-          <Button variant={tab==='templates'?'primary':'secondary'} onClick={()=>setTab('templates')}>Templates</Button>
-          <Button variant={tab==='logs'?'primary':'secondary'} onClick={()=>setTab('logs')}>Historique</Button>
+          <Button variant={tab==='templates'?'primary':'secondary'} icon="FileText" onClick={()=>setTab('templates')}>Templates ({templates.length})</Button>
+          <Button variant={tab==='logs'?'primary':'secondary'} icon="History" onClick={()=>setTab('logs')}>Historique ({logs.length})</Button>
         </div>
 
         {tab==='templates'&&(
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {templates.map(t=>(
-              <Card key={t.id} className={`p-4 ${!t.is_active?'opacity-50':''}`}>
-                <div className="flex items-start justify-between mb-2">
-                  <div><h3 className="font-semibold">{t.name}</h3><p className="text-sm text-gray-400">{t.code}</p></div>
-                  <span className={`px-2 py-1 rounded text-xs ${t.is_active?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>{t.is_active?'Actif':'Inactif'}</span>
-                </div>
-                <p className="text-sm text-gray-300 mb-3 truncate">{t.subject}</p>
-                <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>setEditModal({...t})}>Modifier</Button>
-              </Card>
-            ))}
+          <div className="space-y-4">
+            <Alert type="info">
+              <p className="font-medium">📋 Templates disponibles</p>
+              <p className="text-sm">Ces templates sont utilisés automatiquement par le système. Vous pouvez les personnaliser et envoyer des emails de test.</p>
+            </Alert>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {templates.map(t=>(
+                <Card key={t.id} className={`p-4 ${!t.is_active?'opacity-50 border-gray-600':'border-transparent'} border`}>
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold">{t.name}</h3>
+                        <span className={`px-2 py-0.5 rounded text-xs ${t.is_active?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>
+                          {t.is_active?'Actif':'Inactif'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 font-mono">{t.code}</p>
+                    </div>
+                  </div>
+                  {t.description&&<p className="text-sm text-gray-400 mb-2">{t.description}</p>}
+                  <p className="text-sm text-gray-300 mb-3 truncate">📝 {t.subject}</p>
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" icon="Eye" onClick={()=>setPreviewModal(t)}>Aperçu</Button>
+                    <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>setEditModal({...t})}>Modifier</Button>
+                    {t.is_active&&<Button variant="ghost" size="sm" icon="Send" className="text-indigo-400" onClick={()=>{setSendModal(t);setSendForm({to_email:'',learner_id:'',test_mode:true});setSendResult(null);}}>Envoyer</Button>}
+                  </div>
+                </Card>
+              ))}
+            </div>
           </div>
         )}
 
         {tab==='logs'&&(
-          <Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Destinataire</th><th className="text-left p-4 font-medium text-gray-400">Sujet</th><th className="text-left p-4 font-medium text-gray-400">Statut</th><th className="text-left p-4 font-medium text-gray-400">Date</th></tr></thead><tbody className="divide-y divide-gray-700">{logs.map(l=><tr key={l.id}><td className="p-4"><p className="font-medium">{l.profiles?.first_name} {l.profiles?.last_name}</p><p className="text-sm text-gray-400">{l.recipient_email}</p></td><td className="p-4 text-gray-300">{l.subject}</td><td className="p-4"><span className={`px-2 py-1 rounded text-xs ${statusColors[l.status]}`}>{l.status}</span></td><td className="p-4 text-gray-400">{new Date(l.created_at).toLocaleString('fr-FR')}</td></tr>)}</tbody></table></div></Card>
+          <Card>
+            {logs.length===0?<Empty icon="Mail" title="Aucun email envoyé"/>:
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-750">
+                  <tr>
+                    <th className="text-left p-4 font-medium text-gray-400">Destinataire</th>
+                    <th className="text-left p-4 font-medium text-gray-400">Template</th>
+                    <th className="text-left p-4 font-medium text-gray-400">Sujet</th>
+                    <th className="text-left p-4 font-medium text-gray-400">Statut</th>
+                    <th className="text-left p-4 font-medium text-gray-400">Date</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-700">
+                  {logs.map(l=>(
+                    <tr key={l.id} className="hover:bg-gray-750/50">
+                      <td className="p-4">
+                        <p className="font-medium">{l.profiles?.first_name} {l.profiles?.last_name}</p>
+                        <p className="text-sm text-gray-400">{l.recipient_email}</p>
+                      </td>
+                      <td className="p-4"><span className="text-xs font-mono bg-gray-700 px-2 py-1 rounded">{l.template_code||'custom'}</span></td>
+                      <td className="p-4 text-gray-300 max-w-xs truncate">{l.subject}</td>
+                      <td className="p-4">
+                        <span className={`px-2 py-1 rounded text-xs ${statusColors[l.status]}`}>
+                          {statusLabels[l.status]}
+                        </span>
+                        {l.error_message&&<p className="text-xs text-red-400 mt-1 truncate max-w-xs" title={l.error_message}>⚠️ {l.error_message}</p>}
+                      </td>
+                      <td className="p-4 text-gray-400 text-sm">{new Date(l.created_at).toLocaleString('fr-FR')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>}
+          </Card>
         )}
 
-        <Modal isOpen={!!editModal} onClose={()=>setEditModal(null)} title={`Modifier: ${editModal?.name}`} size="lg">
+        {/* Modal édition */}
+        <Modal isOpen={!!editModal} onClose={()=>setEditModal(null)} title={`Modifier: ${editModal?.name}`} size="xl">
           {editModal&&<div className="space-y-4">
+            <Input label="Description" value={editModal.description||''} onChange={e=>setEditModal({...editModal,description:e.target.value})} placeholder="Description du template"/>
             <Input label="Sujet" value={editModal.subject} onChange={e=>setEditModal({...editModal,subject:e.target.value})}/>
-            <div><label className="block text-sm font-medium text-gray-300 mb-1">Contenu HTML</label><textarea value={editModal.body_html} onChange={e=>setEditModal({...editModal,body_html:e.target.value})} rows={10} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white font-mono text-sm resize-none"/></div>
-            <div className="text-xs text-gray-500">Variables: {editModal.variables?.join(', ')}</div>
-            <Checkbox label="Email actif" checked={editModal.is_active} onChange={v=>setEditModal({...editModal,is_active:v})}/>
-            <div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setEditModal(null)}>Annuler</Button><Button onClick={saveTemplate} loading={saving}>Enregistrer</Button></div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Contenu HTML</label>
+              <textarea value={editModal.body_html} onChange={e=>setEditModal({...editModal,body_html:e.target.value})} rows={15} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white font-mono text-sm resize-y"/>
+            </div>
+            <div className="bg-gray-700/50 rounded-lg p-3">
+              <p className="text-xs text-gray-400 mb-1">Variables disponibles :</p>
+              <p className="text-xs font-mono text-indigo-400">{(editModal.variables||[]).map(v=>`{{${v}}}`).join(', ')}</p>
+            </div>
+            <Checkbox label="Template actif" checked={editModal.is_active} onChange={v=>setEditModal({...editModal,is_active:v})}/>
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={()=>setEditModal(null)}>Annuler</Button>
+              <Button onClick={saveTemplate} loading={saving}>Enregistrer</Button>
+            </div>
+          </div>}
+        </Modal>
+        
+        {/* Modal aperçu */}
+        <Modal isOpen={!!previewModal} onClose={()=>setPreviewModal(null)} title={`Aperçu: ${previewModal?.name}`} size="xl">
+          {previewModal&&<div>
+            <div className="bg-gray-700/50 rounded-lg p-3 mb-4">
+              <p className="text-sm"><strong>Sujet :</strong> {previewModal.subject}</p>
+            </div>
+            <div className="bg-white rounded-lg overflow-hidden" style={{maxHeight:'500px',overflowY:'auto'}}>
+              <iframe 
+                srcDoc={previewModal.body_html.replace(/\{\{(\w+)\}\}/g,'[$1]')} 
+                className="w-full h-96 border-0"
+                title="Aperçu email"
+              />
+            </div>
+          </div>}
+        </Modal>
+        
+        {/* Modal envoi */}
+        <Modal isOpen={!!sendModal} onClose={()=>setSendModal(null)} title={`Envoyer: ${sendModal?.name}`}>
+          {sendModal&&<div className="space-y-4">
+            <Alert type="info">
+              <p className="text-sm">Les variables seront remplacées par des valeurs de test ou les données réelles de l'apprenant.</p>
+            </Alert>
+            
+            <div className="flex gap-4">
+              <Checkbox label="Mode test (email libre)" checked={sendForm.test_mode} onChange={v=>setSendForm({...sendForm,test_mode:v})}/>
+            </div>
+            
+            {sendForm.test_mode?(
+              <Input 
+                label="Email de test" 
+                type="email" 
+                value={sendForm.to_email} 
+                onChange={e=>setSendForm({...sendForm,to_email:e.target.value})}
+                placeholder="votre@email.com"
+              />
+            ):(
+              <Select 
+                label="Apprenant" 
+                value={sendForm.learner_id} 
+                onChange={e=>setSendForm({...sendForm,learner_id:e.target.value})}
+                options={[{value:'',label:'Sélectionner...'},...learners.map(l=>({value:l.id,label:`${l.first_name} ${l.last_name} (${l.email})`}))]}
+              />
+            )}
+            
+            {sendResult&&(
+              <Alert type={sendResult.success?'success':'error'}>
+                {sendResult.success?'✅ Email envoyé avec succès !':'❌ Erreur: '+(sendResult.error||'Échec de l\'envoi')}
+              </Alert>
+            )}
+            
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={()=>setSendModal(null)}>Fermer</Button>
+              <Button icon="Send" onClick={handleSendEmail} loading={sending} disabled={sendForm.test_mode?!sendForm.to_email:!sendForm.learner_id}>
+                Envoyer
+              </Button>
+            </div>
           </div>}
         </Modal>
       </div>;
