@@ -61,7 +61,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '6.8.17';
+    const APP_VERSION = '7.4.0';
     // =======================================
 
     // Masquer l'écran de chargement une fois React prêt
@@ -5657,6 +5657,9 @@
       const[themes,setThemes]=useState([]);
       const[subThemes,setSubThemes]=useState([]);
       
+      // Tags prédéfinis
+      const[predefinedTags,setPredefinedTags]=useState([]);
+      
       // Stats contenus par catégorie
       const[contentStats,setContentStats]=useState({});
       
@@ -5664,21 +5667,40 @@
       const[expandedCats,setExpandedCats]=useState({});
       const[expandedThemes,setExpandedThemes]=useState({});
       const[quickAddValue,setQuickAddValue]=useState('');
-      const[editModal,setEditModal]=useState(null);
-      const[editForm,setEditForm]=useState({name:'',description:'',color:'#6366f1'});
+      const[editModal,setEditModal]=useState(null); // {type:'category'|'theme'|'subtheme', item:{...}}
+      const[editForm,setEditForm]=useState({name:'',description:'',color:'#6366f1',tags:[]});
+      const[tagInput,setTagInput]=useState('');
+      
+      // Recherche
+      const[searchQuery,setSearchQuery]=useState('');
+      const[searchResults,setSearchResults]=useState({categories:[],themes:[],subThemes:[]});
+      
+      // Modal gestion tags
+      const[tagsModal,setTagsModal]=useState(false);
+      const[newTagForm,setNewTagForm]=useState({name:'',color:'#6b7280',description:''});
+      
+      // Import Excel
+      const[importModal,setImportModal]=useState(false);
+      const[importData,setImportData]=useState(null);
+      const[importPreview,setImportPreview]=useState([]);
+      const[importing,setImporting]=useState(false);
+      const[importStats,setImportStats]=useState(null);
+      const[importMode,setImportMode]=useState('merge');
+      const fileInputRef=useRef(null);
       
       // Chargement
       const load=useCallback(async()=>{
         try{
-          // Charger la taxonomie
-          const{data:cats}=await supabase.from('content_categories').select('*').order('position').order('name');
+          const[{data:cats},{data:ths},{data:sths},{data:tags}]=await Promise.all([
+            supabase.from('content_categories').select('*').order('position').order('name'),
+            supabase.from('content_themes').select('*').order('position').order('name'),
+            supabase.from('content_sub_themes').select('*').order('position').order('name'),
+            supabase.from('content_tags').select('*').order('usage_count',{ascending:false}).order('name')
+          ]);
           setCategories(cats||[]);
-          
-          const{data:ths}=await supabase.from('content_themes').select('*').order('position').order('name');
           setThemes(ths||[]);
-          
-          const{data:sths}=await supabase.from('content_sub_themes').select('*').order('position').order('name');
           setSubThemes(sths||[]);
+          setPredefinedTags(tags||[]);
           
           // Compter les contenus par catégorie
           const stats={};
@@ -5721,19 +5743,110 @@
                (contentStats.paths?.[catId]||0);
       };
       
-      // CRUD Catégories
+      // ============ RECHERCHE EN TEMPS RÉEL ============
+      useEffect(()=>{
+        if(!searchQuery.trim()){
+          setSearchResults({categories:[],themes:[],subThemes:[]});
+          return;
+        }
+        
+        const q=searchQuery.toLowerCase().trim();
+        const matchedCatIds=new Set();
+        const matchedThemeIds=new Set();
+        
+        // Chercher dans les catégories
+        const matchedCats=categories.filter(c=>{
+          const nameMatch=c.name.toLowerCase().includes(q);
+          const descMatch=(c.description||'').toLowerCase().includes(q);
+          const tagsMatch=(c.tags||[]).some(t=>t.toLowerCase().includes(q));
+          return nameMatch||descMatch||tagsMatch;
+        });
+        matchedCats.forEach(c=>matchedCatIds.add(c.id));
+        
+        // Chercher dans les thèmes
+        const matchedThemes=themes.filter(t=>{
+          const nameMatch=t.name.toLowerCase().includes(q);
+          const descMatch=(t.description||'').toLowerCase().includes(q);
+          const tagsMatch=(t.tags||[]).some(tag=>tag.toLowerCase().includes(q));
+          return nameMatch||descMatch||tagsMatch;
+        });
+        matchedThemes.forEach(t=>{
+          matchedThemeIds.add(t.id);
+          matchedCatIds.add(t.category_id);
+        });
+        
+        // Chercher dans les sous-thèmes
+        const matchedSubThemes=subThemes.filter(st=>{
+          const nameMatch=st.name.toLowerCase().includes(q);
+          const descMatch=(st.description||'').toLowerCase().includes(q);
+          const tagsMatch=(st.tags||[]).some(tag=>tag.toLowerCase().includes(q));
+          return nameMatch||descMatch||tagsMatch;
+        });
+        matchedSubThemes.forEach(st=>{
+          matchedThemeIds.add(st.theme_id);
+          const theme=themes.find(t=>t.id===st.theme_id);
+          if(theme)matchedCatIds.add(theme.category_id);
+        });
+        
+        setSearchResults({
+          categories:Array.from(matchedCatIds),
+          themes:Array.from(matchedThemeIds),
+          subThemes:matchedSubThemes.map(st=>st.id)
+        });
+        
+        // Auto-expansion
+        const newExpandedCats={};
+        const newExpandedThemes={};
+        matchedCatIds.forEach(id=>{newExpandedCats[id]=true;});
+        matchedThemeIds.forEach(id=>{newExpandedThemes[id]=true;});
+        setExpandedCats(prev=>({...prev,...newExpandedCats}));
+        setExpandedThemes(prev=>({...prev,...newExpandedThemes}));
+        
+      },[searchQuery,categories,themes,subThemes]);
+      
+      const isHighlighted=(type,id)=>{
+        if(!searchQuery.trim())return false;
+        if(type==='category')return searchResults.categories.includes(id);
+        if(type==='theme')return searchResults.themes.includes(id);
+        if(type==='subtheme')return searchResults.subThemes.includes(id);
+        return false;
+      };
+      
+      const shouldShowCategory=(cat)=>{
+        if(!searchQuery.trim())return true;
+        return searchResults.categories.includes(cat.id);
+      };
+      
+      const shouldShowTheme=(theme)=>{
+        if(!searchQuery.trim())return true;
+        return searchResults.themes.includes(theme.id);
+      };
+      
+      // ============ CRUD CATÉGORIES ============
       const addCategory=async(name)=>{
         if(!name.trim())return;
         setSaving(true);
-        await supabase.from('content_categories').insert({name:name.trim(),position:categories.length,color:'#6366f1'});
+        await supabase.from('content_categories').insert({name:name.trim(),position:categories.length,color:'#6366f1',tags:[]});
         await load();
         setSaving(false);
       };
       
-      const updateCategory=async()=>{
+      const updateItem=async()=>{
         if(!editForm.name.trim()||!editModal)return;
         setSaving(true);
-        await supabase.from('content_categories').update({name:editForm.name,description:editForm.description,color:editForm.color}).eq('id',editModal.id);
+        
+        const{type,item}=editModal;
+        const updateData={name:editForm.name,description:editForm.description,tags:editForm.tags};
+        
+        if(type==='category'){
+          updateData.color=editForm.color;
+          await supabase.from('content_categories').update(updateData).eq('id',item.id);
+        }else if(type==='theme'){
+          await supabase.from('content_themes').update(updateData).eq('id',item.id);
+        }else if(type==='subtheme'){
+          await supabase.from('content_sub_themes').update(updateData).eq('id',item.id);
+        }
+        
         setEditModal(null);
         await load();
         setSaving(false);
@@ -5753,13 +5866,13 @@
         if(!name.trim())return;
         setSaving(true);
         const catThemes=getThemesForCategory(categoryId);
-        await supabase.from('content_themes').insert({name:name.trim(),category_id:categoryId,position:catThemes.length});
+        await supabase.from('content_themes').insert({name:name.trim(),category_id:categoryId,position:catThemes.length,tags:[]});
         await load();
         setSaving(false);
       };
       
       const deleteTheme=async(id)=>{
-        if(!confirm('Supprimer ce thème ?'))return;
+        if(!confirm('Supprimer ce thème et tous ses sous-thèmes ?'))return;
         await supabase.from('content_themes').delete().eq('id',id);
         load();
       };
@@ -5769,7 +5882,7 @@
         if(!name.trim())return;
         setSaving(true);
         const themeSubs=getSubThemesForTheme(themeId);
-        await supabase.from('content_sub_themes').insert({name:name.trim(),theme_id:themeId,position:themeSubs.length});
+        await supabase.from('content_sub_themes').insert({name:name.trim(),theme_id:themeId,position:themeSubs.length,tags:[]});
         await load();
         setSaving(false);
       };
@@ -5781,11 +5894,320 @@
       };
       
       // Ouvrir modal édition
-      const openEditModal=(cat)=>{
-        setEditForm({name:cat.name,description:cat.description||'',color:cat.color||'#6366f1'});
-        setEditModal(cat);
+      const openEditModal=(type,item)=>{
+        setEditForm({
+          name:item.name,
+          description:item.description||'',
+          color:item.color||'#6366f1',
+          tags:item.tags||[]
+        });
+        setTagInput('');
+        setEditModal({type,item});
       };
       
+      // ============ GESTION TAGS ============
+      const addTagToForm=(tagName)=>{
+        if(!tagName.trim())return;
+        const tag=tagName.trim();
+        if(!editForm.tags.includes(tag)){
+          setEditForm({...editForm,tags:[...editForm.tags,tag]});
+        }
+        setTagInput('');
+      };
+      
+      const removeTagFromForm=(tagName)=>{
+        setEditForm({...editForm,tags:editForm.tags.filter(t=>t!==tagName)});
+      };
+      
+      const createPredefinedTag=async()=>{
+        if(!newTagForm.name.trim())return;
+        setSaving(true);
+        await supabase.from('content_tags').insert({name:newTagForm.name.trim(),color:newTagForm.color,description:newTagForm.description});
+        setNewTagForm({name:'',color:'#6b7280',description:''});
+        await load();
+        setSaving(false);
+      };
+      
+      const deletePredefinedTag=async(id)=>{
+        if(!confirm('Supprimer ce tag prédéfini ?'))return;
+        await supabase.from('content_tags').delete().eq('id',id);
+        load();
+      };
+      
+      // ============ EXPORT EXCEL ============
+      const exportToExcel=()=>{
+        if(!window.XLSX){alert('Bibliothèque Excel non chargée.');return;}
+        
+        const rows=[];
+        categories.forEach(cat=>{
+          const catThemes=getThemesForCategory(cat.id);
+          if(catThemes.length===0){
+            rows.push({
+              'Catégorie':cat.name,'Couleur':cat.color||'#6366f1','Description':cat.description||'',
+              'Tags Catégorie':(cat.tags||[]).join(', '),'Thème':'','Tags Thème':'','Sous-thème':'','Tags Sous-thème':''
+            });
+          }else{
+            catThemes.forEach(theme=>{
+              const themeSubs=getSubThemesForTheme(theme.id);
+              if(themeSubs.length===0){
+                rows.push({
+                  'Catégorie':cat.name,'Couleur':cat.color||'#6366f1','Description':cat.description||'',
+                  'Tags Catégorie':(cat.tags||[]).join(', '),'Thème':theme.name,'Tags Thème':(theme.tags||[]).join(', '),'Sous-thème':'','Tags Sous-thème':''
+                });
+              }else{
+                themeSubs.forEach(st=>{
+                  rows.push({
+                    'Catégorie':cat.name,'Couleur':cat.color||'#6366f1','Description':cat.description||'',
+                    'Tags Catégorie':(cat.tags||[]).join(', '),'Thème':theme.name,'Tags Thème':(theme.tags||[]).join(', '),
+                    'Sous-thème':st.name,'Tags Sous-thème':(st.tags||[]).join(', ')
+                  });
+                });
+              }
+            });
+          }
+        });
+        
+        if(rows.length===0)rows.push({'Catégorie':'','Couleur':'#6366f1','Description':'','Tags Catégorie':'','Thème':'','Tags Thème':'','Sous-thème':'','Tags Sous-thème':''});
+        
+        const ws=XLSX.utils.json_to_sheet(rows);
+        ws['!cols']=[{wch:20},{wch:10},{wch:30},{wch:25},{wch:20},{wch:25},{wch:20},{wch:25}];
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,ws,'Catégories');
+        XLSX.writeFile(wb,`categories_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+      };
+      
+      // ============ TEMPLATE EXCEL ============
+      const downloadTemplate=()=>{
+        if(!window.XLSX){alert('Bibliothèque Excel non chargée.');return;}
+        
+        const examples=[
+          {'Catégorie':'Sécurité routière','Couleur':'#ef4444','Description':'Règles de sécurité','Tags Catégorie':'Obligatoire, Examen','Thème':'Signalisation','Tags Thème':'Théorie','Sous-thème':'Panneaux de danger','Tags Sous-thème':'Débutant'},
+          {'Catégorie':'Sécurité routière','Couleur':'#ef4444','Description':'Règles de sécurité','Tags Catégorie':'Obligatoire, Examen','Thème':'Signalisation','Tags Thème':'Théorie','Sous-thème':'Panneaux d\'obligation','Tags Sous-thème':'Débutant'},
+          {'Catégorie':'Sécurité routière','Couleur':'#ef4444','Description':'Règles de sécurité','Tags Catégorie':'Obligatoire, Examen','Thème':'Priorités','Tags Thème':'Pratique','Sous-thème':'','Tags Sous-thème':''},
+          {'Catégorie':'Code de la route','Couleur':'#3b82f6','Description':'Réglementation','Tags Catégorie':'Obligatoire','Thème':'Vitesse','Tags Thème':'Théorie, Examen','Sous-thème':'En agglomération','Tags Sous-thème':''},
+          {'Catégorie':'Éco-conduite','Couleur':'#22c55e','Description':'Conduite économique','Tags Catégorie':'Optionnel, Nouveau','Thème':'','Tags Thème':'','Sous-thème':'','Tags Sous-thème':''},
+        ];
+        
+        const ws=XLSX.utils.json_to_sheet(examples);
+        ws['!cols']=[{wch:20},{wch:10},{wch:25},{wch:25},{wch:18},{wch:20},{wch:20},{wch:20}];
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,ws,'Catégories');
+        
+        const instr=[
+          ['INSTRUCTIONS D\'IMPORT - CRPro LMS'],[''],
+          ['Colonnes obligatoires: Catégorie'],
+          ['Colonnes optionnelles: Couleur, Description, Tags Catégorie, Thème, Tags Thème, Sous-thème, Tags Sous-thème'],[''],
+          ['FORMAT DES TAGS:'],
+          ['- Séparez les tags par des virgules: "Tag1, Tag2, Tag3"'],
+          ['- Les tags peuvent être existants ou nouveaux (ils seront créés automatiquement)'],[''],
+          ['COULEURS (format hexadécimal):'],
+          ['Rouge: #ef4444','Orange: #f59e0b','Vert: #22c55e'],
+          ['Bleu: #3b82f6','Indigo: #6366f1','Violet: #8b5cf6'],
+        ];
+        const wsInstr=XLSX.utils.aoa_to_sheet(instr);
+        XLSX.utils.book_append_sheet(wb,wsInstr,'Instructions');
+        
+        XLSX.writeFile(wb,'template_categories_tags.xlsx');
+      };
+      
+      // ============ IMPORT EXCEL ============
+      const handleFileSelect=(e)=>{
+        const file=e.target.files?.[0];
+        if(!file||!window.XLSX)return;
+        
+        const reader=new FileReader();
+        reader.onload=(evt)=>{
+          try{
+            const data=new Uint8Array(evt.target.result);
+            const workbook=XLSX.read(data,{type:'array'});
+            let sheetName=workbook.SheetNames.find(n=>n.toLowerCase().includes('catég')||n.toLowerCase().includes('categ'))||workbook.SheetNames[0];
+            const json=XLSX.utils.sheet_to_json(workbook.Sheets[sheetName],{defval:''});
+            
+            if(!json.length){alert('Fichier vide.');return;}
+            
+            // Normaliser
+            const normalized=json.map(row=>{
+              const n={};
+              Object.keys(row).forEach(key=>{
+                const k=key.toLowerCase().trim();
+                if(k.includes('catégorie')||k==='categorie'||k==='category')n.category=String(row[key]).trim();
+                else if(k==='couleur'||k==='color')n.color=String(row[key]).trim();
+                else if(k==='description')n.description=String(row[key]).trim();
+                else if(k==='tags catégorie'||k==='tags categorie'||k==='category tags')n.categoryTags=String(row[key]).trim();
+                else if(k==='thème'||k==='theme')n.theme=String(row[key]).trim();
+                else if(k==='tags thème'||k==='tags theme'||k==='theme tags')n.themeTags=String(row[key]).trim();
+                else if(k.includes('sous-thème')||k.includes('sous_theme')||k==='subtheme')n.subTheme=String(row[key]).trim();
+                else if(k.includes('tags sous')||k==='subtheme tags')n.subThemeTags=String(row[key]).trim();
+              });
+              return n;
+            }).filter(r=>r.category);
+            
+            if(!normalized.length){alert('Aucune catégorie trouvée.');return;}
+            
+            // Construire structure
+            const structure={};
+            normalized.forEach(row=>{
+              const catName=row.category;
+              if(!structure[catName]){
+                structure[catName]={
+                  name:catName,
+                  color:row.color?.startsWith('#')?row.color:'#6366f1',
+                  description:row.description||'',
+                  tags:row.categoryTags?row.categoryTags.split(',').map(t=>t.trim()).filter(Boolean):[],
+                  themes:{}
+                };
+              }
+              if(row.theme){
+                if(!structure[catName].themes[row.theme]){
+                  structure[catName].themes[row.theme]={
+                    name:row.theme,
+                    tags:row.themeTags?row.themeTags.split(',').map(t=>t.trim()).filter(Boolean):[],
+                    subThemes:{}
+                  };
+                }
+                if(row.subTheme){
+                  if(!structure[catName].themes[row.theme].subThemes[row.subTheme]){
+                    structure[catName].themes[row.theme].subThemes[row.subTheme]={
+                      name:row.subTheme,
+                      tags:row.subThemeTags?row.subThemeTags.split(',').map(t=>t.trim()).filter(Boolean):[]
+                    };
+                  }
+                }
+              }
+            });
+            
+            const preview=Object.values(structure).map(cat=>({
+              ...cat,
+              themes:Object.values(cat.themes).map(th=>({
+                ...th,
+                subThemes:Object.values(th.subThemes)
+              }))
+            }));
+            
+            // Collecter tous les tags uniques
+            const allTags=new Set();
+            preview.forEach(c=>{
+              (c.tags||[]).forEach(t=>allTags.add(t));
+              c.themes.forEach(th=>{
+                (th.tags||[]).forEach(t=>allTags.add(t));
+                th.subThemes.forEach(st=>(st.tags||[]).forEach(t=>allTags.add(t)));
+              });
+            });
+            
+            setImportData(normalized);
+            setImportPreview(preview);
+            setImportStats({
+              categories:preview.length,
+              themes:preview.reduce((s,c)=>s+c.themes.length,0),
+              subThemes:preview.reduce((s,c)=>s+c.themes.reduce((s2,t)=>s2+t.subThemes.length,0),0),
+              tags:allTags.size
+            });
+            setImportModal(true);
+            
+          }catch(err){alert('Erreur: '+err.message);}
+        };
+        reader.readAsArrayBuffer(file);
+        e.target.value='';
+      };
+      
+      const executeImport=async()=>{
+        if(!importPreview.length)return;
+        setImporting(true);
+        
+        try{
+          // Collecter et créer les tags manquants
+          const allTags=new Set();
+          importPreview.forEach(c=>{
+            (c.tags||[]).forEach(t=>allTags.add(t));
+            c.themes.forEach(th=>{
+              (th.tags||[]).forEach(t=>allTags.add(t));
+              th.subThemes.forEach(st=>(st.tags||[]).forEach(t=>allTags.add(t)));
+            });
+          });
+          
+          const existingTagNames=predefinedTags.map(t=>t.name.toLowerCase());
+          const newTags=Array.from(allTags).filter(t=>!existingTagNames.includes(t.toLowerCase()));
+          
+          if(newTags.length>0){
+            const colors=['#6b7280','#ef4444','#f59e0b','#22c55e','#3b82f6','#8b5cf6','#ec4899'];
+            for(let i=0;i<newTags.length;i++){
+              await supabase.from('content_tags').insert({name:newTags[i],color:colors[i%colors.length]}).select();
+            }
+          }
+          
+          if(importMode==='replace'){
+            await supabase.from('content_sub_themes').delete().neq('id','00000000-0000-0000-0000-000000000000');
+            await supabase.from('content_themes').delete().neq('id','00000000-0000-0000-0000-000000000000');
+            await supabase.from('content_categories').delete().neq('id','00000000-0000-0000-0000-000000000000');
+          }
+          
+          for(let i=0;i<importPreview.length;i++){
+            const cat=importPreview[i];
+            let categoryId;
+            
+            if(importMode==='merge'){
+              const{data:existing}=await supabase.from('content_categories').select('id').eq('name',cat.name).single();
+              if(existing){
+                await supabase.from('content_categories').update({color:cat.color,description:cat.description,tags:cat.tags}).eq('id',existing.id);
+                categoryId=existing.id;
+              }else{
+                const{data:newCat}=await supabase.from('content_categories').insert({name:cat.name,color:cat.color,description:cat.description,position:i,tags:cat.tags}).select().single();
+                categoryId=newCat?.id;
+              }
+            }else{
+              const{data:newCat}=await supabase.from('content_categories').insert({name:cat.name,color:cat.color,description:cat.description,position:i,tags:cat.tags}).select().single();
+              categoryId=newCat?.id;
+            }
+            
+            if(!categoryId)continue;
+            
+            for(let j=0;j<cat.themes.length;j++){
+              const theme=cat.themes[j];
+              let themeId;
+              
+              if(importMode==='merge'){
+                const{data:existing}=await supabase.from('content_themes').select('id').eq('category_id',categoryId).eq('name',theme.name).single();
+                if(existing){
+                  await supabase.from('content_themes').update({tags:theme.tags}).eq('id',existing.id);
+                  themeId=existing.id;
+                }else{
+                  const{data:newTh}=await supabase.from('content_themes').insert({name:theme.name,category_id:categoryId,position:j,tags:theme.tags}).select().single();
+                  themeId=newTh?.id;
+                }
+              }else{
+                const{data:newTh}=await supabase.from('content_themes').insert({name:theme.name,category_id:categoryId,position:j,tags:theme.tags}).select().single();
+                themeId=newTh?.id;
+              }
+              
+              if(!themeId)continue;
+              
+              for(let k=0;k<theme.subThemes.length;k++){
+                const st=theme.subThemes[k];
+                if(importMode==='merge'){
+                  const{data:existing}=await supabase.from('content_sub_themes').select('id').eq('theme_id',themeId).eq('name',st.name).single();
+                  if(!existing){
+                    await supabase.from('content_sub_themes').insert({name:st.name,theme_id:themeId,position:k,tags:st.tags});
+                  }else{
+                    await supabase.from('content_sub_themes').update({tags:st.tags}).eq('id',existing.id);
+                  }
+                }else{
+                  await supabase.from('content_sub_themes').insert({name:st.name,theme_id:themeId,position:k,tags:st.tags});
+                }
+              }
+            }
+          }
+          
+          await load();
+          setImportModal(false);
+          setImportData(null);
+          setImportPreview([]);
+          setImportStats(null);
+          
+        }catch(err){alert('Erreur: '+err.message);}
+        setImporting(false);
+      };
+      
+      // ============ RENDER ============
       if(!can('manage_videos')&&!isSuperAdmin)return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
       
@@ -5795,19 +6217,65 @@
                          Object.values(contentStats.courses||{}).reduce((a,b)=>a+b,0)+
                          Object.values(contentStats.paths||{}).reduce((a,b)=>a+b,0);
       
+      const filteredCategories=searchQuery.trim()?categories.filter(c=>shouldShowCategory(c)):categories;
+      
+      // Composant Tag
+      const TagBadge=({name,color,onRemove,small})=>(
+        <span className={`inline-flex items-center gap-1 ${small?'px-1.5 py-0.5 text-xs':'px-2 py-1 text-xs'} rounded-full`} style={{backgroundColor:color||'#6b7280',color:'white'}}>
+          {name}
+          {onRemove&&<button onClick={onRemove} className="hover:bg-white/20 rounded-full p-0.5"><Icon name="X" size={small?10:12}/></button>}
+        </span>
+      );
+      
       return<div>
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl font-bold">Catégories</h1>
-            <p className="text-sm text-gray-400">Organisez vos contenus avec des catégories, thèmes et sous-thèmes</p>
+            <p className="text-sm text-gray-400">Organisez vos contenus avec catégories, thèmes, sous-thèmes et tags</p>
           </div>
-          <div className="flex gap-4 text-sm">
-            <div className="text-center"><p className="text-2xl font-bold text-indigo-400">{categories.length}</p><p className="text-gray-400">Catégories</p></div>
-            <div className="text-center"><p className="text-2xl font-bold text-purple-400">{themes.length}</p><p className="text-gray-400">Thèmes</p></div>
-            <div className="text-center"><p className="text-2xl font-bold text-cyan-400">{subThemes.length}</p><p className="text-gray-400">Sous-thèmes</p></div>
-            <div className="text-center"><p className="text-2xl font-bold text-green-400">{totalContents}</p><p className="text-gray-400">Contenus classés</p></div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" icon="Tags" onClick={()=>setTagsModal(true)}>Gérer les tags</Button>
+            <Button variant="secondary" icon="FileSpreadsheet" onClick={downloadTemplate}>Template</Button>
+            <Button variant="secondary" icon="Upload" onClick={()=>fileInputRef.current?.click()}>Importer</Button>
+            <Button variant="secondary" icon="Download" onClick={exportToExcel} disabled={categories.length===0}>Exporter</Button>
+            <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleFileSelect} className="hidden"/>
           </div>
         </div>
+        
+        {/* Stats */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
+          <Card className="p-3 text-center"><p className="text-xl font-bold text-indigo-400">{categories.length}</p><p className="text-xs text-gray-400">Catégories</p></Card>
+          <Card className="p-3 text-center"><p className="text-xl font-bold text-purple-400">{themes.length}</p><p className="text-xs text-gray-400">Thèmes</p></Card>
+          <Card className="p-3 text-center"><p className="text-xl font-bold text-cyan-400">{subThemes.length}</p><p className="text-xs text-gray-400">Sous-thèmes</p></Card>
+          <Card className="p-3 text-center"><p className="text-xl font-bold text-amber-400">{predefinedTags.length}</p><p className="text-xs text-gray-400">Tags</p></Card>
+          <Card className="p-3 text-center"><p className="text-xl font-bold text-green-400">{totalContents}</p><p className="text-xs text-gray-400">Contenus</p></Card>
+        </div>
+        
+        {/* Barre de recherche */}
+        <Card className="p-4 mb-4">
+          <div className="flex gap-3 items-center">
+            <div className="relative flex-1">
+              <Icon name="Search" size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+              <input 
+                type="text" 
+                placeholder="Rechercher par nom, description ou tag..." 
+                value={searchQuery}
+                onChange={e=>setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-indigo-500"
+              />
+              {searchQuery&&(
+                <button onClick={()=>setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
+                  <Icon name="X" size={16}/>
+                </button>
+              )}
+            </div>
+            {searchQuery&&(
+              <p className="text-sm text-gray-400">
+                {filteredCategories.length} catégorie(s) • {searchResults.themes.length} thème(s) • {searchResults.subThemes.length} sous-thème(s)
+              </p>
+            )}
+          </div>
+        </Card>
         
         <Card className="p-6">
           {/* Ajouter catégorie */}
@@ -5816,66 +6284,98 @@
             <Button icon="Plus" onClick={()=>{if(quickAddValue.trim()){addCategory(quickAddValue);setQuickAddValue('');}}} loading={saving}>Ajouter</Button>
           </div>
           
-          {categories.length===0?<Empty icon="FolderTree" title="Aucune catégorie" desc="Créez des catégories pour organiser vos vidéos, SCORM, quiz, cours et parcours."/>:(
+          {filteredCategories.length===0?(
+            <Empty icon="FolderTree" title={searchQuery?"Aucun résultat":"Aucune catégorie"} desc={searchQuery?"Modifiez votre recherche":"Créez ou importez des catégories."}/>
+          ):(
             <div className="space-y-3">
-              {categories.map(cat=>{
-                const catThemes=getThemesForCategory(cat.id);
+              {filteredCategories.map(cat=>{
+                const catThemes=getThemesForCategory(cat.id).filter(t=>shouldShowTheme(t));
+                const allCatThemes=getThemesForCategory(cat.id);
                 const isExpanded=expandedCats[cat.id];
-                const contentCount=getContentCount(cat.id);
+                const highlighted=isHighlighted('category',cat.id);
                 
-                return<div key={cat.id} className="border border-gray-700 rounded-lg overflow-hidden">
-                  {/* Header catégorie */}
+                return<div key={cat.id} className={`border rounded-lg overflow-hidden ${highlighted?'border-indigo-500 ring-1 ring-indigo-500':'border-gray-700'}`}>
                   <div className="flex items-center gap-3 p-4 bg-gray-800 hover:bg-gray-750 cursor-pointer" onClick={()=>setExpandedCats({...expandedCats,[cat.id]:!isExpanded})}>
                     <Icon name={isExpanded?'ChevronDown':'ChevronRight'} size={20} className="text-gray-400"/>
                     <div className="w-4 h-4 rounded-full shrink-0" style={{backgroundColor:cat.color||'#6366f1'}}/>
                     <span className="font-semibold flex-1">{cat.name}</span>
                     
-                    {/* Stats par type */}
-                    <div className="flex gap-3 text-xs text-gray-400">
-                      {contentStats.videos?.[cat.id]>0&&<span title="Vidéos">🎬 {contentStats.videos[cat.id]}</span>}
-                      {contentStats.scorm?.[cat.id]>0&&<span title="SCORM">📦 {contentStats.scorm[cat.id]}</span>}
-                      {contentStats.quizzes?.[cat.id]>0&&<span title="Quiz">❓ {contentStats.quizzes[cat.id]}</span>}
-                      {contentStats.courses?.[cat.id]>0&&<span title="Cours">📚 {contentStats.courses[cat.id]}</span>}
-                      {contentStats.paths?.[cat.id]>0&&<span title="Parcours">🛤️ {contentStats.paths[cat.id]}</span>}
+                    {/* Tags */}
+                    {(cat.tags||[]).length>0&&(
+                      <div className="flex gap-1 flex-wrap max-w-xs">
+                        {cat.tags.slice(0,3).map(t=>{
+                          const tagDef=predefinedTags.find(pt=>pt.name===t);
+                          return<TagBadge key={t} name={t} color={tagDef?.color} small/>;
+                        })}
+                        {cat.tags.length>3&&<span className="text-xs text-gray-400">+{cat.tags.length-3}</span>}
+                      </div>
+                    )}
+                    
+                    {/* Stats contenus */}
+                    <div className="flex gap-2 text-xs text-gray-400">
+                      {contentStats.videos?.[cat.id]>0&&<span title="Vidéos">🎬{contentStats.videos[cat.id]}</span>}
+                      {contentStats.scorm?.[cat.id]>0&&<span title="SCORM">📦{contentStats.scorm[cat.id]}</span>}
+                      {contentStats.quizzes?.[cat.id]>0&&<span title="Quiz">❓{contentStats.quizzes[cat.id]}</span>}
+                      {contentStats.courses?.[cat.id]>0&&<span title="Cours">📚{contentStats.courses[cat.id]}</span>}
+                      {contentStats.paths?.[cat.id]>0&&<span title="Parcours">🛤️{contentStats.paths[cat.id]}</span>}
                     </div>
                     
-                    <span className="text-sm text-gray-500">{catThemes.length} thème(s)</span>
-                    <button onClick={e=>{e.stopPropagation();openEditModal(cat);}} className="p-2 hover:bg-indigo-500/20 rounded" title="Modifier"><Icon name="Edit2" size={16} className="text-indigo-400"/></button>
-                    <button onClick={e=>{e.stopPropagation();deleteCategory(cat.id);}} className="p-2 hover:bg-red-500/20 rounded" title="Supprimer"><Icon name="Trash2" size={16} className="text-red-400"/></button>
+                    <span className="text-sm text-gray-500">{allCatThemes.length} thème(s)</span>
+                    <button onClick={e=>{e.stopPropagation();openEditModal('category',cat);}} className="p-2 hover:bg-indigo-500/20 rounded"><Icon name="Edit2" size={16} className="text-indigo-400"/></button>
+                    <button onClick={e=>{e.stopPropagation();deleteCategory(cat.id);}} className="p-2 hover:bg-red-500/20 rounded"><Icon name="Trash2" size={16} className="text-red-400"/></button>
                   </div>
                   
-                  {/* Thèmes */}
                   {isExpanded&&(
                     <div className="p-4 pl-12 space-y-3 bg-gray-800/50 border-t border-gray-700">
-                      {catThemes.length===0&&<p className="text-sm text-gray-500">Aucun thème dans cette catégorie</p>}
+                      {catThemes.length===0&&!searchQuery&&<p className="text-sm text-gray-500">Aucun thème</p>}
+                      {catThemes.length===0&&searchQuery&&<p className="text-sm text-gray-500">Aucun thème correspondant</p>}
                       
                       {catThemes.map(theme=>{
                         const themeSubs=getSubThemesForTheme(theme.id);
                         const themeExpanded=expandedThemes[theme.id];
+                        const themeHighlighted=isHighlighted('theme',theme.id);
                         
-                        return<div key={theme.id} className="border border-gray-600 rounded-lg overflow-hidden">
+                        return<div key={theme.id} className={`border rounded-lg overflow-hidden ${themeHighlighted?'border-purple-500':'border-gray-600'}`}>
                           <div className="flex items-center gap-2 p-3 bg-gray-700 hover:bg-gray-650 cursor-pointer" onClick={()=>setExpandedThemes({...expandedThemes,[theme.id]:!themeExpanded})}>
                             <Icon name={themeExpanded?'ChevronDown':'ChevronRight'} size={16} className="text-gray-400"/>
                             <Icon name="Tag" size={16} className="text-purple-400"/>
                             <span className="flex-1">{theme.name}</span>
+                            {(theme.tags||[]).length>0&&(
+                              <div className="flex gap-1">
+                                {theme.tags.slice(0,2).map(t=>{
+                                  const tagDef=predefinedTags.find(pt=>pt.name===t);
+                                  return<TagBadge key={t} name={t} color={tagDef?.color} small/>;
+                                })}
+                                {theme.tags.length>2&&<span className="text-xs text-gray-400">+{theme.tags.length-2}</span>}
+                              </div>
+                            )}
                             <span className="text-xs text-gray-500">{themeSubs.length} sous-thème(s)</span>
+                            <button onClick={e=>{e.stopPropagation();openEditModal('theme',theme);}} className="p-1.5 hover:bg-indigo-500/20 rounded"><Icon name="Edit2" size={14} className="text-indigo-400"/></button>
                             <button onClick={e=>{e.stopPropagation();deleteTheme(theme.id);}} className="p-1.5 hover:bg-red-500/20 rounded"><Icon name="X" size={14} className="text-red-400"/></button>
                           </div>
                           
-                          {/* Sous-thèmes */}
                           {themeExpanded&&(
                             <div className="p-3 pl-8 space-y-2 bg-gray-700/50 border-t border-gray-600">
                               {themeSubs.length===0&&<p className="text-xs text-gray-500">Aucun sous-thème</p>}
                               
-                              {themeSubs.map(st=>(
-                                <div key={st.id} className="flex items-center gap-2 p-2 rounded hover:bg-gray-600">
+                              {themeSubs.map(st=>{
+                                const stHighlighted=isHighlighted('subtheme',st.id);
+                                return<div key={st.id} className={`flex items-center gap-2 p-2 rounded ${stHighlighted?'bg-cyan-500/20 border border-cyan-500':'hover:bg-gray-600'}`}>
                                   <Icon name="Circle" size={8} className="text-cyan-400"/>
                                   <span className="flex-1 text-sm">{st.name}</span>
+                                  {(st.tags||[]).length>0&&(
+                                    <div className="flex gap-1">
+                                      {st.tags.slice(0,2).map(t=>{
+                                        const tagDef=predefinedTags.find(pt=>pt.name===t);
+                                        return<TagBadge key={t} name={t} color={tagDef?.color} small/>;
+                                      })}
+                                    </div>
+                                  )}
+                                  <button onClick={()=>openEditModal('subtheme',st)} className="p-1 hover:bg-indigo-500/20 rounded"><Icon name="Edit2" size={12} className="text-indigo-400"/></button>
                                   <button onClick={()=>deleteSubTheme(st.id)} className="p-1 hover:bg-red-500/20 rounded"><Icon name="X" size={12} className="text-red-400"/></button>
-                                </div>
-                              ))}
+                                </div>;
+                              })}
                               
-                              {/* Ajouter sous-thème */}
                               <div className="pt-2">
                                 <Input size="sm" placeholder="+ Ajouter un sous-thème..." onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){addSubTheme(e.target.value,theme.id);e.target.value='';}}}/>
                               </div>
@@ -5884,10 +6384,11 @@
                         </div>;
                       })}
                       
-                      {/* Ajouter thème */}
-                      <div className="pt-2">
-                        <Input placeholder="+ Ajouter un thème..." onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){addTheme(e.target.value,cat.id);e.target.value='';}}}/>
-                      </div>
+                      {!searchQuery&&(
+                        <div className="pt-2">
+                          <Input placeholder="+ Ajouter un thème..." onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){addTheme(e.target.value,cat.id);e.target.value='';}}}/>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>;
@@ -5896,29 +6397,170 @@
           )}
         </Card>
         
-        {/* Modal édition catégorie */}
-        <Modal isOpen={!!editModal} onClose={()=>setEditModal(null)} title="Modifier la catégorie">
+        {/* Modal édition */}
+        <Modal isOpen={!!editModal} onClose={()=>setEditModal(null)} title={editModal?.type==='category'?'Modifier la catégorie':editModal?.type==='theme'?'Modifier le thème':'Modifier le sous-thème'}>
           <div className="space-y-4">
             <Input label="Nom" value={editForm.name} onChange={e=>setEditForm({...editForm,name:e.target.value})}/>
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">Couleur</label>
-              <div className="flex items-center gap-3">
-                <input type="color" value={editForm.color} onChange={e=>setEditForm({...editForm,color:e.target.value})} className="w-12 h-10 rounded cursor-pointer bg-transparent"/>
-                <Input value={editForm.color} onChange={e=>setEditForm({...editForm,color:e.target.value})} className="flex-1"/>
-                <div className="flex gap-1">
-                  {['#6366f1','#8b5cf6','#06b6d4','#22c55e','#f59e0b','#ef4444','#ec4899'].map(c=>(
-                    <button key={c} onClick={()=>setEditForm({...editForm,color:c})} className="w-6 h-6 rounded-full border-2 border-transparent hover:border-white" style={{backgroundColor:c}}/>
-                  ))}
+            
+            {editModal?.type==='category'&&(
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Couleur</label>
+                <div className="flex items-center gap-3">
+                  <input type="color" value={editForm.color} onChange={e=>setEditForm({...editForm,color:e.target.value})} className="w-12 h-10 rounded cursor-pointer bg-transparent"/>
+                  <Input value={editForm.color} onChange={e=>setEditForm({...editForm,color:e.target.value})} className="flex-1"/>
+                  <div className="flex gap-1">
+                    {['#6366f1','#8b5cf6','#06b6d4','#22c55e','#f59e0b','#ef4444','#ec4899'].map(c=>(
+                      <button key={c} onClick={()=>setEditForm({...editForm,color:c})} className="w-6 h-6 rounded-full border-2 border-transparent hover:border-white" style={{backgroundColor:c}}/>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
+            
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">Description (optionnel)</label>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
               <textarea value={editForm.description} onChange={e=>setEditForm({...editForm,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/>
             </div>
+            
+            {/* Tags */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Tags</label>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {editForm.tags.map(t=>{
+                  const tagDef=predefinedTags.find(pt=>pt.name===t);
+                  return<TagBadge key={t} name={t} color={tagDef?.color} onRemove={()=>removeTagFromForm(t)}/>;
+                })}
+                {editForm.tags.length===0&&<span className="text-sm text-gray-500">Aucun tag</span>}
+              </div>
+              
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <input 
+                    type="text" 
+                    placeholder="Ajouter un tag..."
+                    value={tagInput}
+                    onChange={e=>setTagInput(e.target.value)}
+                    onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();addTagToForm(tagInput);}}}
+                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm"
+                  />
+                </div>
+                <Button size="sm" onClick={()=>addTagToForm(tagInput)} disabled={!tagInput.trim()}>Ajouter</Button>
+              </div>
+              
+              {/* Tags prédéfinis rapides */}
+              {predefinedTags.length>0&&(
+                <div className="mt-3">
+                  <p className="text-xs text-gray-400 mb-2">Tags prédéfinis :</p>
+                  <div className="flex flex-wrap gap-1">
+                    {predefinedTags.filter(t=>!editForm.tags.includes(t.name)).slice(0,10).map(t=>(
+                      <button key={t.id} onClick={()=>addTagToForm(t.name)} className="px-2 py-1 text-xs rounded-full hover:opacity-80 transition" style={{backgroundColor:t.color,color:'white'}}>
+                        + {t.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            
             <div className="flex justify-end gap-3 pt-4">
               <Button variant="secondary" onClick={()=>setEditModal(null)}>Annuler</Button>
-              <Button onClick={updateCategory} loading={saving}>Enregistrer</Button>
+              <Button onClick={updateItem} loading={saving}>Enregistrer</Button>
+            </div>
+          </div>
+        </Modal>
+        
+        {/* Modal gestion tags prédéfinis */}
+        <Modal isOpen={tagsModal} onClose={()=>setTagsModal(false)} title="Gérer les tags prédéfinis" size="lg">
+          <div className="space-y-4">
+            {/* Formulaire nouveau tag */}
+            <div className="p-4 bg-gray-800 rounded-lg">
+              <p className="text-sm font-medium text-gray-300 mb-3">Créer un nouveau tag</p>
+              <div className="flex gap-3">
+                <Input placeholder="Nom du tag" value={newTagForm.name} onChange={e=>setNewTagForm({...newTagForm,name:e.target.value})} className="flex-1"/>
+                <input type="color" value={newTagForm.color} onChange={e=>setNewTagForm({...newTagForm,color:e.target.value})} className="w-12 h-10 rounded cursor-pointer bg-transparent border border-gray-600"/>
+                <Button icon="Plus" onClick={createPredefinedTag} loading={saving} disabled={!newTagForm.name.trim()}>Créer</Button>
+              </div>
+            </div>
+            
+            {/* Liste des tags */}
+            <div className="max-h-80 overflow-y-auto">
+              {predefinedTags.length===0?(
+                <p className="text-gray-500 text-center py-4">Aucun tag prédéfini</p>
+              ):(
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {predefinedTags.map(t=>(
+                    <div key={t.id} className="flex items-center gap-2 p-2 bg-gray-800 rounded-lg">
+                      <div className="w-4 h-4 rounded-full shrink-0" style={{backgroundColor:t.color}}/>
+                      <span className="flex-1 text-sm truncate">{t.name}</span>
+                      <span className="text-xs text-gray-500">{t.usage_count||0}</span>
+                      <button onClick={()=>deletePredefinedTag(t.id)} className="p-1 hover:bg-red-500/20 rounded">
+                        <Icon name="Trash2" size={14} className="text-red-400"/>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            <div className="flex justify-end pt-4">
+              <Button variant="secondary" onClick={()=>setTagsModal(false)}>Fermer</Button>
+            </div>
+          </div>
+        </Modal>
+        
+        {/* Modal Import */}
+        <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData(null);setImportPreview([]);setImportStats(null);}} title="Importer des catégories" size="lg">
+          <div className="space-y-4">
+            {importStats&&(
+              <div className="grid grid-cols-4 gap-3 p-4 bg-gray-800 rounded-lg">
+                <div className="text-center"><p className="text-xl font-bold text-indigo-400">{importStats.categories}</p><p className="text-xs text-gray-400">Catégories</p></div>
+                <div className="text-center"><p className="text-xl font-bold text-purple-400">{importStats.themes}</p><p className="text-xs text-gray-400">Thèmes</p></div>
+                <div className="text-center"><p className="text-xl font-bold text-cyan-400">{importStats.subThemes}</p><p className="text-xs text-gray-400">Sous-thèmes</p></div>
+                <div className="text-center"><p className="text-xl font-bold text-amber-400">{importStats.tags}</p><p className="text-xs text-gray-400">Tags</p></div>
+              </div>
+            )}
+            
+            <div className="p-4 bg-gray-800 rounded-lg">
+              <p className="text-sm font-medium text-gray-300 mb-3">Mode d'import :</p>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="importMode" checked={importMode==='merge'} onChange={()=>setImportMode('merge')} className="text-indigo-500"/>
+                  <span className="text-sm">Fusionner</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="importMode" checked={importMode==='replace'} onChange={()=>setImportMode('replace')} className="text-indigo-500"/>
+                  <span className="text-sm text-red-400">Remplacer tout</span>
+                </label>
+              </div>
+              {importMode==='replace'&&<p className="text-xs text-red-400 mt-2">⚠️ Toutes les données existantes seront supprimées!</p>}
+            </div>
+            
+            <div className="max-h-64 overflow-y-auto border border-gray-700 rounded-lg">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-800 sticky top-0">
+                  <tr>
+                    <th className="text-left p-3">Catégorie</th>
+                    <th className="text-left p-3">Tags</th>
+                    <th className="text-left p-3">Thèmes</th>
+                    <th className="text-left p-3">Sous-thèmes</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-700">
+                  {importPreview.map((cat,i)=>(
+                    <tr key={i} className="hover:bg-gray-800/50">
+                      <td className="p-3"><div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{backgroundColor:cat.color}}/>{cat.name}</div></td>
+                      <td className="p-3 text-gray-400 text-xs">{(cat.tags||[]).join(', ')||'-'}</td>
+                      <td className="p-3 text-gray-400">{cat.themes.length||'-'}</td>
+                      <td className="p-3 text-gray-400">{cat.themes.reduce((s,t)=>s+t.subThemes.length,0)||'-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            
+            <div className="flex justify-end gap-3 pt-4">
+              <Button variant="secondary" onClick={()=>{setImportModal(false);setImportData(null);setImportPreview([]);setImportStats(null);}}>Annuler</Button>
+              <Button icon="Upload" onClick={executeImport} loading={importing}>{importing?'Import...':'Importer'}</Button>
             </div>
           </div>
         </Modal>
