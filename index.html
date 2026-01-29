@@ -1399,6 +1399,60 @@
       const[activeTab,setActiveTab]=useState('overview');
       const[filter,setFilter]=useState({learner:'all',course:'all',path:'all',search:''});
       const[selectedLearner,setSelectedLearner]=useState(null);
+      const[resetting,setResetting]=useState(false);
+      
+      // Réinitialiser la progression d'un cours pour un apprenant (Super Admin)
+      const resetCourseProgress=async(enrollment,learner)=>{
+        const confirmMsg=`⚠️ RÉINITIALISER LA PROGRESSION ?\n\nApprenant: ${learner.first_name} ${learner.last_name}\nCours: ${enrollment.playlists?.title}\n\nCette action va remettre à zéro :\n- La progression du cours\n- Les données SCORM associées\n- Les tentatives de quiz\n- La progression vidéo\n\nCette action est irréversible.`;
+        if(!confirm(confirmMsg))return;
+        
+        setResetting(true);
+        try{
+          await supabase.from('enrollments').update({
+            progress_percent:0,status:'not_started',time_spent_seconds:0,completed_at:null,last_activity_at:null
+          }).eq('id',enrollment.id);
+          try{await supabase.from('scorm_tracking').delete().eq('learner_id',learner.id).eq('enrollment_id',enrollment.id);}catch(e){}
+          try{await supabase.from('scorm_progress').delete().eq('learner_id',learner.id).eq('enrollment_id',enrollment.id);}catch(e){}
+          try{await supabase.from('quiz_attempts').delete().eq('learner_id',learner.id).eq('enrollment_id',enrollment.id);}catch(e){}
+          try{await supabase.from('video_progress').delete().eq('learner_id',learner.id).eq('enrollment_id',enrollment.id);}catch(e){}
+          alert('✅ Progression du cours réinitialisée');
+          await load();setSelectedLearner(null);
+        }catch(err){alert('Erreur: '+err.message);}
+        setResetting(false);
+      };
+      
+      // Réinitialiser la progression d'un parcours pour un apprenant (Super Admin)
+      const resetPathProgress=async(pathEnrollment,learner)=>{
+        const confirmMsg=`⚠️ RÉINITIALISER LE PARCOURS ?\n\nApprenant: ${learner.first_name} ${learner.last_name}\nParcours: ${pathEnrollment.learning_paths?.title}\n\nCette action va remettre à zéro la progression.\n\nCette action est irréversible.`;
+        if(!confirm(confirmMsg))return;
+        setResetting(true);
+        try{
+          await supabase.from('path_enrollments').update({progress_percent:0,status:'not_started',completed_at:null}).eq('id',pathEnrollment.id);
+          alert('✅ Progression du parcours réinitialisée');
+          await load();setSelectedLearner(null);
+        }catch(err){alert('Erreur: '+err.message);}
+        setResetting(false);
+      };
+      
+      // Réinitialiser TOUTES les données d'un apprenant (Super Admin)
+      const resetAllLearnerProgress=async(learner)=>{
+        const confirmMsg=`⚠️ ATTENTION - RÉINITIALISATION TOTALE !\n\nApprenant: ${learner.first_name} ${learner.last_name}\n\nCette action va supprimer TOUTES les données de formation.\nL'apprenant devra recommencer depuis le début.\n\nCette action est IRRÉVERSIBLE !`;
+        if(!confirm(confirmMsg))return;
+        if(!confirm('Êtes-vous vraiment sûr ?'))return;
+        setResetting(true);
+        try{
+          const learnerId=learner.id;
+          await supabase.from('enrollments').update({progress_percent:0,status:'not_started',time_spent_seconds:0,completed_at:null,last_activity_at:null}).eq('learner_id',learnerId);
+          await supabase.from('path_enrollments').update({progress_percent:0,status:'not_started',completed_at:null}).eq('learner_id',learnerId);
+          try{await supabase.from('scorm_tracking').delete().eq('learner_id',learnerId);}catch(e){}
+          try{await supabase.from('scorm_progress').delete().eq('learner_id',learnerId);}catch(e){}
+          try{await supabase.from('quiz_attempts').delete().eq('learner_id',learnerId);}catch(e){}
+          try{await supabase.from('video_progress').delete().eq('learner_id',learnerId);}catch(e){}
+          alert('✅ Toutes les données de formation ont été réinitialisées');
+          await load();setSelectedLearner(null);
+        }catch(err){alert('Erreur: '+err.message);}
+        setResetting(false);
+      };
       
       // Données
       const[learners,setLearners]=useState([]);
@@ -2257,7 +2311,10 @@
               
               {/* Cours */}
               <div>
-                <h4 className="font-semibold mb-3">Cours ({selectedLearner.enrollments.length})</h4>
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="font-semibold">Cours ({selectedLearner.enrollments.length})</h4>
+                  {isSuperAdmin&&selectedLearner.enrollments.length>0&&<span className="text-xs text-gray-500">Cliquez sur 🔄 pour réinitialiser</span>}
+                </div>
                 <div className="space-y-2 max-h-40 overflow-y-auto">
                   {selectedLearner.enrollments.length===0?<p className="text-gray-500 text-sm">Aucun cours</p>:
                   selectedLearner.enrollments.map(e=>(
@@ -2269,6 +2326,7 @@
                         <span className={`px-2 py-1 rounded text-xs ${e.status==='completed'?'bg-green-500/20 text-green-400':e.status==='in_progress'?'bg-yellow-500/20 text-yellow-400':'bg-gray-500/20 text-gray-400'}`}>
                           {e.status==='completed'?'Terminé':e.status==='in_progress'?'En cours':'Non commencé'}
                         </span>
+                        {isSuperAdmin&&(e.progress_percent>0||e.status!=='not_started')&&<button onClick={()=>resetCourseProgress(e,selectedLearner)} disabled={resetting} className="p-1 hover:bg-orange-500/20 rounded text-orange-400" title="Réinitialiser ce cours"><Icon name="RotateCcw" size={14}/></button>}
                       </div>
                     </div>
                   ))}
@@ -2278,7 +2336,10 @@
               {/* Parcours */}
               {selectedLearner.pathEnrollments.length>0&&(
                 <div>
-                  <h4 className="font-semibold mb-3">Parcours ({selectedLearner.pathEnrollments.length})</h4>
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="font-semibold">Parcours ({selectedLearner.pathEnrollments.length})</h4>
+                    {isSuperAdmin&&<span className="text-xs text-gray-500">Cliquez sur 🔄 pour réinitialiser</span>}
+                  </div>
                   <div className="space-y-2 max-h-40 overflow-y-auto">
                     {selectedLearner.pathEnrollments.map(pe=>(
                       <div key={pe.id} className="flex items-center justify-between p-3 bg-gray-700/50 rounded-lg">
@@ -2289,6 +2350,7 @@
                           <span className={`px-2 py-1 rounded text-xs ${pe.status==='completed'||pe.progress_percent===100?'bg-green-500/20 text-green-400':pe.progress_percent>0?'bg-yellow-500/20 text-yellow-400':'bg-gray-500/20 text-gray-400'}`}>
                             {pe.status==='completed'||pe.progress_percent===100?'Terminé':pe.progress_percent>0?'En cours':'Non commencé'}
                           </span>
+                          {isSuperAdmin&&(pe.progress_percent>0||pe.status!=='not_started')&&<button onClick={()=>resetPathProgress(pe,selectedLearner)} disabled={resetting} className="p-1 hover:bg-orange-500/20 rounded text-orange-400" title="Réinitialiser ce parcours"><Icon name="RotateCcw" size={14}/></button>}
                         </div>
                       </div>
                     ))}
@@ -2331,6 +2393,21 @@
                         </div>
                       </div>
                     ))}
+                  </div>
+                </div>
+              )}
+              
+              {/* Actions Super Admin */}
+              {isSuperAdmin&&(selectedLearner.enrollments.length>0||selectedLearner.pathEnrollments.length>0)&&(
+                <div className="pt-4 border-t border-gray-700">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-400">Actions administrateur</p>
+                      <p className="text-xs text-gray-500">Réinitialisez toutes les données de formation de cet apprenant</p>
+                    </div>
+                    <Button variant="secondary" icon="RotateCcw" className="text-red-400 border-red-400/30 hover:bg-red-500/20" onClick={()=>resetAllLearnerProgress(selectedLearner)} disabled={resetting}>
+                      {resetting?'Réinitialisation...':'Réinitialiser tout'}
+                    </Button>
                   </div>
                 </div>
               )}
@@ -7030,6 +7107,52 @@
       
       const handleUnenroll=async id=>{if(!confirm('Désinscrire ?'))return;await supabase.from('enrollments').delete().eq('id',id);load();};
       
+      // Réinitialiser la progression d'un apprenant sur un cours (Super Admin uniquement)
+      const resetEnrollmentProgress=async(enrollment)=>{
+        const confirmMsg=`⚠️ RÉINITIALISER LA PROGRESSION ?\n\nApprenant: ${enrollment.profiles?.first_name} ${enrollment.profiles?.last_name}\nCours: ${enrollment.playlists?.title}\n\nCette action va :\n- Remettre la progression à 0%\n- Supprimer le temps passé\n- Supprimer les données SCORM\n- Supprimer les tentatives de quiz\n- Supprimer la progression vidéo\n\nCette action est irréversible.`;
+        if(!confirm(confirmMsg))return;
+        
+        setSaving(true);
+        try{
+          // 1. Réinitialiser l'inscription
+          await supabase.from('enrollments').update({
+            progress_percent:0,
+            status:'not_started',
+            time_spent_seconds:0,
+            completed_at:null,
+            last_activity_at:null
+          }).eq('id',enrollment.id);
+          
+          // 2. Supprimer les données SCORM associées
+          try{
+            await supabase.from('scorm_tracking').delete()
+              .eq('learner_id',enrollment.learner_id)
+              .eq('enrollment_id',enrollment.id);
+          }catch(e){console.log('Pas de table scorm_tracking ou erreur:',e);}
+          
+          // 3. Supprimer les tentatives de quiz associées
+          try{
+            await supabase.from('quiz_attempts').delete()
+              .eq('learner_id',enrollment.learner_id)
+              .eq('enrollment_id',enrollment.id);
+          }catch(e){console.log('Erreur quiz_attempts:',e);}
+          
+          // 4. Supprimer la progression vidéo associée
+          try{
+            await supabase.from('video_progress').delete()
+              .eq('learner_id',enrollment.learner_id)
+              .eq('enrollment_id',enrollment.id);
+          }catch(e){console.log('Erreur video_progress:',e);}
+          
+          alert('✅ Progression réinitialisée avec succès');
+          await load();
+        }catch(err){
+          console.error('Erreur réinitialisation:',err);
+          alert('Erreur: '+err.message);
+        }
+        setSaving(false);
+      };
+      
       const toggleLearner=(learnerId)=>{
         setBulkForm(prev=>({
           ...prev,
@@ -7071,7 +7194,7 @@
           </Card>
         )}
         
-        {enrollments.length===0?<Empty icon="UserPlus" title="Aucune inscription"/>:<Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Apprenant</th><th className="text-left p-4 font-medium text-gray-400">Cours</th><th className="text-left p-4 font-medium text-gray-400">Progression</th><th className="text-left p-4 font-medium text-gray-400">Temps</th><th className="text-left p-4 font-medium text-gray-400">Statut</th><th className="text-left p-4 font-medium text-gray-400">Date</th><th className="text-right p-4"></th></tr></thead><tbody className="divide-y divide-gray-700">{enrollments.map(e=>{const formatT=(s)=>{if(!s)return'-';const h=Math.floor(s/3600);const m=Math.floor((s%3600)/60);return h>0?`${h}h ${m}min`:`${m}min`;};return<tr key={e.id}><td className="p-4"><p className="font-medium">{e.profiles?.first_name} {e.profiles?.last_name}</p><p className="text-sm text-gray-400">{e.profiles?.email}</p></td><td className="p-4"><div className="flex items-center gap-2">{e.playlists?.title||'—'}{e.playlists?.is_lms_content&&<span className="px-1.5 py-0.5 bg-indigo-600 rounded text-xs">LMS</span>}</div></td><td className="p-4"><ProgressBar percent={e.progress_percent||0} size="sm" showLabel={true}/></td><td className="p-4 text-blue-400">{formatT(e.time_spent_seconds)}</td><td className="p-4"><span className={`px-2 py-1 rounded text-xs ${e.status==='completed'?'bg-green-500/20 text-green-400':e.status==='in_progress'?'bg-yellow-500/20 text-yellow-400':'bg-gray-500/20 text-gray-400'}`}>{e.status==='not_started'?'Non commencé':e.status==='in_progress'?'En cours':'Terminé'}</span></td><td className="p-4 text-gray-400">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td><td className="p-4 text-right"><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleUnenroll(e.id)}/></td></tr>})}</tbody></table></div></Card>}
+        {enrollments.length===0?<Empty icon="UserPlus" title="Aucune inscription"/>:<Card><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-750"><tr><th className="text-left p-4 font-medium text-gray-400">Apprenant</th><th className="text-left p-4 font-medium text-gray-400">Cours</th><th className="text-left p-4 font-medium text-gray-400">Progression</th><th className="text-left p-4 font-medium text-gray-400">Temps</th><th className="text-left p-4 font-medium text-gray-400">Statut</th><th className="text-left p-4 font-medium text-gray-400">Date</th><th className="text-right p-4">Actions</th></tr></thead><tbody className="divide-y divide-gray-700">{enrollments.map(e=>{const formatT=(s)=>{if(!s)return'-';const h=Math.floor(s/3600);const m=Math.floor((s%3600)/60);return h>0?`${h}h ${m}min`:`${m}min`;};return<tr key={e.id}><td className="p-4"><p className="font-medium">{e.profiles?.first_name} {e.profiles?.last_name}</p><p className="text-sm text-gray-400">{e.profiles?.email}</p></td><td className="p-4"><div className="flex items-center gap-2">{e.playlists?.title||'—'}{e.playlists?.is_lms_content&&<span className="px-1.5 py-0.5 bg-indigo-600 rounded text-xs">LMS</span>}</div></td><td className="p-4"><ProgressBar percent={e.progress_percent||0} size="sm" showLabel={true}/></td><td className="p-4 text-blue-400">{formatT(e.time_spent_seconds)}</td><td className="p-4"><span className={`px-2 py-1 rounded text-xs ${e.status==='completed'?'bg-green-500/20 text-green-400':e.status==='in_progress'?'bg-yellow-500/20 text-yellow-400':'bg-gray-500/20 text-gray-400'}`}>{e.status==='not_started'?'Non commencé':e.status==='in_progress'?'En cours':'Terminé'}</span></td><td className="p-4 text-gray-400">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td><td className="p-4 text-right"><div className="flex gap-1 justify-end">{isSuperAdmin&&(e.progress_percent>0||e.status!=='not_started')&&<Button variant="ghost" size="sm" icon="RotateCcw" title="Réinitialiser la progression" className="text-orange-400 hover:bg-orange-500/20" onClick={()=>resetEnrollmentProgress(e)} disabled={saving}/>}<Button variant="ghost" size="sm" icon="Trash2" title="Désinscrire" className="text-red-400 hover:bg-red-500/20" onClick={()=>handleUnenroll(e.id)}/></div></td></tr>})}</tbody></table></div></Card>}
         
         <Modal isOpen={modal} onClose={()=>setModal(false)} title="Inscrire"><div className="space-y-4"><Select label="Cours" value={form.playlist_id} onChange={e=>setForm({...form,playlist_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...availableCourses.map(p=>({value:p.id,label:`${p.title}${p.is_lms_content?' 📦':''}${p.is_published?'':' (brouillon)'}`}))]}/><Select label="Apprenant" value={form.learner_id} onChange={e=>setForm({...form,learner_id:e.target.value})} options={[{value:'',label:'Sélectionner...'},...learners.map(l=>({value:l.id,label:`${l.first_name} ${l.last_name}`}))]}/><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleEnroll} loading={saving} disabled={!form.playlist_id||!form.learner_id}>Inscrire</Button></div></div></Modal>
         
