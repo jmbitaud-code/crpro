@@ -4787,7 +4787,14 @@
         setSaving(true);
         const{id:vimeoId,hash:vimeoHash}=parseVimeoUrl(form.vimeo_url);
         const tagsArray=form.tags?form.tags.split(',').map(t=>t.trim()).filter(t=>t):null;
-        const payload={title:form.title,vimeo_id:vimeoId,vimeo_hash:vimeoHash||null,duration:form.duration||null,category:form.category||null,description:form.description||null,sort_order:form.sort_order?parseInt(form.sort_order):null,tags:tagsArray,theme:form.theme||null,thumbnail_url:form.thumbnail_url||null,center_id:center?.id,created_by:profile?.id};
+        const payload={title:form.title,vimeo_id:vimeoId,vimeo_hash:vimeoHash||null,duration:form.duration||null,category_id:form.category_id||null,theme_id:form.theme_id||null,sub_theme_id:form.sub_theme_id||null,description:form.description||null,sort_order:form.sort_order?parseInt(form.sort_order):null,tags:tagsArray,thumbnail_url:form.thumbnail_url||null,created_by:profile?.id};
+        // Super Admin sans centre = vidéo LMS globale
+        if(center?.id){
+          payload.center_id=center.id;
+        }else if(isSuperAdmin){
+          payload.is_lms_content=true;
+          payload.center_id=null;
+        }
         if(editing)await supabase.from('videos').update(payload).eq('id',editing.id);
         else await supabase.from('videos').insert(payload);
         await load();setModal(false);resetForm();setEditing(null);setSaving(false);
@@ -4841,17 +4848,32 @@
             sort_order:item.sort_order||item['Ordre']?parseInt(item.sort_order||item['Ordre']):null,
             tags:tagsArray,
             thumbnail_url:item.thumbnail_url||item['Miniature URL']||null,
-            center_id:center?.id,
             created_by:profile?.id
           };
           
-          const{data:existing}=await supabase.from('videos').select('id').eq('vimeo_id',vimeoId).eq('center_id',center?.id).single();
+          // Super Admin sans centre = vidéo LMS globale
+          if(center?.id){
+            payload.center_id=center.id;
+          }else if(isSuperAdmin){
+            payload.is_lms_content=true;
+            payload.center_id=null;
+          }
+          
+          // Recherche existante: soit par center_id, soit vidéo LMS globale
+          let existingQuery=supabase.from('videos').select('id').eq('vimeo_id',vimeoId);
+          if(center?.id){
+            existingQuery=existingQuery.eq('center_id',center.id);
+          }else{
+            existingQuery=existingQuery.is('center_id',null);
+          }
+          const{data:existing}=await existingQuery.single();
+          
           if(existing){
             const{error}=await supabase.from('videos').update(payload).eq('id',existing.id);
             if(error)errors++;else updated++;
           }else{
             const{error}=await supabase.from('videos').insert(payload);
-            if(error)errors++;else created++;
+            if(error){console.error('Insert error:',error);errors++;}else created++;
           }
         }
         setImportLoading(false);
