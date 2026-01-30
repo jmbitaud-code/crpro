@@ -4073,16 +4073,193 @@
             
             if(isTextFile){
               content = await zipEntry.async('string');
-              // Injecter lms_origin pour Codes Rousseau (seulement dans les HTML)
-              if(name.endsWith('.html') && (content.includes('layer2.js') || content.includes('data-source'))){
-                content = content.replace(
-                  "var url = 'https://lms.codesrousseau.fr",
-                  "window.lms_origin = '" + lmsOrigin + "'; window.LMS_ORIGIN = '" + lmsOrigin + "'; var url = 'https://lms.codesrousseau.fr"
-                );
-                content = content.replace(
-                  /layer2\.js\?cacherev=/g,
-                  'layer2.js?lms_origin=' + encodeURIComponent(lmsOrigin) + '&cacherev='
-                );
+              
+              // Injecter le bridge SCORM API dans TOUS les fichiers HTML
+              if(name.endsWith('.html') || name.endsWith('.htm')){
+                // Script de bridge SCORM qui utilise postMessage pour communiquer avec le parent
+                const scormBridgeScript = `
+<script>
+(function() {
+  // Bridge SCORM API - Communication avec le LMS parent via postMessage
+  if (window.API && window.API._isBridge) return; // Déjà injecté
+  
+  var pendingCalls = {};
+  var callId = 0;
+  
+  function generateCallId() {
+    return 'scorm_' + (++callId) + '_' + Date.now();
+  }
+  
+  function callParentAPI(apiType, method, args) {
+    return new Promise(function(resolve) {
+      var id = generateCallId();
+      pendingCalls[id] = resolve;
+      
+      // Envoyer le message au parent (scorm-loader.html ou directement la page CRPro)
+      var target = window.parent;
+      if (target === window) target = window.opener;
+      if (!target || target === window) {
+        console.warn('[SCORM Bridge] No parent window found');
+        resolve('false');
+        return;
+      }
+      
+      target.postMessage({
+        type: 'scorm_api_call',
+        apiType: apiType,
+        method: method,
+        args: args,
+        callId: id
+      }, '*');
+      
+      // Timeout après 5 secondes
+      setTimeout(function() {
+        if (pendingCalls[id]) {
+          console.warn('[SCORM Bridge] Timeout for', method);
+          delete pendingCalls[id];
+          resolve('false');
+        }
+      }, 5000);
+    });
+  }
+  
+  // Écouter les réponses
+  window.addEventListener('message', function(event) {
+    var data = event.data;
+    if (!data || data.type !== 'scorm_api_response') return;
+    
+    var resolve = pendingCalls[data.callId];
+    if (resolve) {
+      delete pendingCalls[data.callId];
+      resolve(data.result);
+    }
+  });
+  
+  // Créer les APIs SCORM synchrones (avec cache pour les appels fréquents)
+  var cache = {};
+  var lastSyncResult = 'true';
+  
+  function syncCall(apiType, method, args) {
+    // Pour les appels synchrones, on utilise une approche synchrone avec XMLHttpRequest
+    // Mais c'est déprécié, donc on utilise un cache et des valeurs par défaut
+    callParentAPI(apiType, method, args).then(function(result) {
+      lastSyncResult = result;
+      if (method === 'LMSGetValue' || method === 'GetValue') {
+        cache[args[0]] = result;
+      }
+    });
+    
+    // Retourner la valeur en cache si disponible
+    if ((method === 'LMSGetValue' || method === 'GetValue') && cache[args[0]] !== undefined) {
+      return cache[args[0]];
+    }
+    return lastSyncResult;
+  }
+  
+  // API SCORM 1.2
+  window.API = {
+    _isBridge: true,
+    LMSInitialize: function(p) { 
+      console.log('[SCORM Bridge] LMSInitialize');
+      callParentAPI('12', 'LMSInitialize', [p || '']);
+      return 'true'; 
+    },
+    LMSFinish: function(p) { 
+      console.log('[SCORM Bridge] LMSFinish');
+      callParentAPI('12', 'LMSFinish', [p || '']);
+      return 'true'; 
+    },
+    LMSGetValue: function(e) { 
+      var cached = cache['12_' + e];
+      callParentAPI('12', 'LMSGetValue', [e]).then(function(r) { cache['12_' + e] = r; });
+      return cached || '';
+    },
+    LMSSetValue: function(e, v) { 
+      cache['12_' + e] = v;
+      callParentAPI('12', 'LMSSetValue', [e, v]);
+      return 'true'; 
+    },
+    LMSCommit: function(p) { 
+      callParentAPI('12', 'LMSCommit', [p || '']);
+      return 'true'; 
+    },
+    LMSGetLastError: function() { return '0'; },
+    LMSGetErrorString: function(c) { return 'No Error'; },
+    LMSGetDiagnostic: function(c) { return 'No Error'; }
+  };
+  
+  // API SCORM 2004
+  window.API_1484_11 = {
+    _isBridge: true,
+    Initialize: function(p) { 
+      console.log('[SCORM Bridge] Initialize');
+      callParentAPI('2004', 'Initialize', [p || '']);
+      return 'true'; 
+    },
+    Terminate: function(p) { 
+      console.log('[SCORM Bridge] Terminate');
+      callParentAPI('2004', 'Terminate', [p || '']);
+      return 'true'; 
+    },
+    GetValue: function(e) { 
+      var cached = cache['2004_' + e];
+      callParentAPI('2004', 'GetValue', [e]).then(function(r) { cache['2004_' + e] = r; });
+      return cached || '';
+    },
+    SetValue: function(e, v) { 
+      cache['2004_' + e] = v;
+      callParentAPI('2004', 'SetValue', [e, v]);
+      return 'true'; 
+    },
+    Commit: function(p) { 
+      callParentAPI('2004', 'Commit', [p || '']);
+      return 'true'; 
+    },
+    GetLastError: function() { return '0'; },
+    GetErrorString: function(c) { return 'No Error'; },
+    GetDiagnostic: function(c) { return 'No Error'; }
+  };
+  
+  console.log('[SCORM Bridge] APIs initialized');
+  
+  // Notifier le parent que le contenu est prêt
+  if (window.parent && window.parent !== window) {
+    window.parent.postMessage({ type: 'scorm_content_ready' }, '*');
+  }
+})();
+</script>
+`;
+                
+                // Vérifier si c'est un SCORM Codes Rousseau
+                const isCodesRousseau = content.includes('layer2.js') || content.includes('data-source');
+                
+                // Injecter le bridge dans TOUS les fichiers HTML (y compris Codes Rousseau)
+                // Le bridge doit être défini AVANT que layer2.js s'exécute
+                if(content.includes('<head>')){
+                  content = content.replace('<head>', '<head>' + scormBridgeScript);
+                } else if(content.includes('<HEAD>')){
+                  content = content.replace('<HEAD>', '<HEAD>' + scormBridgeScript);
+                } else if(content.includes('<html>')){
+                  content = content.replace('<html>', '<html><head>' + scormBridgeScript + '</head>');
+                } else if(content.includes('<HTML>')){
+                  content = content.replace('<HTML>', '<HTML><HEAD>' + scormBridgeScript + '</HEAD>');
+                } else {
+                  // Ajouter au début
+                  content = scormBridgeScript + content;
+                }
+                
+                // Pour Codes Rousseau : ajouter aussi les modifications lms_origin
+                if(isCodesRousseau){
+                  console.log('Codes Rousseau detected, adding lms_origin for:', relativePath);
+                  content = content.replace(
+                    "var url = 'https://lms.codesrousseau.fr",
+                    "window.lms_origin = '" + lmsOrigin + "'; window.LMS_ORIGIN = '" + lmsOrigin + "'; var url = 'https://lms.codesrousseau.fr"
+                  );
+                  content = content.replace(
+                    /layer2\.js\?cacherev=/g,
+                    'layer2.js?lms_origin=' + encodeURIComponent(lmsOrigin) + '&cacherev='
+                  );
+                }
               }
               filesToUpload.push({name: relativePath, content: content, type: mimeType, isText: true});
             } else {
@@ -10409,19 +10586,65 @@
         };
       },[module.id,enrollmentId,user.id,initialDataLoaded,savedCmiData,onComplete]);
       
-      // L'URL du module SCORM via le loader hébergé sur GitHub Pages
+      // L'URL du module SCORM via scorm-loader.html (même domaine que crpro.app)
       const scormUrl = useMemo(() => {
         if (!module.package_url) return null;
         
-        // Le loader est hébergé sur le même domaine
-        // On ne passe PAS lms_origin dans l'URL pour éviter les doublons
-        // window.lms_origin sera défini par le loader
+        // Utiliser scorm-loader.html pour charger le contenu SCORM
+        // Cela permet à layer2.js (Codes Rousseau) d'accéder à window.parent.API
         const loaderUrl = window.location.origin + '/scorm-loader.html?url=' + 
           encodeURIComponent(module.package_url);
         
         console.log('SCORM Loader URL:', loaderUrl);
         return loaderUrl;
       }, [module.package_url]);
+      
+      // Écouter les messages postMessage venant de l'iframe SCORM
+      useEffect(() => {
+        if (!initialDataLoaded) return;
+        
+        const handleMessage = (event) => {
+          const data = event.data;
+          if (!data || !data.type) return;
+          
+          // Vérifier que le message vient de notre iframe
+          const frame = iframeRef.current;
+          if (!frame) return;
+          
+          // Gérer les appels API SCORM
+          if (data.type === 'scorm_api_call') {
+            console.log('[SCORM Player] API call from iframe:', data.apiType, data.method);
+            
+            let result = 'false';
+            try {
+              const api = data.apiType === '12' ? window.API : window.API_1484_11;
+              if (api && api[data.method]) {
+                result = api[data.method].apply(api, data.args || []);
+              }
+            } catch (e) {
+              console.error('[SCORM Player] API call error:', e);
+            }
+            
+            // Envoyer la réponse
+            if (frame.contentWindow) {
+              frame.contentWindow.postMessage({
+                type: 'scorm_api_response',
+                callId: data.callId,
+                result: result
+              }, '*');
+            }
+          }
+          
+          // Notification que le contenu SCORM est prêt
+          if (data.type === 'scorm_content_ready') {
+            console.log('[SCORM Player] Content ready');
+            setLoading(false);
+          }
+        };
+        
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+      }, [initialDataLoaded]);
       
       console.log('SCORM Player:', { scormUrl, module });
       
