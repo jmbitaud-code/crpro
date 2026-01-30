@@ -3939,6 +3939,7 @@
       const[scormSaving,setScormSaving]=useState(false);
       const[scormZipParsing,setScormZipParsing]=useState(false);
       const[scormZipFile,setScormZipFile]=useState(null);
+      const[previewScorm,setPreviewScorm]=useState(null);
       const[licensedIds,setLicensedIds]=useState({videos:[],scorm:[],quizzes:[],courses:[],paths:[],hasFullCatalog:false,hasAnyLicense:false});
       const[filterSource,setFilterSource]=useState('all');
       const[requestLicenseModal,setRequestLicenseModal]=useState(null);
@@ -5157,7 +5158,7 @@
                   setScormForm({title:m.title,description:m.description||'',module_type:m.module_type,package_url:m.package_url||'',entry_point:m.entry_point||'index.html',category_id:m.category_id||'',theme_id:m.theme_id||'',sub_theme_id:m.sub_theme_id||'',version:m.version||'',tags:m.tags||[]});
                   setScormModal(true);
                 }}>Modifier</Button>}
-                {(licensed||isOwn)&&m.package_url&&<a href={m.package_url} target="_blank" className="inline-flex items-center gap-1 px-3 py-1.5 text-sm hover:bg-gray-700 rounded-lg"><Icon name="ExternalLink" size={14}/>Tester</a>}
+                {(canEdit||isSuperAdmin)&&m.package_url&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>setPreviewScorm(m)}>Aperçu</Button>}
                 {canEdit&&isOwn&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleScormDelete(m.id)}/>}
                 {isSuperAdmin&&m.is_lms_content&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleScormDelete(m.id)}/>}
                 {!licensed&&!isOwn&&canUseRequestCart&&<label className="flex items-center gap-2 text-xs cursor-pointer bg-purple-500/20 text-purple-300 px-2 py-1 rounded hover:bg-purple-500/30"><input type="checkbox" checked={isInRequestCart('scorm',m.id)} onChange={()=>toggleRequestCart('scorm',m.id,m)} className="rounded"/>Ajouter</label>}
@@ -5315,6 +5316,9 @@
           <div className="flex flex-wrap gap-1 mt-2">{predefinedTags.filter(t=>!importDefaultTags.includes(t.name)).map(t=><button key={t.id} type="button" onClick={()=>setImportDefaultTags([...importDefaultTags,t.name])} className="px-2 py-0.5 rounded text-xs border border-gray-600 hover:border-indigo-500" style={{color:t.color||'#6366f1'}}>+ {t.name}</button>)}</div>
         </div>}
         <div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center"><input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".xlsx,.xls,.csv" className="hidden"/><Icon name="Film" size={48} className="mx-auto text-gray-500 mb-4"/><Button variant="secondary" onClick={()=>fileInputRef.current?.click()}>Parcourir</Button></div>{importData.length>0&&!importResult&&<div className="max-h-48 overflow-y-auto bg-gray-700/50 rounded-lg p-2">{importData.filter(d=>d._valid).map((row,i)=><div key={i} className="text-sm py-1">{row.title||row['Titre']}</div>)}</div>}{importResult&&<Alert type={importResult.errors>0?'warning':'success'}>{importResult.created>0&&<span className="text-green-400">✅ {importResult.created} créée(s) </span>}{importResult.updated>0&&<span className="text-blue-400">🔄 {importResult.updated} mise(s) à jour </span>}{importResult.errors>0&&<span className="text-red-400">❌ {importResult.errors} erreur(s)</span>}</Alert>}<div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);setImportDefaultTags([]);}}>Fermer</Button>{importData.length>0&&!importResult&&<Button icon="Upload" onClick={handleImport} loading={importLoading}>Importer {importData.filter(d=>d._valid).length}</Button>}</div></div></Modal>
+        
+        {/* Lecteur SCORM en mode Aperçu */}
+        {previewScorm&&<ScormPlayer module={previewScorm} previewMode={true} onClose={()=>setPreviewScorm(null)}/>}
         
         {/* Modal gestion pack */}
         <Modal isOpen={packModal} onClose={()=>setPackModal(false)} title={editingPack?'Modifier le pack':'Créer un pack'} size="xl">
@@ -9948,7 +9952,7 @@
     }
 
     // Lecteur SCORM avec API SCORM 1.2 et 2004
-    function ScormPlayer({module,enrollmentId,onComplete,onClose}){
+    function ScormPlayer({module,enrollmentId,onComplete,onClose,previewMode=false}){
       const{user}=useAuth();
       const iframeRef=useRef(null);
       const[loading,setLoading]=useState(true);
@@ -9970,8 +9974,15 @@
         };
       }, []);
       
-      // Charger les données existantes AVANT d'initialiser l'API
+      // Charger les données existantes AVANT d'initialiser l'API (sauf en mode preview)
       useEffect(()=>{
+        if(previewMode){
+          // En mode preview, pas de chargement de données existantes
+          console.log('SCORM Preview Mode: Skipping progress load');
+          setSavedCmiData({});
+          setInitialDataLoaded(true);
+          return;
+        }
         const loadProgress=async()=>{
           console.log('SCORM: Loading existing progress for module', module.id, 'learner', user.id);
           // La contrainte unique est sur (module_id, learner_id)
@@ -9997,7 +10008,7 @@
           setInitialDataLoaded(true);
         };
         loadProgress();
-      },[module.id,user.id]);
+      },[module.id,user?.id,previewMode]);
       
       // Initialiser l'API SCORM seulement après le chargement des données
       useEffect(()=>{
@@ -10006,13 +10017,14 @@
         console.log('SCORM: Initializing API with saved data', savedCmiData);
         
         // Créer l'API SCORM 1.2
+        const previewUser = previewMode ? {id:'preview',email:'Aperçu Admin'} : user;
         const SCORM12_API={
           _initialized:false,
           _finished:false,
           _lastError:'0',
           _data:{
-            'cmi.core.student_id':user.id,
-            'cmi.core.student_name':user.email||'Apprenant',
+            'cmi.core.student_id':previewUser.id,
+            'cmi.core.student_name':previewUser.email||'Apprenant',
             'cmi.core.lesson_status':savedCmiData?.['cmi.core.lesson_status']||'not attempted',
             'cmi.core.lesson_location':savedCmiData?.['cmi.core.lesson_location']||'',
             'cmi.core.score.raw':savedCmiData?.['cmi.core.score.raw']||'',
@@ -10067,6 +10079,11 @@
           
           LMSCommit:function(param){
             console.log('SCORM 1.2: LMSCommit');
+            // En mode preview, ne pas sauvegarder
+            if(previewMode){
+              console.log('SCORM Preview Mode: Skipping save');
+              return 'true';
+            }
             // Sauvegarder dans Supabase
             const saveData=async()=>{
               try{
@@ -10149,8 +10166,8 @@
           _terminated:false,
           _lastError:'0',
           _data:{
-            'cmi.learner_id':user.id,
-            'cmi.learner_name':user.email||'Apprenant',
+            'cmi.learner_id':previewUser.id,
+            'cmi.learner_name':previewUser.email||'Apprenant',
             'cmi.completion_status':savedCmiData?.['cmi.completion_status']||'not attempted',
             'cmi.success_status':savedCmiData?.['cmi.success_status']||'unknown',
             'cmi.location':savedCmiData?.['cmi.location']||'',
@@ -10202,6 +10219,11 @@
           
           Commit:function(param){
             console.log('SCORM 2004: Commit');
+            // En mode preview, ne pas sauvegarder
+            if(previewMode){
+              console.log('SCORM 2004 Preview Mode: Skipping save');
+              return 'true';
+            }
             const saveData=async()=>{
               try{
                 const completionStatus=SCORM2004_API._data['cmi.completion_status']||'unknown';
@@ -10347,10 +10369,14 @@
                 <Icon name="ArrowLeft" size={20}/>
               </button>
               <div>
-                <h1 className="font-semibold">{module.title}</h1>
+                <div className="flex items-center gap-2">
+                  <h1 className="font-semibold">{module.title}</h1>
+                  {previewMode&&<span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded text-xs font-medium">👁️ Mode Aperçu</span>}
+                </div>
                 <div className="flex items-center gap-2 text-sm">
-                  <span className={`px-2 py-0.5 rounded text-xs ${statusColors[status]||'bg-gray-500'}`}>{statusLabels[status]||status}</span>
-                  {score!==null&&<span className="text-gray-400">Score: {Math.round((score>1?score:score*100))}%</span>}
+                  {!previewMode&&<span className={`px-2 py-0.5 rounded text-xs ${statusColors[status]||'bg-gray-500'}`}>{statusLabels[status]||status}</span>}
+                  {!previewMode&&score!==null&&<span className="text-gray-400">Score: {Math.round((score>1?score:score*100))}%</span>}
+                  {previewMode&&<span className="text-gray-400 text-xs">La progression ne sera pas enregistrée</span>}
                 </div>
               </div>
             </div>
