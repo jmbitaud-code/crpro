@@ -4077,158 +4077,56 @@
               // Injecter le bridge SCORM API dans TOUS les fichiers HTML
               if(name.endsWith('.html') || name.endsWith('.htm')){
                 // Script de bridge SCORM qui utilise postMessage pour communiquer avec le parent
-                const scormBridgeScript = `
-<script>
-(function() {
-  // Bridge SCORM API - Communication avec le LMS parent via postMessage
-  if (window.API && window.API._isBridge) return; // Déjà injecté
-  
-  var pendingCalls = {};
-  var callId = 0;
-  
-  function generateCallId() {
-    return 'scorm_' + (++callId) + '_' + Date.now();
-  }
-  
-  function callParentAPI(apiType, method, args) {
-    return new Promise(function(resolve) {
-      var id = generateCallId();
-      pendingCalls[id] = resolve;
-      
-      // Envoyer le message au parent (scorm-loader.html ou directement la page CRPro)
-      var target = window.parent;
-      if (target === window) target = window.opener;
-      if (!target || target === window) {
-        console.warn('[SCORM Bridge] No parent window found');
-        resolve('false');
-        return;
-      }
-      
-      target.postMessage({
-        type: 'scorm_api_call',
-        apiType: apiType,
-        method: method,
-        args: args,
-        callId: id
-      }, '*');
-      
-      // Timeout après 5 secondes
-      setTimeout(function() {
-        if (pendingCalls[id]) {
-          console.warn('[SCORM Bridge] Timeout for', method);
-          delete pendingCalls[id];
-          resolve('false');
-        }
-      }, 5000);
-    });
-  }
-  
-  // Écouter les réponses
-  window.addEventListener('message', function(event) {
-    var data = event.data;
-    if (!data || data.type !== 'scorm_api_response') return;
-    
-    var resolve = pendingCalls[data.callId];
-    if (resolve) {
-      delete pendingCalls[data.callId];
-      resolve(data.result);
-    }
-  });
-  
-  // Créer les APIs SCORM synchrones (avec cache pour les appels fréquents)
-  var cache = {};
-  var lastSyncResult = 'true';
-  
-  function syncCall(apiType, method, args) {
-    // Pour les appels synchrones, on utilise une approche synchrone avec XMLHttpRequest
-    // Mais c'est déprécié, donc on utilise un cache et des valeurs par défaut
-    callParentAPI(apiType, method, args).then(function(result) {
-      lastSyncResult = result;
-      if (method === 'LMSGetValue' || method === 'GetValue') {
-        cache[args[0]] = result;
-      }
-    });
-    
-    // Retourner la valeur en cache si disponible
-    if ((method === 'LMSGetValue' || method === 'GetValue') && cache[args[0]] !== undefined) {
-      return cache[args[0]];
-    }
-    return lastSyncResult;
-  }
-  
-  // API SCORM 1.2
-  window.API = {
-    _isBridge: true,
-    LMSInitialize: function(p) { 
-      console.log('[SCORM Bridge] LMSInitialize');
-      callParentAPI('12', 'LMSInitialize', [p || '']);
-      return 'true'; 
-    },
-    LMSFinish: function(p) { 
-      console.log('[SCORM Bridge] LMSFinish');
-      callParentAPI('12', 'LMSFinish', [p || '']);
-      return 'true'; 
-    },
-    LMSGetValue: function(e) { 
-      var cached = cache['12_' + e];
-      callParentAPI('12', 'LMSGetValue', [e]).then(function(r) { cache['12_' + e] = r; });
-      return cached || '';
-    },
-    LMSSetValue: function(e, v) { 
-      cache['12_' + e] = v;
-      callParentAPI('12', 'LMSSetValue', [e, v]);
-      return 'true'; 
-    },
-    LMSCommit: function(p) { 
-      callParentAPI('12', 'LMSCommit', [p || '']);
-      return 'true'; 
-    },
-    LMSGetLastError: function() { return '0'; },
-    LMSGetErrorString: function(c) { return 'No Error'; },
-    LMSGetDiagnostic: function(c) { return 'No Error'; }
-  };
-  
-  // API SCORM 2004
-  window.API_1484_11 = {
-    _isBridge: true,
-    Initialize: function(p) { 
-      console.log('[SCORM Bridge] Initialize');
-      callParentAPI('2004', 'Initialize', [p || '']);
-      return 'true'; 
-    },
-    Terminate: function(p) { 
-      console.log('[SCORM Bridge] Terminate');
-      callParentAPI('2004', 'Terminate', [p || '']);
-      return 'true'; 
-    },
-    GetValue: function(e) { 
-      var cached = cache['2004_' + e];
-      callParentAPI('2004', 'GetValue', [e]).then(function(r) { cache['2004_' + e] = r; });
-      return cached || '';
-    },
-    SetValue: function(e, v) { 
-      cache['2004_' + e] = v;
-      callParentAPI('2004', 'SetValue', [e, v]);
-      return 'true'; 
-    },
-    Commit: function(p) { 
-      callParentAPI('2004', 'Commit', [p || '']);
-      return 'true'; 
-    },
-    GetLastError: function() { return '0'; },
-    GetErrorString: function(c) { return 'No Error'; },
-    GetDiagnostic: function(c) { return 'No Error'; }
-  };
-  
-  console.log('[SCORM Bridge] APIs initialized');
-  
-  // Notifier le parent que le contenu est prêt
-  if (window.parent && window.parent !== window) {
-    window.parent.postMessage({ type: 'scorm_content_ready' }, '*');
-  }
-})();
-</script>
-`;
+                const scormBridgeScript = '<script>\n' +
+'(function() {\n' +
+'  if (window.API && window.API._isBridge) return;\n' +
+'  var pendingCalls = {};\n' +
+'  var callId = 0;\n' +
+'  function generateCallId() { return "scorm_" + (++callId) + "_" + Date.now(); }\n' +
+'  function callParentAPI(apiType, method, args) {\n' +
+'    return new Promise(function(resolve) {\n' +
+'      var id = generateCallId();\n' +
+'      pendingCalls[id] = resolve;\n' +
+'      var target = window.parent;\n' +
+'      if (target === window) target = window.opener;\n' +
+'      if (!target || target === window) { resolve("false"); return; }\n' +
+'      target.postMessage({ type: "scorm_api_call", apiType: apiType, method: method, args: args, callId: id }, "*");\n' +
+'      setTimeout(function() { if (pendingCalls[id]) { delete pendingCalls[id]; resolve("false"); } }, 5000);\n' +
+'    });\n' +
+'  }\n' +
+'  window.addEventListener("message", function(event) {\n' +
+'    var data = event.data;\n' +
+'    if (!data || data.type !== "scorm_api_response") return;\n' +
+'    var resolve = pendingCalls[data.callId];\n' +
+'    if (resolve) { delete pendingCalls[data.callId]; resolve(data.result); }\n' +
+'  });\n' +
+'  var cache = {};\n' +
+'  window.API = {\n' +
+'    _isBridge: true,\n' +
+'    LMSInitialize: function(p) { callParentAPI("12", "LMSInitialize", [p || ""]); return "true"; },\n' +
+'    LMSFinish: function(p) { callParentAPI("12", "LMSFinish", [p || ""]); return "true"; },\n' +
+'    LMSGetValue: function(e) { var c = cache["12_" + e]; callParentAPI("12", "LMSGetValue", [e]).then(function(r) { cache["12_" + e] = r; }); return c || ""; },\n' +
+'    LMSSetValue: function(e, v) { cache["12_" + e] = v; callParentAPI("12", "LMSSetValue", [e, v]); return "true"; },\n' +
+'    LMSCommit: function(p) { callParentAPI("12", "LMSCommit", [p || ""]); return "true"; },\n' +
+'    LMSGetLastError: function() { return "0"; },\n' +
+'    LMSGetErrorString: function(c) { return "No Error"; },\n' +
+'    LMSGetDiagnostic: function(c) { return "No Error"; }\n' +
+'  };\n' +
+'  window.API_1484_11 = {\n' +
+'    _isBridge: true,\n' +
+'    Initialize: function(p) { callParentAPI("2004", "Initialize", [p || ""]); return "true"; },\n' +
+'    Terminate: function(p) { callParentAPI("2004", "Terminate", [p || ""]); return "true"; },\n' +
+'    GetValue: function(e) { var c = cache["2004_" + e]; callParentAPI("2004", "GetValue", [e]).then(function(r) { cache["2004_" + e] = r; }); return c || ""; },\n' +
+'    SetValue: function(e, v) { cache["2004_" + e] = v; callParentAPI("2004", "SetValue", [e, v]); return "true"; },\n' +
+'    Commit: function(p) { callParentAPI("2004", "Commit", [p || ""]); return "true"; },\n' +
+'    GetLastError: function() { return "0"; },\n' +
+'    GetErrorString: function(c) { return "No Error"; },\n' +
+'    GetDiagnostic: function(c) { return "No Error"; }\n' +
+'  };\n' +
+'  console.log("[SCORM Bridge] APIs initialized");\n' +
+'  if (window.parent && window.parent !== window) { window.parent.postMessage({ type: "scorm_content_ready" }, "*"); }\n' +
+'})();\n' +
+'<\/script>';
                 
                 // Vérifier si c'est un SCORM Codes Rousseau
                 const isCodesRousseau = content.includes('layer2.js') || content.includes('data-source');
