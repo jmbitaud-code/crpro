@@ -3935,7 +3935,7 @@
       const[uploading,setUploading]=useState(false);
       const[scormModal,setScormModal]=useState(false);
       const[scormEditing,setScormEditing]=useState(null);
-      const[scormForm,setScormForm]=useState({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'sco_0.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:'',tags:[]});
+      const[scormForm,setScormForm]=useState({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'index.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:'',tags:[]});
       const[scormSaving,setScormSaving]=useState(false);
       const[scormZipParsing,setScormZipParsing]=useState(false);
       const[scormZipFile,setScormZipFile]=useState(null);
@@ -3988,7 +3988,7 @@
           const zip = await JSZip.loadAsync(file);
           let manifest = null;
           let scoHtmlContent = null;
-          let entryPoint = 'sco_0.html';
+          let entryPoint = 'index.html';
           const filesToUpload = [];
           
           // Chercher les fichiers dans le ZIP
@@ -4048,6 +4048,34 @@
           // Extraire le titre
           const titleEl = xmlDoc.querySelector('title langstring') || xmlDoc.querySelector('title');
           const title = titleEl?.textContent?.trim() || file.name.replace('.zip','');
+          
+          // Extraire le point d'entrée depuis le manifest (si pas déjà détecté pour Codes Rousseau)
+          if(entryPoint === 'index.html'){
+            // Chercher dans les resources du manifest
+            const resources = xmlDoc.querySelectorAll('resource');
+            for(const res of resources){
+              const href = res.getAttribute('href');
+              const scormType = res.getAttribute('adlcp:scormtype') || res.getAttributeNS('http://www.adlnet.org/xsd/adlcp_rootv1p2', 'scormtype');
+              // Priorité aux ressources de type SCO avec un href HTML
+              if(href && href.endsWith('.html')){
+                entryPoint = href.split('/').pop(); // Garder juste le nom du fichier
+                console.log('Entry point detected from manifest:', entryPoint);
+                break;
+              }
+            }
+            // Fallback: chercher les fichiers HTML courants
+            if(entryPoint === 'index.html'){
+              const commonEntryPoints = ['story.html', 'index_lms.html', 'launch.html', 'player.html'];
+              const htmlFiles = filesToUpload.filter(f => f.name.endsWith('.html')).map(f => f.name);
+              for(const common of commonEntryPoints){
+                if(htmlFiles.includes(common)){
+                  entryPoint = common;
+                  console.log('Entry point fallback:', entryPoint);
+                  break;
+                }
+              }
+            }
+          }
           
           // Générer un slug unique
           const slug = title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/-+/g,'-').substring(0,50) + '-' + Date.now();
@@ -4715,7 +4743,7 @@
       };
       
       const resetForm=()=>setForm({title:'',vimeo_url:'',duration:'',category_id:'',description:'',sort_order:'',tags:[],theme_id:'',sub_theme_id:'',thumbnail_url:''});
-      const resetScormForm=()=>{setScormForm({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'sco_0.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:'',tags:[]});setScormZipFile(null);};
+      const resetScormForm=()=>{setScormForm({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'index.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:'',tags:[]});setScormZipFile(null);};
 
       // Gestion SCORM
       const handleScormSave=async()=>{
@@ -4725,7 +4753,7 @@
           description:scormForm.description||null,
           module_type:scormForm.module_type,
           package_url:scormForm.package_url||null,
-          entry_point:scormForm.entry_point||'sco_0.html',
+          entry_point:scormForm.entry_point||'index.html',
           category_id:scormForm.category_id||null,
           theme_id:scormForm.theme_id||null,
           sub_theme_id:scormForm.sub_theme_id||null,
@@ -5525,7 +5553,7 @@
             
             <div className="grid grid-cols-2 gap-4">
               <Select label="Type de module" value={scormForm.module_type} onChange={e=>setScormForm({...scormForm,module_type:e.target.value})} options={[{value:'scorm12',label:'SCORM 1.2'},{value:'scorm2004',label:'SCORM 2004'},{value:'xapi',label:'xAPI (Tin Can)'},{value:'cmi5',label:'cmi5'}]}/>
-              <Input label="Point d'entrée" value={scormForm.entry_point} onChange={e=>setScormForm({...scormForm,entry_point:e.target.value})} placeholder="sco_0.html"/>
+              <Input label="Point d'entrée" value={scormForm.entry_point} onChange={e=>setScormForm({...scormForm,entry_point:e.target.value})} placeholder="story.html, index.html..."/>
             </div>
             
             <Input label="URL du contenu distant *" value={scormForm.package_url} onChange={e=>setScormForm({...scormForm,package_url:e.target.value})} placeholder="https://lms.codesrousseau.fr/pluginfile.php/..."/>
