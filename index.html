@@ -3938,6 +3938,7 @@
       const[scormForm,setScormForm]=useState({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'index.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:'',tags:[]});
       const[scormSaving,setScormSaving]=useState(false);
       const[scormZipParsing,setScormZipParsing]=useState(false);
+      const[scormUploadProgress,setScormUploadProgress]=useState('');
       const[scormZipFile,setScormZipFile]=useState(null);
       const[previewScorm,setPreviewScorm]=useState(null);
       const[licensedIds,setLicensedIds]=useState({videos:[],scorm:[],quizzes:[],courses:[],paths:[],hasFullCatalog:false,hasAnyLicense:false});
@@ -3993,45 +3994,24 @@
           
           // Chercher les fichiers dans le ZIP
           const fileNames = Object.keys(zip.files);
+          
+          // Première passe : lire le manifest et détecter les fichiers HTML Codes Rousseau
           for(const filename of fileNames){
             const zipEntry = zip.files[filename];
             if(zipEntry.dir) continue;
             
             const name = filename.toLowerCase();
-            const actualName = filename.split('/').pop();
             
             if(name.endsWith('imsmanifest.xml')){
               manifest = await zipEntry.async('string');
-              filesToUpload.push({name:'imsmanifest.xml', content:manifest, type:'application/xml'});
             }
             if(name.endsWith('.html')){
-              let content = await zipEntry.async('string');
-              
-              // Injecter lms_origin dans le fichier HTML pour Codes Rousseau
+              const content = await zipEntry.async('string');
+              // Détecter si c'est un SCORM Codes Rousseau
               if(content.includes('layer2.js') || content.includes('data-source')){
-                
-                // Méthode 1: Définir window.lms_origin DANS le script de chargement de layer2.js
-                content = content.replace(
-                  "var url = 'https://lms.codesrousseau.fr",
-                  "window.lms_origin = '" + lmsOrigin + "'; window.LMS_ORIGIN = '" + lmsOrigin + "'; var url = 'https://lms.codesrousseau.fr"
-                );
-                
-                // Méthode 2: Ajouter lms_origin à l'URL de layer2.js
-                content = content.replace(
-                  /layer2\.js\?cacherev=/g,
-                  'layer2.js?lms_origin=' + encodeURIComponent(lmsOrigin) + '&cacherev='
-                );
-                
-                // NE PAS modifier data-clientid - le laisser vide comme l'original
-                // Codes Rousseau détermine le client à partir du domaine lms_origin
-                
                 scoHtmlContent = content;
-                entryPoint = actualName;
-                
-                console.log('Modified HTML with lms_origin injection (data-clientid unchanged)');
+                entryPoint = filename.split('/').pop();
               }
-              
-              filesToUpload.push({name:actualName, content:content, type:'text/html; charset=utf-8'});
             }
           }
           
@@ -4040,6 +4020,80 @@
             setScormZipParsing(false);
             return;
           }
+          
+          // Deuxième passe : préparer TOUS les fichiers pour upload
+          // Détecter si tous les fichiers sont dans un dossier racine commun
+          let rootFolder = '';
+          const firstFile = fileNames.find(f => !zip.files[f].dir);
+          if(firstFile && firstFile.includes('/')){
+            const potentialRoot = firstFile.split('/')[0];
+            const allInRoot = fileNames.every(f => f.startsWith(potentialRoot + '/') || f === potentialRoot || zip.files[f].dir);
+            if(allInRoot) rootFolder = potentialRoot + '/';
+          }
+          
+          console.log('SCORM ZIP structure - root folder:', rootFolder || '(none)');
+          console.log('SCORM ZIP total files:', fileNames.length);
+          
+          for(const filename of fileNames){
+            const zipEntry = zip.files[filename];
+            if(zipEntry.dir) continue;
+            
+            const name = filename.toLowerCase();
+            // Enlever le dossier racine si présent
+            let relativePath = rootFolder ? filename.replace(rootFolder, '') : filename;
+            if(!relativePath) continue;
+            
+            // Déterminer le type MIME
+            let mimeType = 'application/octet-stream';
+            if(name.endsWith('.html') || name.endsWith('.htm')) mimeType = 'text/html; charset=utf-8';
+            else if(name.endsWith('.xml')) mimeType = 'application/xml';
+            else if(name.endsWith('.js')) mimeType = 'application/javascript';
+            else if(name.endsWith('.css')) mimeType = 'text/css';
+            else if(name.endsWith('.json')) mimeType = 'application/json';
+            else if(name.endsWith('.png')) mimeType = 'image/png';
+            else if(name.endsWith('.jpg') || name.endsWith('.jpeg')) mimeType = 'image/jpeg';
+            else if(name.endsWith('.gif')) mimeType = 'image/gif';
+            else if(name.endsWith('.svg')) mimeType = 'image/svg+xml';
+            else if(name.endsWith('.mp3')) mimeType = 'audio/mpeg';
+            else if(name.endsWith('.mp4')) mimeType = 'video/mp4';
+            else if(name.endsWith('.webm')) mimeType = 'video/webm';
+            else if(name.endsWith('.ogg')) mimeType = 'audio/ogg';
+            else if(name.endsWith('.wav')) mimeType = 'audio/wav';
+            else if(name.endsWith('.woff')) mimeType = 'font/woff';
+            else if(name.endsWith('.woff2')) mimeType = 'font/woff2';
+            else if(name.endsWith('.ttf')) mimeType = 'font/ttf';
+            else if(name.endsWith('.eot')) mimeType = 'application/vnd.ms-fontobject';
+            else if(name.endsWith('.swf')) mimeType = 'application/x-shockwave-flash';
+            
+            // Lire le contenu
+            let content;
+            const isTextFile = name.endsWith('.html') || name.endsWith('.htm') || name.endsWith('.xml') || 
+                               name.endsWith('.js') || name.endsWith('.css') || name.endsWith('.json') ||
+                               name.endsWith('.txt') || name.endsWith('.vtt') || name.endsWith('.srt');
+            
+            if(isTextFile){
+              content = await zipEntry.async('string');
+              // Injecter lms_origin pour Codes Rousseau (seulement dans les HTML)
+              if(name.endsWith('.html') && (content.includes('layer2.js') || content.includes('data-source'))){
+                content = content.replace(
+                  "var url = 'https://lms.codesrousseau.fr",
+                  "window.lms_origin = '" + lmsOrigin + "'; window.LMS_ORIGIN = '" + lmsOrigin + "'; var url = 'https://lms.codesrousseau.fr"
+                );
+                content = content.replace(
+                  /layer2\.js\?cacherev=/g,
+                  'layer2.js?lms_origin=' + encodeURIComponent(lmsOrigin) + '&cacherev='
+                );
+              }
+              filesToUpload.push({name: relativePath, content: content, type: mimeType, isText: true});
+            } else {
+              // Fichiers binaires (images, audio, vidéo, fonts)
+              content = await zipEntry.async('arraybuffer');
+              filesToUpload.push({name: relativePath, content: content, type: mimeType, isText: false});
+            }
+          }
+          
+          console.log('SCORM files to upload:', filesToUpload.length);
+          setScormUploadProgress(`${filesToUpload.length} fichiers détectés...`);
           
           // Parser le manifest XML
           const parser = new DOMParser();
@@ -4095,7 +4149,12 @@
           // Uploader vers Supabase Storage
           let packageUrl = '';
           try {
-            console.log('Uploading modified SCORM files with lms_origin:', lmsOrigin);
+            console.log('Uploading SCORM files:', filesToUpload.length, 'files');
+            setScormUploadProgress(`Préparation de ${filesToUpload.length} fichiers...`);
+            
+            let uploadedCount = 0;
+            let errorCount = 0;
+            
             for(const f of filesToUpload){
               const filePath = slug + '/' + f.name;
               const blob = new Blob([f.content], {type: f.type});
@@ -4105,14 +4164,23 @@
               });
               if(result.error){
                 console.error('Upload error:', f.name, result.error);
+                errorCount++;
                 if(result.error.message && result.error.message.includes('bucket')){
                   alert('Le bucket "scorm-dispatch" n\'existe pas. Créez-le dans Supabase Storage.');
                   break;
                 }
               } else {
-                console.log('Uploaded:', filePath);
+                uploadedCount++;
+                // Mettre à jour la progression tous les 10 fichiers ou à la fin
+                if(uploadedCount % 10 === 0 || uploadedCount === filesToUpload.length){
+                  setScormUploadProgress(`Upload: ${uploadedCount}/${filesToUpload.length} fichiers...`);
+                }
               }
             }
+            
+            console.log('Upload complete:', uploadedCount, 'uploaded,', errorCount, 'errors');
+            setScormUploadProgress('');
+            
             const urlResult = supabase.storage.from('scorm-dispatch').getPublicUrl(slug + '/' + entryPoint);
             packageUrl = urlResult.data?.publicUrl || '';
           } catch(e) {
@@ -4135,6 +4203,7 @@
         } catch(err) {
           console.error('ZIP parse error:', err);
           alert('Erreur lecture ZIP: ' + err.message);
+          setScormUploadProgress('');
         }
         
         setScormZipParsing(false);
@@ -4743,7 +4812,7 @@
       };
       
       const resetForm=()=>setForm({title:'',vimeo_url:'',duration:'',category_id:'',description:'',sort_order:'',tags:[],theme_id:'',sub_theme_id:'',thumbnail_url:''});
-      const resetScormForm=()=>{setScormForm({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'index.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:'',tags:[]});setScormZipFile(null);};
+      const resetScormForm=()=>{setScormForm({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'index.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:'',tags:[]});setScormZipFile(null);setScormUploadProgress('');};
 
       // Gestion SCORM
       const handleScormSave=async()=>{
@@ -5519,9 +5588,10 @@
               <div className="border-2 border-dashed border-gray-600 rounded-lg p-6 text-center hover:border-indigo-500 transition-colors">
                 <input type="file" ref={scormZipRef} onChange={e=>{if(e.target.files[0])parseScormZip(e.target.files[0]);}} accept=".zip" className="hidden"/>
                 {scormZipParsing?(
-                  <div className="flex items-center justify-center gap-3">
+                  <div className="flex flex-col items-center justify-center gap-2">
                     <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"/>
-                    <span>Analyse du ZIP...</span>
+                    <span>{scormUploadProgress || 'Analyse du ZIP...'}</span>
+                    {scormUploadProgress && <span className="text-xs text-gray-500">Cela peut prendre quelques minutes pour les gros packages</span>}
                   </div>
                 ):scormZipFile?(
                   <div>
