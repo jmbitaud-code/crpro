@@ -147,10 +147,10 @@
       }
       
       // ========================================
-      // STANDARD (Articulate, etc.) : Fetch + réécriture URLs + srcdoc
+      // STANDARD (Articulate, etc.) : Fetch + iframe.contentDocument.write()
       // Contourne le sandboxing de Supabase Storage
       // ========================================
-      console.log('[SCORM Loader] Mode Standard: fetch + rewrite URLs + srcdoc');
+      console.log('[SCORM Loader] Mode Standard: fetch + document.write');
       document.getElementById('loading-text').textContent = 'Téléchargement...';
       
       fetch(scormUrl)
@@ -162,37 +162,8 @@
           console.log('[SCORM Loader] HTML fetched, length:', html.length);
           document.getElementById('loading-text').textContent = 'Préparation...';
           
-          // Fonction pour convertir une URL relative en absolue
-          function toAbsoluteUrl(relativeUrl) {
-            if (!relativeUrl) return relativeUrl;
-            // Déjà absolue ?
-            if (relativeUrl.match(/^(https?:\/\/|data:|blob:|javascript:|#)/i)) {
-              return relativeUrl;
-            }
-            // URL relative
-            if (relativeUrl.startsWith('/')) {
-              // Relative à la racine du domaine
-              var urlObj = new URL(baseUrl);
-              return urlObj.origin + relativeUrl;
-            }
-            // Relative au dossier courant
-            return baseUrl + relativeUrl;
-          }
-          
-          // Réécrire toutes les URLs relatives en absolues
-          // src="..." et href="..."
-          html = html.replace(/(src|href)\s*=\s*["']([^"']+)["']/gi, function(match, attr, url) {
-            var absUrl = toAbsoluteUrl(url);
-            return attr + '="' + absUrl + '"';
-          });
-          
-          // url(...) dans les styles inline
-          html = html.replace(/url\s*\(\s*["']?([^"')]+)["']?\s*\)/gi, function(match, url) {
-            var absUrl = toAbsoluteUrl(url);
-            return 'url("' + absUrl + '")';
-          });
-          
-          console.log('[SCORM Loader] URLs rewritten with base:', baseUrl);
+          // Injecter une balise <base> pour que les chemins relatifs fonctionnent
+          var baseTag = '<base href="' + baseUrl + '">';
           
           // Injecter le script d'API SCORM au début du <head>
           var apiScript = '<script>\n' +
@@ -203,25 +174,36 @@
           
           // Modifier le HTML
           if (html.indexOf('<head>') !== -1) {
-            html = html.replace('<head>', '<head>\n' + apiScript);
+            html = html.replace('<head>', '<head>\n' + baseTag + '\n' + apiScript);
           } else if (html.indexOf('<HEAD>') !== -1) {
-            html = html.replace('<HEAD>', '<HEAD>\n' + apiScript);
+            html = html.replace('<HEAD>', '<HEAD>\n' + baseTag + '\n' + apiScript);
           } else {
-            html = apiScript + '\n' + html;
+            html = '<!DOCTYPE html><html><head>' + baseTag + apiScript + '</head><body>' + html + '</body></html>';
           }
           
+          console.log('[SCORM Loader] Using document.write with base:', baseUrl);
+          
+          // Charger about:blank puis écrire le contenu
+          frame.src = 'about:blank';
           frame.onload = function() {
-            console.log('[SCORM Loader] Frame loaded (srcdoc)');
-            document.getElementById('loading').style.display = 'none';
-            frame.style.display = 'block';
-            
-            if (window.parent && window.parent !== window) {
-              window.parent.postMessage({ type: 'scorm_content_ready' }, '*');
+            try {
+              var doc = frame.contentDocument || frame.contentWindow.document;
+              doc.open();
+              doc.write(html);
+              doc.close();
+              
+              console.log('[SCORM Loader] Content written to iframe');
+              document.getElementById('loading').style.display = 'none';
+              frame.style.display = 'block';
+              
+              if (window.parent && window.parent !== window) {
+                window.parent.postMessage({ type: 'scorm_content_ready' }, '*');
+              }
+            } catch (e) {
+              console.error('[SCORM Loader] document.write failed:', e);
+              document.getElementById('loading').innerHTML = '<div class="error">Erreur: ' + e.message + '</div>';
             }
           };
-          
-          // Utiliser srcdoc avec le HTML modifié
-          frame.srcdoc = html;
         })
         .catch(function(error) {
           console.error('[SCORM Loader] Error:', error);
