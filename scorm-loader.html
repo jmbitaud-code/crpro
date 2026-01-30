@@ -147,10 +147,10 @@
       }
       
       // ========================================
-      // STANDARD (Articulate, etc.) : Fetch + Blob URL
+      // STANDARD (Articulate, etc.) : Fetch + srcdoc
       // Contourne le sandboxing de Supabase Storage
       // ========================================
-      console.log('[SCORM Loader] Mode Standard: fetch + blob URL');
+      console.log('[SCORM Loader] Mode Standard: fetch + srcdoc');
       document.getElementById('loading-text').textContent = 'Téléchargement...';
       
       fetch(scormUrl)
@@ -181,14 +181,10 @@
             html = baseTag + '\n' + apiScript + '\n' + html;
           }
           
-          // Créer un Blob et une URL blob
-          var blob = new Blob([html], { type: 'text/html' });
-          var blobUrl = URL.createObjectURL(blob);
-          
-          console.log('[SCORM Loader] Blob URL created');
+          console.log('[SCORM Loader] Using srcdoc with base:', baseUrl);
           
           frame.onload = function() {
-            console.log('[SCORM Loader] Frame loaded (blob)');
+            console.log('[SCORM Loader] Frame loaded (srcdoc)');
             document.getElementById('loading').style.display = 'none';
             frame.style.display = 'block';
             
@@ -197,7 +193,8 @@
             }
           };
           
-          frame.src = blobUrl;
+          // Utiliser srcdoc au lieu de blob URL
+          frame.srcdoc = html;
         })
         .catch(function(error) {
           console.error('[SCORM Loader] Error:', error);
