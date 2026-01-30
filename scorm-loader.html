@@ -27,34 +27,37 @@
       margin: 0 auto 16px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .error { color: #f87171; }
   </style>
 </head>
 <body>
   <div class="loading" id="loading">
     <div class="spinner"></div>
-    <div>Chargement du module...</div>
+    <div id="loading-text">Chargement du module...</div>
   </div>
   
-  <iframe id="scorm-frame" style="display:none;" allow="fullscreen"></iframe>
+  <iframe id="scorm-frame" style="display:none;"></iframe>
   
   <script>
     (function() {
-      const params = new URLSearchParams(window.location.search);
-      const scormUrl = params.get('url');
+      var params = new URLSearchParams(window.location.search);
+      var scormUrl = params.get('url');
+      var scormType = params.get('type') || 'standard'; // 'cr' pour Codes Rousseau, 'standard' pour les autres
       
       if (!scormUrl) {
-        document.getElementById('loading').innerHTML = '<div style="color:#f87171;">Erreur: URL non spécifiée</div>';
+        document.getElementById('loading').innerHTML = '<div class="error">Erreur: URL non spécifiée</div>';
         return;
       }
       
       console.log('[SCORM Loader] Loading:', scormUrl);
+      console.log('[SCORM Loader] Type:', scormType === 'cr' ? 'Codes Rousseau' : 'Standard (Articulate, etc.)');
+      
+      // Extraire l'URL de base pour les ressources relatives
+      var baseUrl = scormUrl.substring(0, scormUrl.lastIndexOf('/') + 1);
       
       // ========================================
-      // EXPOSER window.API comme proxy vers le parent
-      // Pour les SCORM Codes Rousseau (layer2.js)
+      // CRÉER LES PROXIES API vers le parent
       // ========================================
-      
-      // Vérifier si le parent a une API SCORM
       var parentAPI = null;
       var parentAPI2004 = null;
       try {
@@ -62,10 +65,9 @@
         parentAPI2004 = window.parent.API_1484_11;
         console.log('[SCORM Loader] Parent API found:', !!parentAPI, !!parentAPI2004);
       } catch (e) {
-        console.warn('[SCORM Loader] Cannot access parent API (cross-origin?)');
+        console.warn('[SCORM Loader] Cannot access parent API');
       }
       
-      // Créer des proxies vers l'API parente
       if (parentAPI) {
         window.API = {
           LMSInitialize: function(p) { return parentAPI.LMSInitialize(p); },
@@ -96,55 +98,111 @@
       
       // ========================================
       // RELAYER les messages postMessage
-      // Pour les SCORM Articulate (avec bridge injecté)
       // ========================================
-      
       window.addEventListener('message', function(event) {
         var data = event.data;
         if (!data || !data.type) return;
         
         var frame = document.getElementById('scorm-frame');
         
-        // Messages venant de l'iframe SCORM -> relayer vers le parent (CRPro)
         if (data.type === 'scorm_api_call' || data.type === 'scorm_content_ready') {
-          console.log('[SCORM Loader] Relaying to parent:', data.type, data.method);
           if (window.parent && window.parent !== window) {
             window.parent.postMessage(data, '*');
           }
         }
         
-        // Réponses venant du parent (CRPro) -> relayer vers l'iframe SCORM
         if (data.type === 'scorm_api_response') {
-          console.log('[SCORM Loader] Relaying to iframe:', data.type, data.callId);
           if (frame && frame.contentWindow) {
             frame.contentWindow.postMessage(data, '*');
           }
         }
       });
       
-      // ========================================
-      // CHARGER le contenu SCORM dans l'iframe
-      // ========================================
-      
       var frame = document.getElementById('scorm-frame');
       
-      frame.onload = function() {
-        console.log('[SCORM Loader] Frame loaded');
-        document.getElementById('loading').style.display = 'none';
-        frame.style.display = 'block';
+      // ========================================
+      // CODES ROUSSEAU : Chargement direct (iframe.src)
+      // layer2.js a besoin d'accéder à window.parent.API directement
+      // ========================================
+      if (scormType === 'cr') {
+        console.log('[SCORM Loader] Mode Codes Rousseau: chargement direct');
         
-        // Notifier le parent que le contenu est prêt
-        if (window.parent && window.parent !== window) {
-          window.parent.postMessage({ type: 'scorm_content_ready' }, '*');
-        }
-      };
+        frame.onload = function() {
+          console.log('[SCORM Loader] Frame loaded (direct)');
+          document.getElementById('loading').style.display = 'none';
+          frame.style.display = 'block';
+          
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage({ type: 'scorm_content_ready' }, '*');
+          }
+        };
+        
+        frame.onerror = function(e) {
+          console.error('[SCORM Loader] Frame error:', e);
+          document.getElementById('loading').innerHTML = '<div class="error">Erreur de chargement</div>';
+        };
+        
+        frame.src = scormUrl;
+        return;
+      }
       
-      frame.onerror = function(e) {
-        console.error('[SCORM Loader] Frame error:', e);
-        document.getElementById('loading').innerHTML = '<div style="color:#f87171;">Erreur de chargement</div>';
-      };
+      // ========================================
+      // STANDARD (Articulate, etc.) : Fetch + Blob URL
+      // Contourne le sandboxing de Supabase Storage
+      // ========================================
+      console.log('[SCORM Loader] Mode Standard: fetch + blob URL');
+      document.getElementById('loading-text').textContent = 'Téléchargement...';
       
-      frame.src = scormUrl;
+      fetch(scormUrl)
+        .then(function(response) {
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          return response.text();
+        })
+        .then(function(html) {
+          console.log('[SCORM Loader] HTML fetched, length:', html.length);
+          document.getElementById('loading-text').textContent = 'Préparation...';
+          
+          // Injecter une balise <base> pour que les chemins relatifs fonctionnent
+          var baseTag = '<base href="' + baseUrl + '">';
+          
+          // Injecter le script d'API SCORM au début du <head>
+          var apiScript = '<script>\n' +
+            'window.API = window.parent.API;\n' +
+            'window.API_1484_11 = window.parent.API_1484_11;\n' +
+            'console.log("[SCORM Content] APIs inherited from parent");\n' +
+            '<\/script>\n';
+          
+          // Modifier le HTML
+          if (html.indexOf('<head>') !== -1) {
+            html = html.replace('<head>', '<head>\n' + baseTag + '\n' + apiScript);
+          } else if (html.indexOf('<HEAD>') !== -1) {
+            html = html.replace('<HEAD>', '<HEAD>\n' + baseTag + '\n' + apiScript);
+          } else {
+            html = baseTag + '\n' + apiScript + '\n' + html;
+          }
+          
+          // Créer un Blob et une URL blob
+          var blob = new Blob([html], { type: 'text/html' });
+          var blobUrl = URL.createObjectURL(blob);
+          
+          console.log('[SCORM Loader] Blob URL created');
+          
+          frame.onload = function() {
+            console.log('[SCORM Loader] Frame loaded (blob)');
+            document.getElementById('loading').style.display = 'none';
+            frame.style.display = 'block';
+            
+            if (window.parent && window.parent !== window) {
+              window.parent.postMessage({ type: 'scorm_content_ready' }, '*');
+            }
+          };
+          
+          frame.src = blobUrl;
+        })
+        .catch(function(error) {
+          console.error('[SCORM Loader] Error:', error);
+          document.getElementById('loading').innerHTML = '<div class="error">Erreur: ' + error.message + '</div>';
+        });
       
     })();
   </script>
