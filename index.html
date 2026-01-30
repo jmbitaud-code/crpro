@@ -248,6 +248,52 @@
       return`${m}min`;
     };
     
+    // Fonction utilitaire pour parser les URLs Vimeo (y compris vidéos privées avec hash)
+    // Formats supportés:
+    // - https://vimeo.com/123456789
+    // - https://vimeo.com/123456789/abcdef1234 (vidéo privée)
+    // - https://player.vimeo.com/video/123456789?h=abcdef1234
+    // - 123456789 (ID seul)
+    // - 123456789/abcdef1234 (ID + hash)
+    const parseVimeoUrl=(input)=>{
+      if(!input)return{id:'',hash:''};
+      const str=String(input).trim();
+      
+      // Format: player.vimeo.com/video/ID?h=HASH
+      let match=str.match(/player\.vimeo\.com\/video\/(\d+)\?h=([a-zA-Z0-9]+)/);
+      if(match)return{id:match[1],hash:match[2]};
+      
+      // Format: vimeo.com/ID/HASH
+      match=str.match(/vimeo\.com\/(\d+)\/([a-zA-Z0-9]+)/);
+      if(match)return{id:match[1],hash:match[2]};
+      
+      // Format: vimeo.com/ID (sans hash)
+      match=str.match(/vimeo\.com\/(\d+)/);
+      if(match)return{id:match[1],hash:''};
+      
+      // Format: ID/HASH (sans domaine)
+      match=str.match(/^(\d+)\/([a-zA-Z0-9]+)$/);
+      if(match)return{id:match[1],hash:match[2]};
+      
+      // Format: ID seul
+      match=str.match(/^(\d+)$/);
+      if(match)return{id:match[1],hash:''};
+      
+      return{id:str,hash:''};
+    };
+    
+    // Construire l'URL d'embed Vimeo avec hash si présent
+    const buildVimeoEmbedUrl=(vimeoId,vimeoHash,options={})=>{
+      if(!vimeoId)return'';
+      let url=`https://player.vimeo.com/video/${vimeoId}`;
+      const params=[];
+      if(vimeoHash)params.push(`h=${vimeoHash}`);
+      if(options.background)params.push('background=1');
+      if(options.autoplay)params.push('autoplay=1');
+      if(params.length>0)url+=`?${params.join('&')}`;
+      return url;
+    };
+    
     // Labels et couleurs SCORM
     const SCORM_STATUS_LABELS={
       'not attempted':'Non commencé',
@@ -3876,7 +3922,7 @@
       const[detailModal,setDetailModal]=useState(null);
       const[editing,setEditing]=useState(null);
       const[search,setSearch]=useState('');
-      const[form,setForm]=useState({title:'',vimeo_id:'',duration:'',category_id:'',description:'',sort_order:'',tags:'',theme_id:'',sub_theme_id:'',thumbnail_url:''});
+      const[form,setForm]=useState({title:'',vimeo_url:'',duration:'',category_id:'',description:'',sort_order:'',tags:'',theme_id:'',sub_theme_id:'',thumbnail_url:''});
       const[saving,setSaving]=useState(false);
       const[importData,setImportData]=useState([]);
       const[importLoading,setImportLoading]=useState(false);
@@ -4663,7 +4709,7 @@
         load();
       };
       
-      const resetForm=()=>setForm({title:'',vimeo_id:'',duration:'',category_id:'',description:'',sort_order:'',tags:'',theme_id:'',sub_theme_id:'',thumbnail_url:''});
+      const resetForm=()=>setForm({title:'',vimeo_url:'',duration:'',category_id:'',description:'',sort_order:'',tags:'',theme_id:'',sub_theme_id:'',thumbnail_url:''});
       const resetScormForm=()=>{setScormForm({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'sco_0.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:''});setScormZipFile(null);};
 
       // Gestion SCORM
@@ -4739,17 +4785,16 @@
 
       const handleSave=async()=>{
         setSaving(true);
-        const vimeoMatch=form.vimeo_id.match(/vimeo\.com\/(\d+)/)||form.vimeo_id.match(/^(\d+)$/);
-        const vimeoId=vimeoMatch?vimeoMatch[1]:form.vimeo_id;
+        const{id:vimeoId,hash:vimeoHash}=parseVimeoUrl(form.vimeo_url);
         const tagsArray=form.tags?form.tags.split(',').map(t=>t.trim()).filter(t=>t):null;
-        const payload={title:form.title,vimeo_id:vimeoId,duration:form.duration||null,category:form.category||null,description:form.description||null,sort_order:form.sort_order?parseInt(form.sort_order):null,tags:tagsArray,theme:form.theme||null,thumbnail_url:form.thumbnail_url||null,center_id:center?.id,created_by:profile?.id};
+        const payload={title:form.title,vimeo_id:vimeoId,vimeo_hash:vimeoHash||null,duration:form.duration||null,category:form.category||null,description:form.description||null,sort_order:form.sort_order?parseInt(form.sort_order):null,tags:tagsArray,theme:form.theme||null,thumbnail_url:form.thumbnail_url||null,center_id:center?.id,created_by:profile?.id};
         if(editing)await supabase.from('videos').update(payload).eq('id',editing.id);
         else await supabase.from('videos').insert(payload);
         await load();setModal(false);resetForm();setEditing(null);setSaving(false);
       };
       const handleDelete=async id=>{if(!confirm('Supprimer ?'))return;await supabase.from('videos').delete().eq('id',id);load();};
 
-      const handleFileSelect=async(e)=>{const file=e.target.files[0];if(!file)return;try{const data=await file.arrayBuffer();const workbook=XLSX.read(data);const sheet=workbook.Sheets[workbook.SheetNames[0]];const jsonData=XLSX.utils.sheet_to_json(sheet);const mapped=jsonData.map((row,i)=>({_index:i+1,title:row['Titre']||row['title']||'','Catégorie':row['Catégorie']||row['category']||row['categorie']||'','Thème':row['Thème']||row['theme']||'','Sous-thème':row['Sous-thème']||row['sub_theme']||row['subtheme']||'',vimeo_id:String(row['ID Vimeo']||row['vimeo_id']||''),duration:row['Durée']||row['duration']||'',description:row['Description']||row['description']||'',sort_order:row['Ordre']||row['sort_order']||null,tags:row['Tags']||row['tags']||'',thumbnail_url:row['Miniature URL']||row['thumbnail_url']||'',_valid:!!(row['Titre']||row['title'])&&!!(row['ID Vimeo']||row['vimeo_id'])}));setImportData(mapped);setImportResult(null);}catch(err){alert('Erreur: '+err.message);}e.target.value='';};
+      const handleFileSelect=async(e)=>{const file=e.target.files[0];if(!file)return;try{const data=await file.arrayBuffer();const workbook=XLSX.read(data);const sheet=workbook.Sheets[workbook.SheetNames[0]];const jsonData=XLSX.utils.sheet_to_json(sheet);const mapped=jsonData.map((row,i)=>({_index:i+1,title:row['Titre']||row['title']||'','Catégorie':row['Catégorie']||row['category']||row['categorie']||'','Thème':row['Thème']||row['theme']||'','Sous-thème':row['Sous-thème']||row['sub_theme']||row['subtheme']||'',vimeo_url:String(row['URL Vimeo']||row['ID Vimeo']||row['vimeo_url']||row['vimeo_id']||''),duration:row['Durée']||row['duration']||'',description:row['Description']||row['description']||'',sort_order:row['Ordre']||row['sort_order']||null,tags:row['Tags']||row['tags']||'',thumbnail_url:row['Miniature URL']||row['thumbnail_url']||'',_valid:!!(row['Titre']||row['title'])&&!!(row['URL Vimeo']||row['ID Vimeo']||row['vimeo_url']||row['vimeo_id'])}));setImportData(mapped);setImportResult(null);}catch(err){alert('Erreur: '+err.message);}e.target.value='';};
 
       const handleImport=async()=>{
         const validData=importData.filter(d=>d._valid);
@@ -4758,8 +4803,7 @@
         let created=0,updated=0,errors=0;
         
         for(const item of validData){
-          const vimeoMatch=item.vimeo_id.match(/vimeo\.com\/(\d+)/)||item.vimeo_id.match(/^(\d+)$/);
-          const vimeoId=vimeoMatch?vimeoMatch[1]:item.vimeo_id;
+          const{id:vimeoId,hash:vimeoHash}=parseVimeoUrl(item.vimeo_url);
           const tagsArray=item.tags?item.tags.split(',').map(t=>t.trim()).filter(t=>t):null;
           
           // Matcher catégorie/thème/sous-thème par nom
@@ -4788,6 +4832,7 @@
           const payload={
             title:item.title||item['Titre'],
             vimeo_id:vimeoId,
+            vimeo_hash:vimeoHash||null,
             duration:item.duration||item['Durée']||null,
             category_id:categoryId,
             theme_id:themeId,
@@ -4814,7 +4859,7 @@
         await load();
       };
 
-      const downloadTemplate=()=>{const template=[{'Titre':'Ma vidéo','ID Vimeo':'123456789','Durée':'5:30','Ordre':'1','Tags':'tag1, tag2','Catégorie':'Sécurité','Thème':'RGPD','Sous-thème':'Consentement','Description':'','Miniature URL':''}];const ws=XLSX.utils.json_to_sheet(template);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Videos');XLSX.writeFile(wb,'template_videos.xlsx');};
+      const downloadTemplate=()=>{const template=[{'Titre':'Ma vidéo','URL Vimeo':'https://vimeo.com/123456789/abcdef1234','Durée':'5:30','Ordre':'1','Tags':'tag1, tag2','Catégorie':'Sécurité','Thème':'RGPD','Sous-thème':'Consentement','Description':'','Miniature URL':''}];const ws=XLSX.utils.json_to_sheet(template);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Videos');XLSX.writeFile(wb,'template_videos.xlsx');};
 
       // Ouvrir le modal de détail (documents + chapitres)
       const openDetailModal=async(video)=>{
@@ -5051,7 +5096,7 @@
         
         {/* ONGLET VIDÉOS */}
         {activeTab==='videos'&&<>
-          {filtered.length===0?<Empty icon="Film" title="Aucune vidéo" desc={filterSource!=='all'||filterCategory?'Essayez d\'autres filtres':undefined}/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{filtered.map(v=>{const licensed=!v.is_lms_content||isLicensed('video',v.id);const isOwn=!v.is_lms_content;return<Card key={v.id} className={`overflow-hidden ${!licensed&&!isOwn?'opacity-80':''}`}>{isSuperAdmin&&<div className="flex items-center gap-2 p-2 border-b border-gray-700 bg-gray-800/50"><label className="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={v.is_lms_content} onChange={()=>toggleLMS('video',v)} className="rounded"/>📦 LMS</label><label className="flex items-center gap-2 text-xs cursor-pointer ml-auto"><input type="checkbox" checked={isSelected('video',v.id)} onChange={()=>toggleSelection('video',v.id)} className="rounded bg-indigo-600"/>Sélect.</label></div>}<div className="aspect-video bg-gray-900 relative">{v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:<iframe src={`https://player.vimeo.com/video/${v.vimeo_id}?background=1`} className="w-full h-full" allow="autoplay"/>}<div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>{v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}{!isSuperAdmin&&(v.is_lms_content?<div className={`absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒 Non licencié'}</div>:<div className="absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium bg-gray-600">📁 Mon contenu</div>)}</div><div className="p-4"><h3 className="font-semibold truncate">{v.title}</h3><div className="flex flex-wrap gap-1 mt-2">{v.content_categories?.name&&<span className="px-2 py-1 rounded text-xs" style={{backgroundColor:(v.content_categories?.color||'#6366f1')+'30',color:v.content_categories?.color||'#6366f1'}}>{v.content_categories.name}</span>}{v.category&&!v.content_categories&&<span className="px-2 py-1 bg-gray-700 rounded text-xs">{v.category}</span>}{v.theme&&<span className="px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded text-xs">{v.theme}</span>}</div><div className="flex flex-wrap gap-2 mt-3">{(licensed||isOwn||isSuperAdmin)&&<Button variant="ghost" size="sm" icon="Settings" onClick={()=>openDetailModal(v)}>Ressources</Button>}{canEdit&&isOwn&&<><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category_id:v.category_id||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme_id:v.theme_id||'',sub_theme_id:v.sub_theme_id||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(v.id)}/></>}{isSuperAdmin&&v.is_lms_content&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_id:v.vimeo_id,duration:v.duration||'',category_id:v.category_id||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme_id:v.theme_id||'',sub_theme_id:v.sub_theme_id||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button>}{!licensed&&!isOwn&&!isSuperAdmin&&canUseRequestCart&&<label className="flex items-center gap-2 text-xs cursor-pointer bg-purple-500/20 text-purple-300 px-2 py-1 rounded hover:bg-purple-500/30"><input type="checkbox" checked={isInRequestCart('video',v.id)} onChange={()=>toggleRequestCart('video',v.id,v)} className="rounded"/>Ajouter</label>}</div></div></Card>})}</div>}
+          {filtered.length===0?<Empty icon="Film" title="Aucune vidéo" desc={filterSource!=='all'||filterCategory?'Essayez d\'autres filtres':undefined}/>:<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{filtered.map(v=>{const licensed=!v.is_lms_content||isLicensed('video',v.id);const isOwn=!v.is_lms_content;return<Card key={v.id} className={`overflow-hidden ${!licensed&&!isOwn?'opacity-80':''}`}>{isSuperAdmin&&<div className="flex items-center gap-2 p-2 border-b border-gray-700 bg-gray-800/50"><label className="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={v.is_lms_content} onChange={()=>toggleLMS('video',v)} className="rounded"/>📦 LMS</label><label className="flex items-center gap-2 text-xs cursor-pointer ml-auto"><input type="checkbox" checked={isSelected('video',v.id)} onChange={()=>toggleSelection('video',v.id)} className="rounded bg-indigo-600"/>Sélect.</label></div>}<div className="aspect-video bg-gray-900 relative">{v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:<iframe src={buildVimeoEmbedUrl(v.vimeo_id,v.vimeo_hash,{background:true})} className="w-full h-full" allow="autoplay"/>}<div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>{v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}{!isSuperAdmin&&(v.is_lms_content?<div className={`absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒 Non licencié'}</div>:<div className="absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium bg-gray-600">📁 Mon contenu</div>)}</div><div className="p-4"><h3 className="font-semibold truncate">{v.title}</h3><div className="flex flex-wrap gap-1 mt-2">{v.content_categories?.name&&<span className="px-2 py-1 rounded text-xs" style={{backgroundColor:(v.content_categories?.color||'#6366f1')+'30',color:v.content_categories?.color||'#6366f1'}}>{v.content_categories.name}</span>}{v.category&&!v.content_categories&&<span className="px-2 py-1 bg-gray-700 rounded text-xs">{v.category}</span>}{v.theme&&<span className="px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded text-xs">{v.theme}</span>}</div><div className="flex flex-wrap gap-2 mt-3">{(licensed||isOwn||isSuperAdmin)&&<Button variant="ghost" size="sm" icon="Settings" onClick={()=>openDetailModal(v)}>Ressources</Button>}{canEdit&&isOwn&&<><Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_url:v.vimeo_hash?`${v.vimeo_id}/${v.vimeo_hash}`:v.vimeo_id,duration:v.duration||'',category_id:v.category_id||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme_id:v.theme_id||'',sub_theme_id:v.sub_theme_id||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button><Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(v.id)}/></>}{isSuperAdmin&&v.is_lms_content&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(v);setForm({title:v.title,vimeo_url:v.vimeo_hash?`${v.vimeo_id}/${v.vimeo_hash}`:v.vimeo_id,duration:v.duration||'',category_id:v.category_id||'',description:v.description||'',sort_order:v.sort_order||'',tags:v.tags?v.tags.join(', '):'',theme_id:v.theme_id||'',sub_theme_id:v.sub_theme_id||'',thumbnail_url:v.thumbnail_url||''});setModal(true);}}>Modifier</Button>}{!licensed&&!isOwn&&!isSuperAdmin&&canUseRequestCart&&<label className="flex items-center gap-2 text-xs cursor-pointer bg-purple-500/20 text-purple-300 px-2 py-1 rounded hover:bg-purple-500/30"><input type="checkbox" checked={isInRequestCart('video',v.id)} onChange={()=>toggleRequestCart('video',v.id,v)} className="rounded"/>Ajouter</label>}</div></div></Card>})}</div>}
         </>}
         
         {/* ONGLET SCORM */}
@@ -5226,10 +5271,10 @@
         </div>{/* Fin flex container */}
         
         {/* Modal édition vidéo */}
-        <Modal isOpen={modal} onClose={()=>{setModal(false);resetForm();setEditing(null);}} title={editing?'Modifier la vidéo':'Ajouter une vidéo'} size="lg"><div className="space-y-4"><div className="grid grid-cols-2 gap-4"><Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><Input label="ID Vimeo *" value={form.vimeo_id} onChange={e=>setForm({...form,vimeo_id:e.target.value})} placeholder="123456789"/></div><div className="grid grid-cols-3 gap-4"><Input label="Durée" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="5:30"/><Input label="Ordre" type="number" value={form.sort_order} onChange={e=>setForm({...form,sort_order:e.target.value})}/><Select label="Catégorie" value={form.category_id} onChange={e=>{setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''});}} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/></div><div className="grid grid-cols-3 gap-4"><Select label="Thème" value={form.theme_id} onChange={e=>{setForm({...form,theme_id:e.target.value,sub_theme_id:''});}} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/><Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/><Input label="Tags" value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="tag1, tag2"/></div><Input label="Miniature URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setModal(false);resetForm();setEditing(null);}}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
+        <Modal isOpen={modal} onClose={()=>{setModal(false);resetForm();setEditing(null);}} title={editing?'Modifier la vidéo':'Ajouter une vidéo'} size="lg"><div className="space-y-4"><div className="grid grid-cols-2 gap-4"><Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><Input label="URL Vimeo *" value={form.vimeo_url} onChange={e=>setForm({...form,vimeo_url:e.target.value})} placeholder="https://vimeo.com/123456789/abcdef1234"/></div><div className="text-xs text-gray-400 -mt-2 ml-1">💡 Formats acceptés: URL complète, ID/hash, ou ID seul</div><div className="grid grid-cols-3 gap-4"><Input label="Durée" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="5:30"/><Input label="Ordre" type="number" value={form.sort_order} onChange={e=>setForm({...form,sort_order:e.target.value})}/><Select label="Catégorie" value={form.category_id} onChange={e=>{setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''});}} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/></div><div className="grid grid-cols-3 gap-4"><Select label="Thème" value={form.theme_id} onChange={e=>{setForm({...form,theme_id:e.target.value,sub_theme_id:''});}} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/><Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/><Input label="Tags" value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="tag1, tag2"/></div><Input label="Miniature URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})}/><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setModal(false);resetForm();setEditing(null);}}>Annuler</Button><Button onClick={handleSave} loading={saving}>Enregistrer</Button></div></div></Modal>
         
         {/* Modal import */}
-        <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer des vidéos" size="lg"><div className="space-y-4"><div className="bg-gray-700/50 rounded-lg p-4"><p className="text-sm text-gray-400 mb-2">Colonnes : Titre*, ID Vimeo*, Durée, Ordre, Tags, Catégorie, Thème, Sous-thème, Description, Miniature URL</p><p className="text-xs text-gray-500 mb-2">💡 Les catégories/thèmes/sous-thèmes doivent correspondre à ceux créés dans la page Catégories</p><Button variant="ghost" size="sm" icon="Download" onClick={downloadTemplate}>Template</Button></div><div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center"><input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".xlsx,.xls,.csv" className="hidden"/><Icon name="Film" size={48} className="mx-auto text-gray-500 mb-4"/><Button variant="secondary" onClick={()=>fileInputRef.current?.click()}>Parcourir</Button></div>{importData.length>0&&!importResult&&<div className="max-h-48 overflow-y-auto bg-gray-700/50 rounded-lg p-2">{importData.filter(d=>d._valid).map((row,i)=><div key={i} className="text-sm py-1">{row.title||row['Titre']}</div>)}</div>}{importResult&&<Alert type={importResult.errors>0?'warning':'success'}>{importResult.created>0&&<span className="text-green-400">✅ {importResult.created} créée(s) </span>}{importResult.updated>0&&<span className="text-blue-400">🔄 {importResult.updated} mise(s) à jour </span>}{importResult.errors>0&&<span className="text-red-400">❌ {importResult.errors} erreur(s)</span>}</Alert>}<div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>{importData.length>0&&!importResult&&<Button icon="Upload" onClick={handleImport} loading={importLoading}>Importer {importData.filter(d=>d._valid).length}</Button>}</div></div></Modal>
+        <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer des vidéos" size="lg"><div className="space-y-4"><div className="bg-gray-700/50 rounded-lg p-4"><p className="text-sm text-gray-400 mb-2">Colonnes : Titre*, URL Vimeo*, Durée, Ordre, Tags, Catégorie, Thème, Sous-thème, Description, Miniature URL</p><p className="text-xs text-gray-500 mb-2">💡 URL Vimeo : URL complète (https://vimeo.com/123/abc) ou ID seul. Les catégories doivent exister.</p><Button variant="ghost" size="sm" icon="Download" onClick={downloadTemplate}>Template</Button></div><div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center"><input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".xlsx,.xls,.csv" className="hidden"/><Icon name="Film" size={48} className="mx-auto text-gray-500 mb-4"/><Button variant="secondary" onClick={()=>fileInputRef.current?.click()}>Parcourir</Button></div>{importData.length>0&&!importResult&&<div className="max-h-48 overflow-y-auto bg-gray-700/50 rounded-lg p-2">{importData.filter(d=>d._valid).map((row,i)=><div key={i} className="text-sm py-1">{row.title||row['Titre']}</div>)}</div>}{importResult&&<Alert type={importResult.errors>0?'warning':'success'}>{importResult.created>0&&<span className="text-green-400">✅ {importResult.created} créée(s) </span>}{importResult.updated>0&&<span className="text-blue-400">🔄 {importResult.updated} mise(s) à jour </span>}{importResult.errors>0&&<span className="text-red-400">❌ {importResult.errors} erreur(s)</span>}</Alert>}<div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>{importData.length>0&&!importResult&&<Button icon="Upload" onClick={handleImport} loading={importLoading}>Importer {importData.filter(d=>d._valid).length}</Button>}</div></div></Modal>
         
         {/* Modal gestion pack */}
         <Modal isOpen={packModal} onClose={()=>setPackModal(false)} title={editingPack?'Modifier le pack':'Créer un pack'} size="xl">
@@ -10605,18 +10650,28 @@
         
         const progressData=videoProgressRef.current[currentVideo.id];
         const startTime=progressData?.last_position_seconds||0;
+        const vimeoId=currentVideo.videos?.vimeo_id;
+        const vimeoHash=currentVideo.videos?.vimeo_hash;
         console.log('🎬 Initializing video player:', {
           videoId: currentVideo.id,
-          vimeoId: currentVideo.videos?.vimeo_id,
+          vimeoId,
+          vimeoHash: vimeoHash ? '***' : null,
           startTime
         });
         playerRef.current.innerHTML='';
         
-        const player=new Vimeo.Player(playerRef.current,{
-          id:currentVideo.videos?.vimeo_id,
+        // Pour les vidéos privées avec hash, on doit utiliser l'URL d'embed
+        const playerOptions={
           responsive:true,
           autoplay:false
-        });
+        };
+        if(vimeoHash){
+          playerOptions.url=`https://player.vimeo.com/video/${vimeoId}?h=${vimeoHash}`;
+        }else{
+          playerOptions.id=vimeoId;
+        }
+        
+        const player=new Vimeo.Player(playerRef.current,playerOptions);
         
         player.ready().then(()=>{
           console.log('🎬 Player ready');
