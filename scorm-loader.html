@@ -147,103 +147,34 @@
       }
       
       // ========================================
-      // STANDARD (Articulate, etc.) : Fetch + rewrite URLs + document.write
-      // Contourne le sandboxing de Supabase Storage
+      // STANDARD (Articulate, etc.) : Via Edge Function Proxy
+      // L'Edge Function sert les fichiers sans restrictions CSP
       // ========================================
-      console.log('[SCORM Loader] Mode Standard: fetch + rewrite URLs + document.write');
-      document.getElementById('loading-text').textContent = 'Téléchargement...';
+      console.log('[SCORM Loader] Mode Standard: Edge Function Proxy');
       
-      fetch(scormUrl)
-        .then(function(response) {
-          if (!response.ok) throw new Error('HTTP ' + response.status);
-          return response.text();
-        })
-        .then(function(html) {
-          console.log('[SCORM Loader] HTML fetched, length:', html.length);
-          document.getElementById('loading-text').textContent = 'Préparation...';
-          
-          // Fonction pour convertir une URL relative en absolue
-          function toAbsoluteUrl(relativeUrl) {
-            if (!relativeUrl) return relativeUrl;
-            // Déjà absolue ou spéciale ?
-            if (relativeUrl.match(/^(https?:\/\/|data:|blob:|javascript:|#|mailto:)/i)) {
-              return relativeUrl;
-            }
-            // URL relative
-            if (relativeUrl.startsWith('/')) {
-              // Relative à la racine du domaine Supabase
-              var urlObj = new URL(baseUrl);
-              return urlObj.origin + relativeUrl;
-            }
-            // Relative au dossier courant
-            return baseUrl + relativeUrl;
-          }
-          
-          // Réécrire toutes les URLs relatives en absolues
-          // src="..." et href="..."
-          html = html.replace(/(src|href)\s*=\s*["']([^"']+)["']/gi, function(match, attr, url) {
-            var absUrl = toAbsoluteUrl(url);
-            return attr + '="' + absUrl + '"';
-          });
-          
-          // src='...' et href='...' (guillemets simples)
-          html = html.replace(/(src|href)\s*=\s*'([^']+)'/gi, function(match, attr, url) {
-            var absUrl = toAbsoluteUrl(url);
-            return attr + "='" + absUrl + "'";
-          });
-          
-          // url(...) dans les styles
-          html = html.replace(/url\s*\(\s*["']?([^"')]+)["']?\s*\)/gi, function(match, url) {
-            if (url.match(/^(https?:\/\/|data:|blob:)/i)) return match;
-            var absUrl = toAbsoluteUrl(url);
-            return 'url("' + absUrl + '")';
-          });
-          
-          console.log('[SCORM Loader] URLs rewritten with base:', baseUrl);
-          
-          // Injecter le script d'API SCORM au début du <head>
-          var apiScript = '<script>\n' +
-            'window.API = window.parent.API;\n' +
-            'window.API_1484_11 = window.parent.API_1484_11;\n' +
-            'console.log("[SCORM Content] APIs inherited from parent");\n' +
-            '<\/script>\n';
-          
-          // Modifier le HTML
-          if (html.indexOf('<head>') !== -1) {
-            html = html.replace('<head>', '<head>\n' + apiScript);
-          } else if (html.indexOf('<HEAD>') !== -1) {
-            html = html.replace('<HEAD>', '<HEAD>\n' + apiScript);
-          } else {
-            html = '<!DOCTYPE html><html><head>' + apiScript + '</head><body>' + html + '</body></html>';
-          }
-          
-          // Charger about:blank puis écrire le contenu
-          frame.src = 'about:blank';
-          frame.onload = function() {
-            frame.onload = null; // Éviter les appels multiples
-            try {
-              var doc = frame.contentDocument || frame.contentWindow.document;
-              doc.open();
-              doc.write(html);
-              doc.close();
-              
-              console.log('[SCORM Loader] Content written to iframe');
-              document.getElementById('loading').style.display = 'none';
-              frame.style.display = 'block';
-              
-              if (window.parent && window.parent !== window) {
-                window.parent.postMessage({ type: 'scorm_content_ready' }, '*');
-              }
-            } catch (e) {
-              console.error('[SCORM Loader] document.write failed:', e);
-              document.getElementById('loading').innerHTML = '<div class="error">Erreur: ' + e.message + '</div>';
-            }
-          };
-        })
-        .catch(function(error) {
-          console.error('[SCORM Loader] Error:', error);
-          document.getElementById('loading').innerHTML = '<div class="error">Erreur: ' + error.message + '</div>';
-        });
+      // Construire l'URL du proxy
+      // Le proxy est une Edge Function Supabase
+      var proxyBaseUrl = 'https://ludepnnsvwvpfbdxweam.supabase.co/functions/v1/scorm-proxy';
+      var proxiedUrl = proxyBaseUrl + '?url=' + encodeURIComponent(scormUrl);
+      
+      console.log('[SCORM Loader] Proxy URL:', proxiedUrl);
+      
+      frame.onload = function() {
+        console.log('[SCORM Loader] Frame loaded (proxy)');
+        document.getElementById('loading').style.display = 'none';
+        frame.style.display = 'block';
+        
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ type: 'scorm_content_ready' }, '*');
+        }
+      };
+      
+      frame.onerror = function(e) {
+        console.error('[SCORM Loader] Frame error:', e);
+        document.getElementById('loading').innerHTML = '<div class="error">Erreur de chargement</div>';
+      };
+      
+      frame.src = proxiedUrl;
       
     })();
   </script>
