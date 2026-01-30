@@ -10484,17 +10484,14 @@
         };
       },[module.id,enrollmentId,user.id,initialDataLoaded,savedCmiData,onComplete]);
       
-      // L'URL du module SCORM via scorm-loader.html (même domaine que crpro.app)
+      // L'URL du module SCORM - charger directement depuis Supabase
+      // Le bridge postMessage est injecté dans les fichiers HTML lors de l'upload
       const scormUrl = useMemo(() => {
         if (!module.package_url) return null;
         
-        // Utiliser scorm-loader.html pour charger le contenu SCORM
-        // Cela permet à layer2.js (Codes Rousseau) d'accéder à window.parent.API
-        const loaderUrl = window.location.origin + '/scorm-loader.html?url=' + 
-          encodeURIComponent(module.package_url);
-        
-        console.log('SCORM Loader URL:', loaderUrl);
-        return loaderUrl;
+        // Charger directement l'URL Supabase - le bridge est injecté dans les HTML
+        console.log('SCORM Direct URL:', module.package_url);
+        return module.package_url;
       }, [module.package_url]);
       
       // Écouter les messages postMessage venant de l'iframe SCORM
