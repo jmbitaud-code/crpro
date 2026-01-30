@@ -147,10 +147,10 @@
       }
       
       // ========================================
-      // STANDARD (Articulate, etc.) : Fetch + iframe.contentDocument.write()
+      // STANDARD (Articulate, etc.) : Fetch + rewrite URLs + document.write
       // Contourne le sandboxing de Supabase Storage
       // ========================================
-      console.log('[SCORM Loader] Mode Standard: fetch + document.write');
+      console.log('[SCORM Loader] Mode Standard: fetch + rewrite URLs + document.write');
       document.getElementById('loading-text').textContent = 'Téléchargement...';
       
       fetch(scormUrl)
@@ -162,8 +162,44 @@
           console.log('[SCORM Loader] HTML fetched, length:', html.length);
           document.getElementById('loading-text').textContent = 'Préparation...';
           
-          // Injecter une balise <base> pour que les chemins relatifs fonctionnent
-          var baseTag = '<base href="' + baseUrl + '">';
+          // Fonction pour convertir une URL relative en absolue
+          function toAbsoluteUrl(relativeUrl) {
+            if (!relativeUrl) return relativeUrl;
+            // Déjà absolue ou spéciale ?
+            if (relativeUrl.match(/^(https?:\/\/|data:|blob:|javascript:|#|mailto:)/i)) {
+              return relativeUrl;
+            }
+            // URL relative
+            if (relativeUrl.startsWith('/')) {
+              // Relative à la racine du domaine Supabase
+              var urlObj = new URL(baseUrl);
+              return urlObj.origin + relativeUrl;
+            }
+            // Relative au dossier courant
+            return baseUrl + relativeUrl;
+          }
+          
+          // Réécrire toutes les URLs relatives en absolues
+          // src="..." et href="..."
+          html = html.replace(/(src|href)\s*=\s*["']([^"']+)["']/gi, function(match, attr, url) {
+            var absUrl = toAbsoluteUrl(url);
+            return attr + '="' + absUrl + '"';
+          });
+          
+          // src='...' et href='...' (guillemets simples)
+          html = html.replace(/(src|href)\s*=\s*'([^']+)'/gi, function(match, attr, url) {
+            var absUrl = toAbsoluteUrl(url);
+            return attr + "='" + absUrl + "'";
+          });
+          
+          // url(...) dans les styles
+          html = html.replace(/url\s*\(\s*["']?([^"')]+)["']?\s*\)/gi, function(match, url) {
+            if (url.match(/^(https?:\/\/|data:|blob:)/i)) return match;
+            var absUrl = toAbsoluteUrl(url);
+            return 'url("' + absUrl + '")';
+          });
+          
+          console.log('[SCORM Loader] URLs rewritten with base:', baseUrl);
           
           // Injecter le script d'API SCORM au début du <head>
           var apiScript = '<script>\n' +
@@ -174,18 +210,17 @@
           
           // Modifier le HTML
           if (html.indexOf('<head>') !== -1) {
-            html = html.replace('<head>', '<head>\n' + baseTag + '\n' + apiScript);
+            html = html.replace('<head>', '<head>\n' + apiScript);
           } else if (html.indexOf('<HEAD>') !== -1) {
-            html = html.replace('<HEAD>', '<HEAD>\n' + baseTag + '\n' + apiScript);
+            html = html.replace('<HEAD>', '<HEAD>\n' + apiScript);
           } else {
-            html = '<!DOCTYPE html><html><head>' + baseTag + apiScript + '</head><body>' + html + '</body></html>';
+            html = '<!DOCTYPE html><html><head>' + apiScript + '</head><body>' + html + '</body></html>';
           }
-          
-          console.log('[SCORM Loader] Using document.write with base:', baseUrl);
           
           // Charger about:blank puis écrire le contenu
           frame.src = 'about:blank';
           frame.onload = function() {
+            frame.onload = null; // Éviter les appels multiples
             try {
               var doc = frame.contentDocument || frame.contentWindow.document;
               doc.open();
