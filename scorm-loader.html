@@ -147,14 +147,15 @@
       }
       
       // ========================================
-      // STANDARD (Articulate, etc.) : Via Edge Function Proxy
-      // L'Edge Function sert les fichiers sans restrictions CSP
+      // STANDARD (Articulate, etc.) : Via Cloudflare Workers Proxy
+      // Le Worker sert les fichiers sans restrictions CSP
       // ========================================
-      console.log('[SCORM Loader] Mode Standard: Edge Function Proxy');
+      console.log('[SCORM Loader] Mode Standard: Cloudflare Workers Proxy');
       
-      // Construire l'URL du proxy
-      // Le proxy est une Edge Function Supabase
-      var proxyBaseUrl = 'https://ludepnnsvwvpfbdxweam.supabase.co/functions/v1/scorm-proxy';
+      // ⚠️ IMPORTANT: Remplacez cette URL par votre Worker Cloudflare
+      // Voir DEPLOY.md pour les instructions
+      var proxyBaseUrl = 'https://scorm-proxy.jean-marc-bitaud.workers.dev';
+      
       var proxiedUrl = proxyBaseUrl + '?url=' + encodeURIComponent(scormUrl);
       
       console.log('[SCORM Loader] Proxy URL:', proxiedUrl);
@@ -180,3 +181,4 @@
   </script>
 </body>
 </html>
+
