@@ -9389,7 +9389,8 @@
             'Accède aux logs d\'audit complets',
             'Peut se faire passer pour n\'importe quel rôle (mode "Vue comme")'
           ],
-          scope:'Multi-centres',
+          scope:'🌐 Tous les centres',
+          scopeDetail:'Accès global à l\'ensemble du LMS, tous centres confondus',
           modifiable:false
         },
         center_admin:{
@@ -9406,7 +9407,8 @@
             'Envoie des emails et notifications',
             'Délivre les certificats'
           ],
-          scope:'Son centre uniquement',
+          scope:'🏢 Son centre',
+          scopeDetail:'Limité aux utilisateurs et contenus de son propre centre uniquement',
           modifiable:true
         },
         trainer:{
@@ -9423,7 +9425,8 @@
             'Envoie des emails aux apprenants',
             'Ne peut pas créer de contenu (sauf si autorisé)'
           ],
-          scope:'Son centre uniquement',
+          scope:'🏢 Son centre',
+          scopeDetail:'Limité aux apprenants et cours de son propre centre uniquement',
           modifiable:true
         },
         learner:{
@@ -9439,7 +9442,8 @@
             'Télécharge ses certificats obtenus',
             'Ne peut pas voir les contenus des autres apprenants'
           ],
-          scope:'Ses formations uniquement',
+          scope:'📚 Ses cours',
+          scopeDetail:'Accès uniquement à ses propres formations et sa progression personnelle',
           modifiable:true
         }
       };
@@ -9597,16 +9601,33 @@
                 ))}
               </div>
             </div>
+            
+            {/* Légende des périmètres */}
+            <div className="p-3 bg-gray-800/50 border-b border-gray-700 flex flex-wrap gap-4 text-xs">
+              <span className="text-gray-400 font-medium">Périmètre d'action :</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500"></span> <strong>Super Admin</strong> = Tous les centres du LMS</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500"></span> <strong>Admin/Formateur</strong> = Son centre uniquement</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span> <strong>Apprenant</strong> = Ses formations uniquement</span>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-gray-750 sticky top-0">
                   <tr>
                     <th className="text-left p-4 font-medium text-gray-400 min-w-[300px]">Permission</th>
                     {allRoles.map(role=>(
-                      <th key={role} className="text-center p-4 font-medium min-w-[120px]">
-                        <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full ${ROLE_DESCRIPTIONS[role].color}/20`}>
-                          <Icon name={ROLE_DESCRIPTIONS[role].icon} size={14} className={ROLE_DESCRIPTIONS[role].color.replace('bg-','text-')}/>
-                          <span className="text-sm">{ROLE_LABELS[role]}</span>
+                      <th key={role} className="text-center p-4 font-medium min-w-[140px]">
+                        <div className="flex flex-col items-center gap-1">
+                          <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full ${ROLE_DESCRIPTIONS[role].color}/20`}>
+                            <Icon name={ROLE_DESCRIPTIONS[role].icon} size={14} className={ROLE_DESCRIPTIONS[role].color.replace('bg-','text-')}/>
+                            <span className="text-sm">{ROLE_LABELS[role]}</span>
+                          </div>
+                          <span className={`text-xs px-2 py-0.5 rounded ${
+                            role==='super_admin'?'bg-red-500/10 text-red-400':
+                            role==='learner'?'bg-blue-500/10 text-blue-400':
+                            'bg-purple-500/10 text-purple-400'
+                          }`}>
+                            {ROLE_DESCRIPTIONS[role].scope}
+                          </span>
                         </div>
                       </th>
                     ))}
@@ -9756,6 +9777,15 @@
                 <p className="text-gray-300">{ROLE_DESCRIPTIONS[helpModal].summary}</p>
               </div>
               
+              {/* Périmètre d'action */}
+              <div className="p-3 bg-gray-700/30 rounded-lg border border-gray-600">
+                <h4 className="font-medium mb-1 flex items-center gap-2">
+                  <Icon name="MapPin" size={16} className="text-indigo-400"/>
+                  Périmètre d'action
+                </h4>
+                <p className="text-sm text-gray-300">{ROLE_DESCRIPTIONS[helpModal].scopeDetail}</p>
+              </div>
+              
               <div>
                 <h4 className="font-medium mb-2">Ce que ce rôle peut faire :</h4>
                 <ul className="space-y-2">
@@ -9778,7 +9808,7 @@
         </Modal>
         
         {/* Modal d'aide pour les permissions */}
-        <Modal isOpen={!!helpModal&&typeof helpModal==='object'&&helpModal?.type==='permission'} onClose={()=>setHelpModal(null)} title="Détail de la permission" size="sm">
+        <Modal isOpen={!!helpModal&&typeof helpModal==='object'&&helpModal?.type==='permission'} onClose={()=>setHelpModal(null)} title="Détail de la permission" size="md">
           {helpModal&&helpModal?.type==='permission'&&(
             <div className="space-y-4">
               <div className="p-4 bg-gray-700/50 rounded-lg">
@@ -9787,17 +9817,25 @@
               </div>
               
               <div>
-                <h4 className="text-sm font-medium mb-2">Accordée à :</h4>
-                <div className="flex flex-wrap gap-2">
+                <h4 className="text-sm font-medium mb-3">Accordée aux rôles suivants :</h4>
+                <div className="space-y-2">
                   {allRoles.map(role=>{
                     const hasIt=getPermissionValue(role,helpModal.key);
                     if(!hasIt)return null;
-                    return<span key={role} className={`px-2 py-1 rounded text-xs ${ROLE_DESCRIPTIONS[role].color}/20 ${ROLE_DESCRIPTIONS[role].color.replace('bg-','text-')}`}>
-                      {ROLE_LABELS[role]}
-                    </span>;
+                    return<div key={role} className={`flex items-center justify-between p-2 rounded ${ROLE_DESCRIPTIONS[role].color}/10 border border-gray-700`}>
+                      <div className="flex items-center gap-2">
+                        <Icon name={ROLE_DESCRIPTIONS[role].icon} size={16} className={ROLE_DESCRIPTIONS[role].color.replace('bg-','text-')}/>
+                        <span className="font-medium">{ROLE_LABELS[role]}</span>
+                      </div>
+                      <span className="text-xs text-gray-400">{ROLE_DESCRIPTIONS[role].scope}</span>
+                    </div>;
                   })}
                 </div>
               </div>
+              
+              <Alert type="info">
+                <p className="text-xs">💡 Le périmètre d'action dépend du rôle : un Super Admin applique cette permission sur tous les centres, tandis qu'un Admin Centre l'applique uniquement à son centre.</p>
+              </Alert>
             </div>
           )}
         </Modal>
