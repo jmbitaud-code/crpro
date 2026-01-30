@@ -10484,15 +10484,21 @@
         };
       },[module.id,enrollmentId,user.id,initialDataLoaded,savedCmiData,onComplete]);
       
-      // L'URL du module SCORM - charger directement depuis Supabase
-      // Le bridge postMessage est injecté dans les fichiers HTML lors de l'upload
+      // L'URL du module SCORM via scorm-loader.html
+      // Le loader détecte le type et utilise la méthode appropriée
       const scormUrl = useMemo(() => {
         if (!module.package_url) return null;
         
-        // Charger directement l'URL Supabase - le bridge est injecté dans les HTML
-        console.log('SCORM Direct URL:', module.package_url);
-        return module.package_url;
-      }, [module.package_url]);
+        // Détecter si c'est un SCORM Codes Rousseau (via remote_url)
+        const isCodesRousseau = module.remote_url && module.remote_url.includes('codesrousseau');
+        
+        const loaderUrl = window.location.origin + '/scorm-loader.html?url=' + 
+          encodeURIComponent(module.package_url) +
+          (isCodesRousseau ? '&type=cr' : '&type=standard');
+        
+        console.log('SCORM Loader URL:', loaderUrl, isCodesRousseau ? '(Codes Rousseau)' : '(Standard)');
+        return loaderUrl;
+      }, [module.package_url, module.remote_url]);
       
       // Écouter les messages postMessage venant de l'iframe SCORM
       useEffect(() => {
