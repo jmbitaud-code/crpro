@@ -11564,7 +11564,43 @@
                   updateCourseProgress();
                 }
               }}
-              onClose={()=>setActiveScorm(null)}
+              onClose={async()=>{
+                // Recharger la progression SCORM avant de fermer
+                const moduleIds=courseScorm.map(s=>s.scorm_modules?.id).filter(Boolean);
+                let spMap={};
+                if(moduleIds.length>0){
+                  const{data:sp}=await supabase.from('scorm_progress').select('*').eq('learner_id',user.id).in('module_id',moduleIds);
+                  (sp||[]).forEach(p=>{spMap[p.module_id]=p;});
+                }
+                setScormProgress(spMap);
+                
+                // Recalculer et mettre à jour la progression du cours
+                const totalVids=courseVideos.length;
+                const completedVids=Object.values(videoProgressRef.current).filter(p=>p.is_completed).length;
+                const totalScorms=courseScorm.length;
+                const completedScorms=Object.values(spMap).filter(p=>p.completion_status==='completed'||p.completion_status==='passed').length;
+                const totalItems=totalVids+totalScorms;
+                const completedItems=completedVids+completedScorms;
+                const pct=totalItems>0?Math.round((completedItems/totalItems)*100):0;
+                console.log('📈 Course progress on SCORM close:', {totalVids, completedVids, totalScorms, completedScorms, pct});
+                
+                if(selectedCourse?.id){
+                  await supabase.from('enrollments').update({
+                    progress_percent:pct,
+                    status:pct===100?'completed':pct>0?'in_progress':'not_started'
+                  }).eq('id',selectedCourse.id);
+                  
+                  setSelectedCourse(prev=>prev?{...prev,progress_percent:pct,status:pct===100?'completed':pct>0?'in_progress':'not_started'}:prev);
+                  
+                  // Si le cours est terminé à 100%, générer certificat
+                  if(pct===100){
+                    console.log('🎉 Course completed! Generating certificate...');
+                    updateCourseProgress();
+                  }
+                }
+                
+                setActiveScorm(null);
+              }}
             />
           )}
         </div>;
