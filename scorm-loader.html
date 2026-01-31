@@ -33,6 +33,7 @@
       var params = new URLSearchParams(window.location.search);
       var scormUrl = params.get('url');
       var scormType = params.get('type') || 'standard';
+      var scormMode = params.get('mode') || 'preview';
       
       if (!scormUrl) {
         document.getElementById('loading-text').textContent = 'Erreur: URL manquante';
@@ -41,33 +42,77 @@
       
       console.log('[SCORM Loader] Loading:', scormUrl);
       console.log('[SCORM Loader] Type:', scormType === 'cr' ? 'Codes Rousseau' : 'Standard (Articulate, etc.)');
+      console.log('[SCORM Loader] Mode:', scormMode);
       
       var frame = document.getElementById('scorm-frame');
       var loading = document.getElementById('loading');
       
       // ========== SCORM API Bridge via postMessage ==========
-      // Get API from parent (CRPro)
+      // Variables pour stocker les références API (initialisées plus tard)
       var parentAPI = null;
       var parentAPI_1484_11 = null;
       
-      try {
-        if (window.parent && window.parent.API) {
-          parentAPI = window.parent.API;
-          console.log('[SCORM Loader] Parent API found (SCORM 1.2)');
+      // Fonction pour chercher l'API parent avec retry
+      function findParentAPI() {
+        try {
+          if (window.parent && window.parent.API) {
+            parentAPI = window.parent.API;
+          }
+          if (window.parent && window.parent.API_1484_11) {
+            parentAPI_1484_11 = window.parent.API_1484_11;
+          }
+        } catch(e) {
+          console.warn('[SCORM Loader] Cannot access parent API:', e);
         }
-        if (window.parent && window.parent.API_1484_11) {
-          parentAPI_1484_11 = window.parent.API_1484_11;
-          console.log('[SCORM Loader] Parent API found (SCORM 2004)');
-        }
-      } catch(e) {
-        console.warn('[SCORM Loader] Cannot access parent API:', e);
+        
+        // Exposer sur cette fenêtre pour accès direct
+        if (parentAPI) window.API = parentAPI;
+        if (parentAPI_1484_11) window.API_1484_11 = parentAPI_1484_11;
+        
+        return { api12: parentAPI, api2004: parentAPI_1484_11 };
       }
       
-      // Also expose on this window for direct iframe access
-      if (parentAPI) window.API = parentAPI;
-      if (parentAPI_1484_11) window.API_1484_11 = parentAPI_1484_11;
+      // Fonction pour attendre l'API avec retry (max 5 secondes)
+      function waitForParentAPI(callback, maxRetries, interval) {
+        maxRetries = maxRetries || 50; // 50 x 100ms = 5 secondes max
+        interval = interval || 100;
+        var retries = 0;
+        
+        function check() {
+          var apis = findParentAPI();
+          
+          if (apis.api12 || apis.api2004) {
+            console.log('[SCORM Loader] Parent API found:', !!apis.api12, !!apis.api2004);
+            callback(apis);
+          } else if (retries < maxRetries) {
+            retries++;
+            if (retries % 10 === 0) {
+              console.log('[SCORM Loader] Waiting for parent API... attempt', retries);
+            }
+            setTimeout(check, interval);
+          } else {
+            console.warn('[SCORM Loader] Parent API not found after', maxRetries, 'attempts');
+            // Continue anyway - maybe it's preview mode or API will come later
+            callback(apis);
+          }
+        }
+        
+        check();
+      }
       
-      console.log('[SCORM Loader] Parent API found:', !!parentAPI, !!parentAPI_1484_11);
+      // Initialiser immédiatement pour le mode preview
+      if (scormMode === 'preview') {
+        console.log('[SCORM Loader] Preview mode - checking API once');
+        findParentAPI();
+        console.log('[SCORM Loader] Parent API found:', !!parentAPI, !!parentAPI_1484_11);
+        startLoading();
+      } else {
+        // Mode course - attendre l'API avec retry
+        console.log('[SCORM Loader] Course mode - waiting for parent API...');
+        waitForParentAPI(function(apis) {
+          startLoading();
+        });
+      }
       
       // Listen for postMessage from cross-origin iframe (Worker)
       window.addEventListener('message', function(event) {
@@ -82,6 +127,11 @@
         }
         
         console.log('[SCORM Bridge] Received:', data.type, data.method);
+        
+        // Re-check parent API in case it wasn't available earlier
+        if (!parentAPI && !parentAPI_1484_11) {
+          findParentAPI();
+        }
         
         var result = '';
         var api = null;
@@ -107,6 +157,8 @@
           }
         } else {
           console.warn('[SCORM Bridge] API or method not found:', data.type, data.method);
+          // Try to refresh API references
+          findParentAPI();
         }
         
         // Send response back to iframe
@@ -126,38 +178,36 @@
         frame.style.display = 'block';
       }
       
-      frame.onload = function() {
-        console.log('[SCORM Loader] Frame loaded');
-        showContent();
+      function startLoading() {
+        frame.onload = function() {
+          console.log('[SCORM Loader] Frame loaded');
+          showContent();
+          
+          // Notify parent that content is ready
+          try {
+            if (window.parent && window.parent.postMessage) {
+              window.parent.postMessage({ type: 'SCORM_CONTENT_READY' }, '*');
+            }
+          } catch(e) {}
+        };
         
-        // Notify parent that content is ready
-        try {
-          if (window.parent && window.parent.postMessage) {
-            window.parent.postMessage({ type: 'SCORM_CONTENT_READY' }, '*');
-          }
-        } catch(e) {}
-      };
-      
-      // Codes Rousseau: direct loading (same bucket, works fine)
-      if (scormType === 'cr') {
-        console.log('[SCORM Loader] Mode CR: Direct loading');
-        frame.src = scormUrl;
-        return;
+        // Codes Rousseau: direct loading (same bucket, works fine)
+        if (scormType === 'cr') {
+          console.log('[SCORM Loader] Mode CR: Direct loading');
+          frame.src = scormUrl;
+          return;
+        }
+        
+        // Standard SCORM (Articulate, etc.): use Cloudflare Workers Proxy
+        console.log('[SCORM Loader] Mode Standard: Cloudflare Workers Proxy');
+        
+        var proxyBaseUrl = 'https://scorm-proxy.jean-marc-bitaud.workers.dev';
+        var proxyUrl = proxyBaseUrl + '?url=' + encodeURIComponent(scormUrl) + '&mode=' + scormMode;
+        
+        console.log('[SCORM Loader] Proxy URL:', proxyUrl);
+        
+        frame.src = proxyUrl;
       }
-      
-      // Standard SCORM (Articulate, etc.): use Cloudflare Workers Proxy
-      console.log('[SCORM Loader] Mode Standard: Cloudflare Workers Proxy');
-      
-      // Determine mode: preview (no recording) or course (with recording)
-      var scormMode = params.get('mode') || 'preview'; // 'preview' or 'course'
-      console.log('[SCORM Loader] SCORM Mode:', scormMode);
-      
-      var proxyBaseUrl = 'https://scorm-proxy.jean-marc-bitaud.workers.dev';
-      var proxyUrl = proxyBaseUrl + '?url=' + encodeURIComponent(scormUrl) + '&mode=' + scormMode;
-      
-      console.log('[SCORM Loader] Proxy URL:', proxyUrl);
-      
-      frame.src = proxyUrl;
       
     })();
   </script>
