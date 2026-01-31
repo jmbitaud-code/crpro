@@ -4344,248 +4344,33 @@
     }
 
     // ============================================================
-    // PAGE: Contenus (ContenusPage) - Vue unifiée avec filtres
+    // PAGE: Contenus (ContenusPage) - Sous-onglets avec pages complètes
     // ============================================================
     function ContenusPage(){
-      const{can,center,isSuperAdmin}=useAuth();
-      const[loading,setLoading]=useState(true);
-      const[activeType,setActiveType]=useState('all');
-      const[search,setSearch]=useState('');
-      const[contents,setContents]=useState({videos:[],scorm:[],quizzes:[],courses:[],paths:[]});
-      const[counts,setCounts]=useState({videos:0,scorm:0,quizzes:0,courses:0,paths:0});
-      const[categories,setCategories]=useState([]);
-      const[filterCategory,setFilterCategory]=useState('all');
-      
-      const load=useCallback(async()=>{
-        // Charger les vidéos
-        let qv=supabase.from('videos').select('*,video_categories(categories(id,name))').order('created_at',{ascending:false});
-        if(!isSuperAdmin&&center?.id)qv=qv.or(`center_id.eq.${center.id},is_shared.eq.true`);
-        const{data:videos}=await qv;
-        
-        // Charger les SCORM
-        let qs=supabase.from('scorm_modules').select('*').order('created_at',{ascending:false});
-        if(!isSuperAdmin&&center?.id)qs=qs.or(`center_id.eq.${center.id},is_shared.eq.true`);
-        const{data:scorm}=await qs;
-        
-        // Charger les quiz
-        let qq=supabase.from('quizzes').select('*').order('created_at',{ascending:false});
-        if(!isSuperAdmin&&center?.id)qq=qq.or(`center_id.eq.${center.id},is_shared.eq.true`);
-        const{data:quizzes}=await qq;
-        
-        // Charger les cours
-        let qc=supabase.from('playlists').select('*').order('created_at',{ascending:false});
-        if(!isSuperAdmin&&center?.id)qc=qc.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
-        const{data:courses}=await qc;
-        
-        // Charger les parcours
-        let qp=supabase.from('learning_paths').select('*,learning_path_courses(playlist_id)').order('created_at',{ascending:false});
-        if(!isSuperAdmin&&center?.id)qp=qp.eq('center_id',center.id);
-        const{data:paths}=await qp;
-        
-        // Charger les catégories
-        const{data:cats}=await supabase.from('categories').select('*').order('name');
-        
-        setContents({
-          videos:videos||[],
-          scorm:scorm||[],
-          quizzes:quizzes||[],
-          courses:courses||[],
-          paths:paths||[]
-        });
-        setCounts({
-          videos:(videos||[]).length,
-          scorm:(scorm||[]).length,
-          quizzes:(quizzes||[]).length,
-          courses:(courses||[]).length,
-          paths:(paths||[]).length
-        });
-        setCategories(cats||[]);
-        setLoading(false);
-      },[isSuperAdmin,center?.id]);
-      
-      useEffect(()=>{load();},[load]);
-      
-      // Transformer tous les contenus en format unifié
-      const getAllContents=()=>{
-        const all=[];
-        contents.videos.forEach(v=>all.push({
-          id:v.id,type:'video',title:v.title,description:v.description,
-          icon:'Film',color:'purple',
-          status:v.is_shared?'shared':'private',
-          category:v.video_categories?.[0]?.categories?.name,
-          created_at:v.created_at,
-          data:v
-        }));
-        contents.scorm.forEach(s=>all.push({
-          id:s.id,type:'scorm',title:s.title,description:s.description,
-          icon:'Package',color:'orange',
-          status:s.is_shared?'shared':'private',
-          created_at:s.created_at,
-          data:s
-        }));
-        contents.quizzes.forEach(q=>all.push({
-          id:q.id,type:'quiz',title:q.title,description:q.description,
-          icon:'HelpCircle',color:'green',
-          status:q.is_shared?'shared':'private',
-          created_at:q.created_at,
-          data:q
-        }));
-        contents.courses.forEach(c=>all.push({
-          id:c.id,type:'course',title:c.title,description:c.description,
-          icon:'BookOpen',color:'indigo',
-          status:c.is_published?'published':'draft',
-          isLMS:c.is_lms_content,
-          created_at:c.created_at,
-          data:c
-        }));
-        contents.paths.forEach(p=>all.push({
-          id:p.id,type:'path',title:p.title,description:p.description,
-          icon:'Route',color:'cyan',
-          status:p.is_published?'published':'draft',
-          coursesCount:p.learning_path_courses?.length||0,
-          created_at:p.created_at,
-          data:p
-        }));
-        return all.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
-      };
-      
-      // Filtrer les contenus
-      const filteredContents=getAllContents().filter(c=>{
-        if(activeType!=='all'&&c.type!==activeType)return false;
-        if(search){
-          const s=search.toLowerCase();
-          if(!c.title?.toLowerCase().includes(s)&&!c.description?.toLowerCase().includes(s))return false;
-        }
-        if(filterCategory!=='all'&&c.category!==filterCategory)return false;
-        return true;
-      });
-      
-      const typeLabels={
-        all:'Tous',video:'Vidéos',scorm:'SCORM',quiz:'Quiz',course:'Cours',path:'Parcours'
-      };
-      
-      const typeColors={
-        video:'purple',scorm:'orange',quiz:'green',course:'indigo',path:'cyan'
-      };
-      
-      if(loading)return<Loading text="Chargement des contenus..."/>;
+      const{isSuperAdmin}=useAuth();
+      const[activeTab,setActiveTab]=useState('videos');
       
       return<div>
-        <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Icon name="Library" size={28}/>Contenus
-            </h1>
-            <p className="text-sm text-gray-400">
-              {counts.videos} vidéos • {counts.scorm} SCORM • {counts.quizzes} quiz • {counts.courses} cours • {counts.paths} parcours
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="ghost" icon="RefreshCw" onClick={load}>Actualiser</Button>
-          </div>
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Icon name="Library" size={28}/>Contenus
+          </h1>
+          <p className="text-sm text-gray-400">Gérez vos vidéos, modules SCORM, quiz, cours et parcours</p>
         </div>
         
-        {/* Filtres par type */}
-        <div className="flex flex-wrap gap-2 mb-4">
-          {['all','video','scorm','quiz','course','path'].map(type=>(
-            <button
-              key={type}
-              onClick={()=>setActiveType(type)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 ${
-                activeType===type
-                  ?'bg-indigo-600 text-white'
-                  :'bg-gray-700/50 text-gray-300 hover:bg-gray-700'
-              }`}
-            >
-              {type!=='all'&&<Icon name={{video:'Film',scorm:'Package',quiz:'HelpCircle',course:'BookOpen',path:'Route'}[type]} size={16}/>}
-              {typeLabels[type]}
-              <span className={`px-1.5 py-0.5 rounded text-xs ${activeType===type?'bg-white/20':'bg-gray-600'}`}>
-                {type==='all'?Object.values(counts).reduce((a,b)=>a+b,0):counts[type+'s']||counts[type]}
-              </span>
-            </button>
-          ))}
+        <Tabs tabs={[
+          {id:'videos',label:'Bibliothèque',icon:'Film'},
+          {id:'courses',label:'Cours',icon:'BookOpen'},
+          {id:'paths',label:'Parcours',icon:'Route'},
+          {id:'quizzes',label:'Quiz',icon:'HelpCircle'}
+        ]} active={activeTab} onChange={setActiveTab}/>
+        
+        <div className="mt-6">
+          {activeTab==='videos'&&<VideosPage/>}
+          {activeTab==='courses'&&<PlaylistsPage/>}
+          {activeTab==='paths'&&<LearningPathsPage/>}
+          {activeTab==='quizzes'&&<QuizzesPage/>}
         </div>
-        
-        {/* Barre de recherche et filtres */}
-        <Card className="p-4 mb-6">
-          <div className="flex flex-wrap gap-4 items-center">
-            <div className="flex-1 min-w-[200px]">
-              <Input 
-                placeholder="Rechercher un contenu..." 
-                value={search} 
-                onChange={e=>setSearch(e.target.value)}
-                icon="Search"
-              />
-            </div>
-            {activeType==='video'&&categories.length>0&&(
-              <select 
-                className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm"
-                value={filterCategory}
-                onChange={e=>setFilterCategory(e.target.value)}
-              >
-                <option value="all">Toutes catégories</option>
-                {categories.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}
-              </select>
-            )}
-            <div className="text-sm text-gray-400">
-              {filteredContents.length} résultat{filteredContents.length>1?'s':''}
-            </div>
-          </div>
-        </Card>
-        
-        {/* Actions rapides */}
-        <div className="flex flex-wrap gap-2 mb-6">
-          <Button size="sm" icon="Film" onClick={()=>window.location.hash='contenus-video'}>+ Vidéo</Button>
-          <Button size="sm" icon="Package" onClick={()=>window.location.hash='contenus-scorm'}>+ SCORM</Button>
-          <Button size="sm" icon="HelpCircle" onClick={()=>window.location.hash='contenus-quiz'}>+ Quiz</Button>
-          <Button size="sm" icon="BookOpen" onClick={()=>window.location.hash='contenus-course'}>+ Cours</Button>
-          <Button size="sm" icon="Route" onClick={()=>window.location.hash='contenus-path'}>+ Parcours</Button>
-        </div>
-        
-        {/* Liste des contenus */}
-        {filteredContents.length===0?(
-          <Card className="p-12 text-center">
-            <Icon name="FolderOpen" size={48} className="mx-auto text-gray-600 mb-4"/>
-            <h3 className="text-lg font-semibold mb-2">Aucun contenu trouvé</h3>
-            <p className="text-gray-400">Modifiez vos filtres ou créez du nouveau contenu</p>
-          </Card>
-        ):(
-          <div className="grid gap-3">
-            {filteredContents.map(content=>(
-              <Card key={`${content.type}-${content.id}`} className="p-4 hover:bg-gray-700/30 transition cursor-pointer group">
-                <div className="flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 bg-${content.color}-500/20`}>
-                    <Icon name={content.icon} size={24} className={`text-${content.color}-400`}/>
-                  </div>
-                  
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold truncate">{content.title}</h3>
-                      <span className={`text-xs px-2 py-0.5 rounded bg-${content.color}-500/20 text-${content.color}-400`}>
-                        {typeLabels[content.type]}
-                      </span>
-                      {content.isLMS&&<span className="text-xs px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400">📦 LMS</span>}
-                      {content.status==='published'&&<span className="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-400">Publié</span>}
-                      {content.status==='draft'&&<span className="text-xs px-2 py-0.5 rounded bg-gray-500/20 text-gray-400">Brouillon</span>}
-                      {content.status==='shared'&&<span className="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-400">Partagé</span>}
-                    </div>
-                    {content.description&&<p className="text-sm text-gray-400 truncate mt-1">{content.description}</p>}
-                    <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
-                      {content.category&&<span className="flex items-center gap-1"><Icon name="Tag" size={12}/>{content.category}</span>}
-                      {content.coursesCount!==undefined&&<span>{content.coursesCount} cours</span>}
-                      <span>{new Date(content.created_at).toLocaleDateString('fr-FR')}</span>
-                    </div>
-                  </div>
-                  
-                  <div className="opacity-0 group-hover:opacity-100 transition flex gap-1">
-                    <Button variant="ghost" size="sm" icon="Edit" title="Modifier"/>
-                    <Button variant="ghost" size="sm" icon="Eye" title="Voir"/>
-                  </div>
-                </div>
-              </Card>
-            ))}
-          </div>
-        )}
       </div>;
     }
 
