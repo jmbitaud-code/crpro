@@ -1303,8 +1303,16 @@
         // Taux de complétion global
         const completionRate=totalEnrollments>0?Math.round((completedEnrollments/totalEnrollments)*100):0;
         
-        // Temps total de formation
-        const totalTime=filteredEnrollments.reduce((a,e)=>a+(e.time_spent_seconds||0),0);
+        // Charger les données vidéo pour le calcul du temps
+        let videoQuery=supabase.from('video_progress').select('learner_id,watch_time_seconds');
+        if(!isSuperAdmin&&learnerIds.length>0)videoQuery=videoQuery.in('learner_id',learnerIds);
+        const{data:videoData}=await videoQuery;
+        
+        // Temps total de formation = vidéos + SCORM + quiz
+        const totalVideoTime=(videoData||[]).reduce((a,v)=>a+(v.watch_time_seconds||0),0);
+        const totalScormTime=(scormProgress||[]).reduce((a,s)=>a+parseScormTime(s.total_time),0);
+        const totalQuizTime=(quizAttempts||[]).reduce((a,q)=>a+(q.duration_seconds||0),0);
+        const totalTime=totalVideoTime+totalScormTime+totalQuizTime;
         
         setStats({
           totalLearners,newLearnersThisWeek,activeLearners,
@@ -1760,7 +1768,7 @@
         totalPaths:0,completedPaths:0,
         totalScorm:0,completedScorm:0,passedScorm:0,avgScormScore:0,
         totalQuiz:0,passedQuiz:0,avgQuizScore:0,
-        totalWatchTime:0,totalCourseTime:0
+        totalWatchTime:0,totalCourseTime:0,totalScormTime:0,totalQuizTime:0
       });
 
       const load=useCallback(async()=>{
@@ -1861,8 +1869,9 @@
         const avgQuizScore=totalQuiz>0?(qa||[]).reduce((a,q)=>a+(q.score_percent||0),0)/totalQuiz:0;
         
         const totalWatchTime=(vp||[]).reduce((a,v)=>a+(v.watch_time_seconds||0),0);
-        const totalCourseTime=filteredEnr.reduce((a,e)=>a+(e.time_spent_seconds||0),0);
-        const totalPathTime=filteredPathEnr.reduce((a,pe)=>a+(pe.time_spent_seconds||0),0);
+        const totalScormTime=(sp||[]).reduce((a,s)=>a+parseScormTime(s.total_time),0);
+        const totalQuizTime=(qa||[]).reduce((a,q)=>a+(q.duration_seconds||0),0);
+        const totalCourseTime=totalWatchTime+totalScormTime+totalQuizTime;
         
         setStats({
           totalLearners,activeLearners,
@@ -1870,7 +1879,7 @@
           totalPaths,completedPaths,
           totalScorm,completedScorm,passedScorm,avgScormScore,
           totalQuiz,passedQuiz,avgQuizScore,
-          totalWatchTime,totalCourseTime,totalPathTime
+          totalWatchTime,totalCourseTime,totalScormTime,totalQuizTime
         });
         
         setLoading(false);
@@ -1904,10 +1913,11 @@
           const quizScores=lQuiz.map(q=>q.score_percent||0);
           const avgQuiz=quizScores.length>0?Math.round(quizScores.reduce((a,b)=>a+b,0)/quizScores.length):null;
           
-          const totalTime=lEnrollments.reduce((a,e)=>a+(e.time_spent_seconds||0),0)+lPathEnrollments.reduce((a,pe)=>a+(pe.time_spent_seconds||0),0);
+          // Temps réels (vidéos + SCORM + quiz)
           const watchTime=lVideos.reduce((a,v)=>a+(v.watch_time_seconds||0),0);
           const scormTime=lScorm.reduce((a,s)=>a+parseScormTime(s.total_time),0);
-          const pathTime=lPathEnrollments.reduce((a,pe)=>a+(pe.time_spent_seconds||0),0);
+          const quizTime=lQuiz.reduce((a,q)=>a+(q.duration_seconds||0),0);
+          const totalTime=watchTime+scormTime+quizTime;
           
           const lastActivity=[
             ...lEnrollments.map(e=>e.updated_at),
@@ -1923,7 +1933,7 @@
             pathsTotal,pathsCompleted,pathProgress,
             scormTotal:lScorm.length,scormCompleted,scormPassed,avgScorm,
             quizTotal:lQuiz.length,quizPassed,avgQuiz,
-            totalTime,watchTime,scormTime,pathTime,
+            totalTime,watchTime,scormTime,quizTime,
             lastActivity,
             enrollments:lEnrollments,
             pathEnrollments:lPathEnrollments,
@@ -2057,7 +2067,7 @@
         XLSX.utils.book_append_sheet(wb,ws5,'Quiz');
         
         // Feuille 6: Assiduité
-        const assiduiteData=[['Apprenant','Email','Temps formation total','Temps vidéo','Temps SCORM','Temps parcours','Nb cours','Nb parcours','Nb SCORM','Nb Quiz']];
+        const assiduiteData=[['Apprenant','Email','Temps formation total','Temps vidéo','Temps SCORM','Temps Quiz','Nb cours','Nb parcours','Nb SCORM','Nb Quiz']];
         filteredLearners.forEach(l=>{
           assiduiteData.push([
             l.first_name+' '+l.last_name,
@@ -2065,7 +2075,7 @@
             formatDuration(l.totalTime),
             formatDuration(l.watchTime),
             formatDuration(l.scormTime),
-            formatDuration(l.pathTime),
+            formatDuration(l.quizTime),
             l.coursesTotal,
             l.pathsTotal,
             l.scormTotal,
@@ -2169,10 +2179,17 @@
         const thisWeekEnrollments=enrollments.filter(e=>new Date(e.created_at)>thisWeekStart).length;
         const lastWeekEnrollments=enrollments.filter(e=>new Date(e.created_at)>lastWeekStart&&new Date(e.created_at)<=thisWeekStart).length;
         
+        // Calcul du changement: si semaine précédente = 0 et cette semaine > 0, afficher +100%
+        const calcChange=(current,previous)=>{
+          if(previous===0&&current===0)return 0;
+          if(previous===0&&current>0)return 100;
+          return Math.round(((current-previous)/previous)*100);
+        };
+        
         return{
-          scorm:{current:thisWeekScorm,previous:lastWeekScorm,change:lastWeekScorm>0?Math.round(((thisWeekScorm-lastWeekScorm)/lastWeekScorm)*100):0},
-          quiz:{current:thisWeekQuiz,previous:lastWeekQuiz,change:lastWeekQuiz>0?Math.round(((thisWeekQuiz-lastWeekQuiz)/lastWeekQuiz)*100):0},
-          enrollments:{current:thisWeekEnrollments,previous:lastWeekEnrollments,change:lastWeekEnrollments>0?Math.round(((thisWeekEnrollments-lastWeekEnrollments)/lastWeekEnrollments)*100):0}
+          scorm:{current:thisWeekScorm,previous:lastWeekScorm,change:calcChange(thisWeekScorm,lastWeekScorm)},
+          quiz:{current:thisWeekQuiz,previous:lastWeekQuiz,change:calcChange(thisWeekQuiz,lastWeekQuiz)},
+          enrollments:{current:thisWeekEnrollments,previous:lastWeekEnrollments,change:calcChange(thisWeekEnrollments,lastWeekEnrollments)}
         };
       })();
 
