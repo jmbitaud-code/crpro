@@ -10657,6 +10657,7 @@
       const[quizAnswers,setQuizAnswers]=useState({});
       const[quizMode,setQuizMode]=useState(false);
       const[quizResult,setQuizResult]=useState(null);
+      const[quizStartTime,setQuizStartTime]=useState(null);
       const[quizAttempts,setQuizAttempts]=useState([]);
       const[myScormStats,setMyScormStats]=useState({total:0,completed:0,passed:0,avgScore:0});
       const[allMyScorm,setAllMyScorm]=useState([]);
@@ -10831,6 +10832,7 @@
       const startQuiz=()=>{
         setQuizAnswers({});
         setQuizResult(null);
+        setQuizStartTime(Date.now());
         setQuizMode(true);
       };
       
@@ -10863,6 +10865,9 @@
         const scorePercent=totalPoints>0?Math.round((earnedPoints/totalPoints)*100):0;
         const passed=scorePercent>=courseQuiz.passing_score;
         
+        // Calculer le temps passé sur le quiz
+        const quizDurationSeconds=quizStartTime?Math.round((Date.now()-quizStartTime)/1000):0;
+        
         // Enregistrer la tentative
         const{data:attempt}=await supabase.from('quiz_attempts').insert({
           quiz_id:courseQuiz.id,
@@ -10871,7 +10876,8 @@
           score_percent:scorePercent,
           passed,
           completed_at:new Date().toISOString(),
-          answers:quizAnswers
+          answers:quizAnswers,
+          duration_seconds:quizDurationSeconds
         }).select().single();
         
         if(attempt){
@@ -12360,8 +12366,8 @@
         const{data:enr}=await supabase.from('enrollments').select('*,playlists:playlist_id(id,title)').eq('learner_id',user.id);
         setEnrollments(enr||[]);
         
-        // Charger les inscriptions aux parcours
-        const{data:pathEnr}=await supabase.from('path_enrollments').select('*,learning_paths(id,title,description)').eq('learner_id',user.id);
+        // Charger les inscriptions aux parcours avec les cours associés
+        const{data:pathEnr}=await supabase.from('path_enrollments').select('*,learning_paths(id,title,description,learning_path_courses(playlist_id))').eq('learner_id',user.id);
         
         // Charger la progression vidéo
         const{data:vp}=await supabase.from('video_progress').select('*').eq('learner_id',user.id);
@@ -12448,20 +12454,30 @@
         const{data:courseSessions}=await supabase.from('course_sessions').select('*').eq('learner_id',user.id);
         
         // Calculer les stats des parcours
+        // Le temps de chaque parcours = cumul des temps des cours qu'il contient
+        let totalPathsTime=0;
+        (pathEnr||[]).forEach(p=>{
+          const pathCourseIds=(p.learning_paths?.learning_path_courses||[]).map(c=>c.playlist_id);
+          const pathEnrollmentIds=(enr||[]).filter(e=>pathCourseIds.includes(e.playlist_id)).map(e=>e.id);
+          
+          const pVideoTime=videoProgressData.filter(v=>pathEnrollmentIds.includes(v.enrollment_id)).reduce((a,v)=>a+(v.watch_time_seconds||0),0);
+          const pScormTime=scormProgressData.filter(s=>pathEnrollmentIds.includes(s.enrollment_id)).reduce((a,s)=>a+parseScormTime(s.total_time),0);
+          const pQuizTime=quizAttemptsData.filter(q=>pathEnrollmentIds.includes(q.enrollment_id)).reduce((a,q)=>a+(q.duration_seconds||0),0);
+          
+          totalPathsTime+=pVideoTime+pScormTime+pQuizTime;
+        });
+        
         const pathStats={
           total:(pathEnr||[]).length,
           completed:(pathEnr||[]).filter(p=>p.progress_percent===100||p.status==='completed').length,
           inProgress:(pathEnr||[]).filter(p=>p.progress_percent>0&&p.progress_percent<100).length,
-          totalTime:(pathEnr||[]).reduce((a,p)=>a+(p.time_spent_seconds||0),0)
+          totalTime:totalPathsTime
         };
         
         // Calculer les stats
         const totalCourses=(enr||[]).length;
         const completedCourses=(enr||[]).filter(e=>e.status==='completed').length;
         const inProgressCourses=(enr||[]).filter(e=>e.status==='in_progress').length;
-        
-        // Temps passé sur les cours (depuis enrollments.time_spent_seconds)
-        const totalCourseTime=(enr||[]).reduce((a,e)=>a+(e.time_spent_seconds||0),0);
         
         const totalVideos=videoProgressData.length;
         const watchedVideos=videoProgressData.filter(v=>v.is_completed).length;
@@ -12481,6 +12497,12 @@
         
         // Calculer le temps total passé sur les SCORM
         const totalScormTime=scormProgressData.reduce((a,s)=>a+parseScormTime(s.total_time),0);
+        
+        // Calculer le temps total passé sur les quiz
+        const totalQuizTime=quizAttemptsData.reduce((a,q)=>a+(q.duration_seconds||0),0);
+        
+        // Temps total de formation = temps vidéos + temps SCORM + temps quiz
+        const totalCourseTime=totalWatchTime+totalScormTime+totalQuizTime;
         
         const quizzesTaken=[...new Set(quizAttemptsData.map(q=>q.quiz_id))].length;
         const passedQuizzes=quizAttemptsData.filter(q=>q.passed).length;
@@ -12512,7 +12534,7 @@
           totalPaths:pathStats.total,completedPaths:pathStats.completed,inProgressPaths:pathStats.inProgress,pathTime:pathStats.totalTime,
           totalVideos,watchedVideos,inProgressVideos,totalWatchTime,
           totalScorm,completedScorm,inProgressScorm,passedScorm,avgScormScore,totalScormTime,
-          totalQuizzes:quizzesTaken,passedQuizzes,avgQuizScore,
+          totalQuizzes:quizzesTaken,passedQuizzes,avgQuizScore,totalQuizTime,
           totalSessionTime,sessionsCount,lastActivity
         });
         
@@ -12629,7 +12651,7 @@
       // Trouver le dernier contenu consulté
       const getLastContent=()=>{
         const activities=[
-          ...scormProgress.map(s=>({type:'scorm',title:s.scorm_modules?.title||'Module SCORM',id:s.module_id,enrollmentId:s.enrollment_id,progress:s.completion_status==='completed'?100:50,date:s.last_accessed_at})),
+          ...scormProgress.map(s=>({type:'scorm',title:s.scorm_modules?.title||'Module SCORM',id:s.module_id,enrollmentId:s.enrollment_id,progress:(s.completion_status==='completed'||s.completion_status==='passed')?100:(s.completion_status==='incomplete'?50:0),date:s.last_accessed_at})),
           ...videoProgress.map(v=>({type:'video',title:v.playlist_videos?.videos?.title||'Vidéo',id:v.video_id,progress:v.watch_percent||0,date:v.updated_at})),
           ...enrollments.filter(e=>e.status!=='completed').map(e=>({type:'course',title:e.playlists?.title||'Cours',id:e.id,progress:e.progress_percent||0,date:e.updated_at}))
         ].filter(a=>a.date).sort((a,b)=>new Date(b.date)-new Date(a.date));
@@ -12726,9 +12748,38 @@
                     <span className="text-sm text-gray-400">{Math.round(lastContent.progress)}%</span>
                   </div>
                 </div>
-                <Button onClick={()=>{
-                  if(lastContent.type==='course')window.location.hash='my-courses';
-                  else window.location.hash='my-courses';
+                <Button onClick={async()=>{
+                  // Trouver et ouvrir le cours correspondant
+                  if(lastContent.type==='course'){
+                    // C'est un enrollment direct
+                    const enrollment=enrollments.find(e=>e.id===lastContent.id);
+                    if(enrollment){
+                      openCourse(enrollment);
+                    }else{
+                      setActiveTab('courses');
+                    }
+                  }else if(lastContent.type==='scorm'&&lastContent.enrollmentId){
+                    // SCORM avec enrollment_id
+                    const enrollment=enrollments.find(e=>e.id===lastContent.enrollmentId);
+                    if(enrollment){
+                      openCourse(enrollment);
+                    }else{
+                      setActiveTab('courses');
+                    }
+                  }else if(lastContent.type==='video'){
+                    // Vidéo - trouver l'enrollment via videoProgress
+                    const vp=videoProgress.find(v=>v.video_id===lastContent.id);
+                    if(vp?.enrollment_id){
+                      const enrollment=enrollments.find(e=>e.id===vp.enrollment_id);
+                      if(enrollment){
+                        openCourse(enrollment);
+                        return;
+                      }
+                    }
+                    setActiveTab('courses');
+                  }else{
+                    setActiveTab('courses');
+                  }
                 }} className="shrink-0">
                   Continuer <Icon name="ArrowRight" size={16} className="ml-1"/>
                 </Button>
@@ -12776,7 +12827,11 @@
             <Icon name="Clock" size={24} className="mx-auto text-blue-400 mb-2"/>
             <p className="text-2xl font-bold text-blue-400">{formatDuration(stats.totalCourseTime||0)}</p>
             <p className="text-xs text-gray-400">Temps total formation</p>
-            {stats.totalScormTime>0&&<p className="text-xs text-orange-400 mt-1">dont {formatDuration(stats.totalScormTime)} SCORM</p>}
+            {(stats.totalScormTime>0||stats.totalQuizTime>0)&&<p className="text-xs text-orange-400 mt-1">
+              {stats.totalScormTime>0&&`${formatDuration(stats.totalScormTime)} SCORM`}
+              {stats.totalScormTime>0&&stats.totalQuizTime>0&&' + '}
+              {stats.totalQuizTime>0&&`${formatDuration(stats.totalQuizTime)} Quiz`}
+            </p>}
           </Card>
           <Card className="p-4 text-center">
             <Icon name="BookOpen" size={24} className="mx-auto text-indigo-400 mb-2"/>
@@ -12850,7 +12905,7 @@
                 </div>
                 <div>
                   <p className="text-sm text-gray-400 mb-2">Score SCORM moyen</p>
-                  <ProgressBar percent={stats.avgScormScore*100} color={stats.avgScormScore>=0.7?'green':stats.avgScormScore>=0.5?'yellow':'red'}/>
+                  <ProgressBar percent={stats.avgScormScore} color={stats.avgScormScore>=70?'green':stats.avgScormScore>=50?'yellow':'red'}/>
                 </div>
                 <div>
                   <p className="text-sm text-gray-400 mb-2">Score Quiz moyen</p>
@@ -12874,7 +12929,13 @@
                   <th className="text-left p-4 font-medium text-gray-400">Inscrit le</th>
                 </tr></thead>
                 <tbody className="divide-y divide-gray-700">
-                  {enrollments.length===0?<tr><td colSpan="5" className="p-8 text-center text-gray-500">Aucun cours</td></tr>:enrollments.map(e=>(
+                  {enrollments.length===0?<tr><td colSpan="5" className="p-8 text-center text-gray-500">Aucun cours</td></tr>:enrollments.map(e=>{
+                    // Calculer le temps passé réel (vidéos + SCORM + quiz)
+                    const videoTime=videoProgress.filter(v=>v.enrollment_id===e.id).reduce((a,v)=>a+(v.watch_time_seconds||0),0);
+                    const scormTime=scormProgress.filter(s=>s.enrollment_id===e.id).reduce((a,s)=>a+parseScormTime(s.total_time),0);
+                    const quizTime=quizAttempts.filter(q=>q.enrollment_id===e.id).reduce((a,q)=>a+(q.duration_seconds||0),0);
+                    const totalTime=videoTime+scormTime+quizTime;
+                    return(
                     <tr key={e.id} className="hover:bg-gray-750/50">
                       <td className="p-4"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-indigo-500/20 rounded-lg flex items-center justify-center"><Icon name="BookOpen" size={18} className="text-indigo-400"/></div><span className="font-medium">{e.playlists?.title}</span></div></td>
                       <td className="p-4">
@@ -12883,10 +12944,10 @@
                          <span className="px-2 py-1 bg-gray-500/20 text-gray-400 rounded text-xs">Non commencé</span>}
                       </td>
                       <td className="p-4"><div className="flex items-center gap-2"><div className="w-24"><ProgressBar percent={e.progress_percent||0} size="sm" showLabel={false}/></div><span className="text-sm font-medium">{e.progress_percent||0}%</span></div></td>
-                      <td className="p-4 text-gray-400">{e.time_spent_seconds?formatDuration(e.time_spent_seconds):'-'}</td>
+                      <td className="p-4 text-blue-400">{totalTime>0?formatDuration(totalTime):'-'}</td>
                       <td className="p-4 text-gray-400 text-sm">{new Date(e.created_at).toLocaleDateString('fr-FR')}</td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>
@@ -12906,7 +12967,21 @@
                   <th className="text-left p-4 font-medium text-gray-400">Démarré le</th>
                 </tr></thead>
                 <tbody className="divide-y divide-gray-700">
-                  {pathEnrollments.length===0?<tr><td colSpan="5" className="p-8 text-center text-gray-500">Aucun parcours</td></tr>:pathEnrollments.map(p=>(
+                  {pathEnrollments.length===0?<tr><td colSpan="5" className="p-8 text-center text-gray-500">Aucun parcours</td></tr>:pathEnrollments.map(p=>{
+                    // Calculer le temps du parcours = cumul des temps des cours qu'il contient
+                    const pathCourseIds=(p.learning_paths?.learning_path_courses||[]).map(c=>c.playlist_id);
+                    const pathEnrollmentIds=enrollments.filter(e=>pathCourseIds.includes(e.playlist_id)).map(e=>e.id);
+                    
+                    // Temps vidéos des cours du parcours
+                    const pathVideoTime=videoProgress.filter(v=>pathEnrollmentIds.includes(v.enrollment_id)).reduce((a,v)=>a+(v.watch_time_seconds||0),0);
+                    // Temps SCORM des cours du parcours
+                    const pathScormTime=scormProgress.filter(s=>pathEnrollmentIds.includes(s.enrollment_id)).reduce((a,s)=>a+parseScormTime(s.total_time),0);
+                    // Temps Quiz des cours du parcours
+                    const pathQuizTime=quizAttempts.filter(q=>pathEnrollmentIds.includes(q.enrollment_id)).reduce((a,q)=>a+(q.duration_seconds||0),0);
+                    
+                    const totalPathTime=pathVideoTime+pathScormTime+pathQuizTime;
+                    
+                    return(
                     <tr key={p.id} className="hover:bg-gray-750/50">
                       <td className="p-4">
                         <div className="flex items-center gap-3">
@@ -12930,10 +13005,10 @@
                           <span className="text-sm font-medium">{p.progress_percent||0}%</span>
                         </div>
                       </td>
-                      <td className="p-4 text-blue-400">{p.time_spent_seconds?formatDuration(p.time_spent_seconds):'-'}</td>
+                      <td className="p-4 text-blue-400">{totalPathTime>0?formatDuration(totalPathTime):'-'}</td>
                       <td className="p-4 text-gray-400 text-sm">{p.started_at?new Date(p.started_at).toLocaleDateString('fr-FR'):'-'}</td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>
