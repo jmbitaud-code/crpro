@@ -2794,16 +2794,30 @@
           const{data:qa}=await supabase.from('quiz_attempts').select('*').in('learner_id',learnerIds);
           quizData=qa||[];
         }
+        
+        // Charger la progression vidéo
+        let videoData=[];
+        if(learnerIds.length>0){
+          const{data:vp}=await supabase.from('video_progress').select('*').in('learner_id',learnerIds);
+          videoData=vp||[];
+        }
 
         // Calculer les statistiques par apprenant
         const learnerStats=learnerIds.map(learnerId=>{
           const learnerEnrollments=(filteredEnrollments||[]).filter(e=>e.learner_id===learnerId);
           const profile=learnerEnrollments[0]?.profiles;
-          const totalTime=learnerEnrollments.reduce((a,e)=>a+(e.time_spent_seconds||0),0);
-          const completedCourses=learnerEnrollments.filter(e=>e.status==='completed').length;
+          const learnerVideos=videoData.filter(v=>v.learner_id===learnerId);
           const learnerScorm=scormData.filter(s=>s.learner_id===learnerId);
           const learnerQuiz=quizData.filter(q=>q.learner_id===learnerId);
-          const avgScormScore=learnerScorm.length>0?learnerScorm.reduce((a,s)=>a+(s.score_scaled||0)*100,0)/learnerScorm.length:null;
+          
+          // Temps réel = vidéos + SCORM + quiz
+          const videoTime=learnerVideos.reduce((a,v)=>a+(v.watch_time_seconds||0),0);
+          const scormTime=learnerScorm.reduce((a,s)=>a+parseScormTime(s.total_time),0);
+          const quizTime=learnerQuiz.reduce((a,q)=>a+(q.duration_seconds||0),0);
+          const totalTime=videoTime+scormTime+quizTime;
+          
+          const completedCourses=learnerEnrollments.filter(e=>e.status==='completed').length;
+          const avgScormScore=learnerScorm.length>0?learnerScorm.reduce((a,s)=>a+(s.score_scaled>1?s.score_scaled:s.score_scaled*100),0)/learnerScorm.length:null;
           const avgQuizScore=learnerQuiz.length>0?learnerQuiz.reduce((a,q)=>a+(q.score_percent||0),0)/learnerQuiz.length:null;
           const lastActivity=learnerEnrollments.reduce((latest,e)=>{
             const d=new Date(e.updated_at);
@@ -2827,7 +2841,13 @@
 
         // Calculer les statistiques globales
         const validEnrollments=(filteredEnrollments||[]).filter(e=>e.playlists&&e.profiles);
-        const totalTimeAll=validEnrollments.reduce((a,e)=>a+(e.time_spent_seconds||0),0);
+        
+        // Temps total réel = toutes les vidéos + tous les SCORM + tous les quiz
+        const totalVideoTime=videoData.reduce((a,v)=>a+(v.watch_time_seconds||0),0);
+        const totalScormTime=scormData.reduce((a,s)=>a+parseScormTime(s.total_time),0);
+        const totalQuizTime=quizData.reduce((a,q)=>a+(q.duration_seconds||0),0);
+        const totalTimeAll=totalVideoTime+totalScormTime+totalQuizTime;
+        
         const summary={
           total:validEnrollments.length,
           notStarted:validEnrollments.filter(e=>e.status==='not_started').length,
