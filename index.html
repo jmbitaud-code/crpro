@@ -1237,10 +1237,10 @@
     }
 
     // ============================================================
-    // PAGE: Pilotage (PilotagePage) - Regroupe Dashboard + Suivi + Stats
+    // PAGE: Pilotage (PilotagePage) - Vue d'ensemble + Suivi détaillé
     // ============================================================
     function PilotagePage(){
-      const[activeTab,setActiveTab]=useState('dashboard');
+      const[activeTab,setActiveTab]=useState('overview');
       
       return<div>
         <div className="mb-6">
@@ -1251,15 +1251,13 @@
         </div>
         
         <Tabs tabs={[
-          {id:'dashboard',label:'Tableau de bord',icon:'LayoutDashboard'},
-          {id:'tracking',label:'Suivi formation',icon:'BarChart3'},
-          {id:'stats',label:'Statistiques',icon:'PieChart'}
+          {id:'overview',label:'Vue d\'ensemble',icon:'LayoutDashboard'},
+          {id:'tracking',label:'Suivi détaillé',icon:'BarChart3'}
         ]} active={activeTab} onChange={setActiveTab}/>
         
         <div className="mt-6">
-          {activeTab==='dashboard'&&<AdminDashboardPage/>}
+          {activeTab==='overview'&&<AdminDashboardPage/>}
           {activeTab==='tracking'&&<ScormTrackingPage/>}
-          {activeTab==='stats'&&<AnalyticsPage/>}
         </div>
       </div>;
     }
@@ -1699,37 +1697,6 @@
             </div>
           </Card>
         </div>
-        
-        {/* Actions rapides */}
-        <Card className="p-6">
-          <h3 className="font-semibold mb-4 flex items-center gap-2"><Icon name="Zap" size={20} className="text-yellow-400"/>Actions rapides</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            <Button variant="secondary" className="flex-col h-auto py-4" onClick={()=>window.location.hash='enrollments'}>
-              <Icon name="UserPlus" size={24} className="mb-2"/>
-              <span className="text-sm">Inscrire</span>
-            </Button>
-            <Button variant="secondary" className="flex-col h-auto py-4" onClick={()=>window.location.hash='scorm-tracking'}>
-              <Icon name="BarChart3" size={24} className="mb-2"/>
-              <span className="text-sm">Suivi</span>
-            </Button>
-            <Button variant="secondary" className="flex-col h-auto py-4" onClick={()=>window.location.hash='videos'}>
-              <Icon name="Film" size={24} className="mb-2"/>
-              <span className="text-sm">Bibliothèque</span>
-            </Button>
-            <Button variant="secondary" className="flex-col h-auto py-4" onClick={()=>window.location.hash='playlists'}>
-              <Icon name="BookOpen" size={24} className="mb-2"/>
-              <span className="text-sm">Cours</span>
-            </Button>
-            <Button variant="secondary" className="flex-col h-auto py-4" onClick={()=>window.location.hash='quizzes'}>
-              <Icon name="HelpCircle" size={24} className="mb-2"/>
-              <span className="text-sm">Quiz</span>
-            </Button>
-            <Button variant="secondary" className="flex-col h-auto py-4" onClick={()=>window.location.hash='users'}>
-              <Icon name="Users" size={24} className="mb-2"/>
-              <span className="text-sm">Utilisateurs</span>
-            </Button>
-          </div>
-        </Card>
       </div>;
     }
 
@@ -2398,7 +2365,8 @@
           {id:'courses',label:'Par cours',icon:'BookOpen'},
           {id:'paths',label:'Parcours',icon:'Route'},
           {id:'scorm',label:'SCORM',icon:'Package'},
-          {id:'quiz',label:'Quiz',icon:'HelpCircle'}
+          {id:'quiz',label:'Quiz',icon:'HelpCircle'},
+          {id:'charts',label:'Graphiques',icon:'PieChart'}
         ]} active={activeTab} onChange={setActiveTab}/>
 
         {/* Filtres */}
@@ -2766,6 +2734,9 @@
             </div>
           )}
         </Modal>
+        
+        {/* Onglet Graphiques */}
+        {activeTab==='charts'&&<AnalyticsPage/>}
       </div>;
     }
     function AnalyticsPage(){
@@ -3075,9 +3046,10 @@
 
       return<div>
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-          <h1 className="text-2xl font-bold">Statistiques</h1>
-          <div className="flex gap-2">
+          <div className="flex gap-4 items-center">
             <Select value={filter.course} onChange={e=>setFilter({...filter,course:e.target.value})} options={[{value:'all',label:'Tous les cours'},...data.courses.map(c=>({value:c.id,label:c.title}))]}/>
+          </div>
+          <div className="flex gap-2">
             {can('export_reports')&&<Button icon="Download" variant="secondary" onClick={exportExcel}>Exporter Excel</Button>}
           </div>
         </div>
