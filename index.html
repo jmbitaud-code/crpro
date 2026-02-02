@@ -4385,30 +4385,1473 @@
     // PAGE: Contenus (ContenusPage) - Sous-onglets avec pages complètes
     // ============================================================
     function ContenusPage(){
-      const{isSuperAdmin}=useAuth();
-      const[activeTab,setActiveTab]=useState('videos');
+      const{isSuperAdmin,center,realRole}=useAuth();
+      const[mainTab,setMainTab]=useState(isSuperAdmin?'creation':'catalogue');
+      
+      // Admin Centre ne voit que le Catalogue
+      const tabs=isSuperAdmin?[
+        {id:'creation',label:'Création',icon:'PlusCircle'},
+        {id:'catalogue',label:'Catalogue',icon:'Library'}
+      ]:[
+        {id:'catalogue',label:'Catalogue',icon:'Library'}
+      ];
       
       return<div>
         <div className="mb-6">
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Icon name="Library" size={28}/>Contenus
           </h1>
-          <p className="text-sm text-gray-400">Gérez vos vidéos, modules SCORM, quiz, cours et parcours</p>
+          <p className="text-sm text-gray-400">
+            {isSuperAdmin?'Créez et gérez vos contenus de formation':'Parcourez le catalogue et demandez des licences'}
+          </p>
         </div>
         
+        <Tabs tabs={tabs} active={mainTab} onChange={setMainTab}/>
+        
+        <div className="mt-6">
+          {mainTab==='creation'&&isSuperAdmin&&<ContentCreationPage/>}
+          {mainTab==='catalogue'&&<ContentCataloguePage/>}
+        </div>
+      </div>;
+    }
+    
+    // ============================================================
+    // SOUS-PAGE: Création de contenu (Super Admin uniquement)
+    // ============================================================
+    function ContentCreationPage(){
+      const[activeTab,setActiveTab]=useState('videos');
+      
+      return<div>
         <Tabs tabs={[
-          {id:'videos',label:'Bibliothèque',icon:'Film'},
+          {id:'videos',label:'Vidéos',icon:'Film'},
+          {id:'scorm',label:'SCORM',icon:'Package'},
+          {id:'questions',label:'Questions',icon:'Database'},
+          {id:'quiz',label:'Quiz',icon:'HelpCircle'},
           {id:'courses',label:'Cours',icon:'BookOpen'},
-          {id:'paths',label:'Parcours',icon:'Route'},
-          {id:'quizzes',label:'Quiz',icon:'HelpCircle'}
+          {id:'paths',label:'Parcours',icon:'Route'}
         ]} active={activeTab} onChange={setActiveTab}/>
         
         <div className="mt-6">
-          {activeTab==='videos'&&<VideosPage/>}
-          {activeTab==='courses'&&<PlaylistsPage/>}
-          {activeTab==='paths'&&<LearningPathsPage/>}
-          {activeTab==='quizzes'&&<QuizzesPage/>}
+          {activeTab==='videos'&&<VideoCreationSection/>}
+          {activeTab==='scorm'&&<ScormCreationSection/>}
+          {activeTab==='questions'&&<QuestionsCreationSection/>}
+          {activeTab==='quiz'&&<QuizCreationSection/>}
+          {activeTab==='courses'&&<CourseCreationSection/>}
+          {activeTab==='paths'&&<PathCreationSection/>}
         </div>
+      </div>;
+    }
+    
+    // ============================================================
+    // SECTION: Création de Vidéos
+    // ============================================================
+    function VideoCreationSection(){
+      const[videos,setVideos]=useState([]);
+      const[loading,setLoading]=useState(true);
+      const[modal,setModal]=useState(false);
+      const[editing,setEditing]=useState(null);
+      const[form,setForm]=useState({title:'',vimeo_url:'',duration:'',category_id:'',theme_id:'',sub_theme_id:'',description:'',sort_order:'',tags:[],thumbnail_url:''});
+      const[saving,setSaving]=useState(false);
+      const[search,setSearch]=useState('');
+      const[categories,setCategories]=useState([]);
+      const[themes,setThemes]=useState([]);
+      const[subThemes,setSubThemes]=useState([]);
+      const[predefinedTags,setPredefinedTags]=useState([]);
+      const[filterCategory,setFilterCategory]=useState('');
+      const[detailModal,setDetailModal]=useState(null);
+      const[attachments,setAttachments]=useState([]);
+      const[chapters,setChapters]=useState([]);
+      const[newAttachment,setNewAttachment]=useState({title:'',file:null});
+      const[newChapter,setNewChapter]=useState({title:'',timestamp:'',description:''});
+      const[uploading,setUploading]=useState(false);
+      const[fetchingDuration,setFetchingDuration]=useState(false);
+      const attachmentFileRef=useRef(null);
+      
+      const load=useCallback(async()=>{
+        const[{data:vids},{data:cats},{data:ths},{data:sths},{data:tags}]=await Promise.all([
+          supabase.from('videos').select('*,content_categories(id,name,color)').eq('is_lms_content',true).order('sort_order').order('created_at',{ascending:false}),
+          supabase.from('content_categories').select('*').order('position'),
+          supabase.from('content_themes').select('*').order('position'),
+          supabase.from('content_sub_themes').select('*').order('position'),
+          supabase.from('content_tags').select('*').order('name')
+        ]);
+        setVideos(vids||[]);
+        setCategories(cats||[]);
+        setThemes(ths||[]);
+        setSubThemes(sths||[]);
+        setPredefinedTags(tags||[]);
+        setLoading(false);
+      },[]);
+      
+      useEffect(()=>{load();},[load]);
+      
+      // Récupérer la durée automatiquement via Vimeo oEmbed API
+      const fetchVimeoDuration=async(url)=>{
+        if(!url)return;
+        setFetchingDuration(true);
+        try{
+          // Extraire l'ID Vimeo
+          const match=url.match(/vimeo\.com\/(?:video\/)?(\d+)/)||url.match(/^(\d+)/);
+          if(!match)return;
+          const vimeoId=match[1];
+          
+          // Appeler l'API oEmbed de Vimeo
+          const response=await fetch(`https://vimeo.com/api/oembed.json?url=https://vimeo.com/${vimeoId}`);
+          if(response.ok){
+            const data=await response.json();
+            if(data.duration){
+              const mins=Math.floor(data.duration/60);
+              const secs=data.duration%60;
+              const duration=`${mins}:${secs.toString().padStart(2,'0')}`;
+              setForm(f=>({...f,duration,title:f.title||data.title||''}));
+              if(data.thumbnail_url&&!form.thumbnail_url){
+                setForm(f=>({...f,thumbnail_url:data.thumbnail_url}));
+              }
+            }
+          }
+        }catch(e){console.warn('Erreur récupération durée Vimeo:',e);}
+        setFetchingDuration(false);
+      };
+      
+      // Parser URL Vimeo
+      const parseVimeoUrl=(url)=>{
+        if(!url)return{id:null,hash:null};
+        const patterns=[
+          /vimeo\.com\/(\d+)\/([a-zA-Z0-9]+)/,
+          /vimeo\.com\/video\/(\d+)\/([a-zA-Z0-9]+)/,
+          /player\.vimeo\.com\/video\/(\d+)\?h=([a-zA-Z0-9]+)/,
+          /^(\d+)\/([a-zA-Z0-9]+)$/
+        ];
+        for(const p of patterns){
+          const m=url.match(p);
+          if(m)return{id:m[1],hash:m[2]};
+        }
+        const idOnly=url.match(/(\d+)/);
+        if(idOnly)return{id:idOnly[1],hash:null};
+        return{id:null,hash:null};
+      };
+      
+      const handleSave=async()=>{
+        if(!form.title||!form.vimeo_url)return alert('Titre et URL Vimeo requis');
+        setSaving(true);
+        const{id,hash}=parseVimeoUrl(form.vimeo_url);
+        if(!id){setSaving(false);return alert('URL Vimeo invalide');}
+        
+        const payload={
+          title:form.title,
+          vimeo_id:id,
+          vimeo_hash:hash,
+          duration:form.duration||null,
+          category_id:form.category_id||null,
+          theme_id:form.theme_id||null,
+          sub_theme_id:form.sub_theme_id||null,
+          description:form.description||null,
+          sort_order:form.sort_order?parseInt(form.sort_order):null,
+          tags:form.tags||[],
+          thumbnail_url:form.thumbnail_url||null,
+          is_lms_content:true
+        };
+        
+        if(editing){
+          await supabase.from('videos').update(payload).eq('id',editing.id);
+        }else{
+          await supabase.from('videos').insert(payload);
+        }
+        
+        setModal(false);
+        setEditing(null);
+        setForm({title:'',vimeo_url:'',duration:'',category_id:'',theme_id:'',sub_theme_id:'',description:'',sort_order:'',tags:[],thumbnail_url:''});
+        setSaving(false);
+        load();
+      };
+      
+      const handleDelete=async(id)=>{
+        if(!confirm('Supprimer cette vidéo ?'))return;
+        await supabase.from('videos').delete().eq('id',id);
+        load();
+      };
+      
+      const openEdit=(v)=>{
+        setEditing(v);
+        setForm({
+          title:v.title||'',
+          vimeo_url:v.vimeo_hash?`${v.vimeo_id}/${v.vimeo_hash}`:v.vimeo_id||'',
+          duration:v.duration||'',
+          category_id:v.category_id||'',
+          theme_id:v.theme_id||'',
+          sub_theme_id:v.sub_theme_id||'',
+          description:v.description||'',
+          sort_order:v.sort_order||'',
+          tags:v.tags||[],
+          thumbnail_url:v.thumbnail_url||''
+        });
+        setModal(true);
+      };
+      
+      // Ressources (pièces jointes, chapitres)
+      const openDetailModal=async(v)=>{
+        setDetailModal(v);
+        const[{data:att},{data:chap}]=await Promise.all([
+          supabase.from('video_attachments').select('*').eq('video_id',v.id).order('created_at'),
+          supabase.from('video_chapters').select('*').eq('video_id',v.id).order('timestamp_seconds')
+        ]);
+        setAttachments(att||[]);
+        setChapters(chap||[]);
+      };
+      
+      const saveAttachment=async()=>{
+        if(!newAttachment.title||!newAttachment.file)return;
+        setUploading(true);
+        const file=newAttachment.file;
+        const ext=file.name.split('.').pop();
+        const path=`attachments/${detailModal.id}/${Date.now()}.${ext}`;
+        const{error}=await supabase.storage.from('video-resources').upload(path,file);
+        if(!error){
+          const{data:{publicUrl}}=supabase.storage.from('video-resources').getPublicUrl(path);
+          await supabase.from('video_attachments').insert({video_id:detailModal.id,title:newAttachment.title,file_url:publicUrl,file_type:ext,file_size:file.size});
+          const{data}=await supabase.from('video_attachments').select('*').eq('video_id',detailModal.id).order('created_at');
+          setAttachments(data||[]);
+        }
+        setNewAttachment({title:'',file:null});
+        setUploading(false);
+      };
+      
+      const deleteAttachment=async(att)=>{
+        await supabase.from('video_attachments').delete().eq('id',att.id);
+        setAttachments(attachments.filter(a=>a.id!==att.id));
+      };
+      
+      const parseTimestamp=(ts)=>{
+        const parts=ts.split(':').map(Number);
+        if(parts.length===2)return parts[0]*60+parts[1];
+        if(parts.length===3)return parts[0]*3600+parts[1]*60+parts[2];
+        return 0;
+      };
+      
+      const saveChapter=async()=>{
+        if(!newChapter.title||!newChapter.timestamp)return;
+        await supabase.from('video_chapters').insert({video_id:detailModal.id,title:newChapter.title,timestamp_seconds:parseTimestamp(newChapter.timestamp),description:newChapter.description||null});
+        const{data}=await supabase.from('video_chapters').select('*').eq('video_id',detailModal.id).order('timestamp_seconds');
+        setChapters(data||[]);
+        setNewChapter({title:'',timestamp:'',description:''});
+      };
+      
+      const deleteChapter=async(ch)=>{
+        await supabase.from('video_chapters').delete().eq('id',ch.id);
+        setChapters(chapters.filter(c=>c.id!==ch.id));
+      };
+      
+      const getThemesForCategory=(catId)=>themes.filter(t=>t.category_id===catId);
+      const getSubThemesForTheme=(themeId)=>subThemes.filter(st=>st.theme_id===themeId);
+      
+      const filtered=videos.filter(v=>{
+        if(filterCategory&&v.category_id!==filterCategory)return false;
+        if(search&&!v.title.toLowerCase().includes(search.toLowerCase()))return false;
+        return true;
+      });
+      
+      const buildVimeoEmbedUrl=(id,hash,opts={})=>{
+        let url=`https://player.vimeo.com/video/${id}`;
+        const params=[];
+        if(hash)params.push(`h=${hash}`);
+        if(opts.background)params.push('background=1','muted=1','autoplay=1');
+        return params.length?`${url}?${params.join('&')}`:url;
+      };
+      
+      if(loading)return<div className="flex items-center justify-center py-20"><Icon name="Loader2" size={32} className="animate-spin text-indigo-400"/></div>;
+      
+      return<div>
+        {/* Barre d'outils */}
+        <div className="flex flex-wrap items-center gap-3 mb-6">
+          <Button icon="Plus" onClick={()=>{setEditing(null);setForm({title:'',vimeo_url:'',duration:'',category_id:'',theme_id:'',sub_theme_id:'',description:'',sort_order:'',tags:[],thumbnail_url:''});setModal(true);}}>Ajouter une vidéo</Button>
+          <div className="flex-1"/>
+          <Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)} className="w-64"/>
+          <Select value={filterCategory} onChange={e=>setFilterCategory(e.target.value)} options={[{value:'',label:'Toutes catégories'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+        </div>
+        
+        {/* Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-indigo-400">{videos.length}</p><p className="text-xs text-gray-400">Vidéos</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-green-400">{categories.length}</p><p className="text-xs text-gray-400">Catégories</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-purple-400">{themes.length}</p><p className="text-xs text-gray-400">Thèmes</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-cyan-400">{subThemes.length}</p><p className="text-xs text-gray-400">Sous-thèmes</p></Card>
+        </div>
+        
+        {/* Liste des vidéos */}
+        {filtered.length===0?<Empty icon="Film" title="Aucune vidéo" desc="Ajoutez votre première vidéo Vimeo"/>:(
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filtered.map(v=>(
+              <Card key={v.id} className="overflow-hidden">
+                <div className="aspect-video bg-gray-900 relative">
+                  {v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:
+                  <iframe src={buildVimeoEmbedUrl(v.vimeo_id,v.vimeo_hash,{background:true})} className="w-full h-full" allow="autoplay"/>}
+                  <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>
+                  {v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}
+                </div>
+                <div className="p-4">
+                  <h3 className="font-semibold truncate">{v.title}</h3>
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {v.content_categories?.name&&<span className="px-2 py-1 rounded text-xs" style={{backgroundColor:(v.content_categories?.color||'#6366f1')+'30',color:v.content_categories?.color||'#6366f1'}}>{v.content_categories.name}</span>}
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <Button variant="ghost" size="sm" icon="Settings" onClick={()=>openDetailModal(v)}>Ressources</Button>
+                    <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>openEdit(v)}>Modifier</Button>
+                    <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(v.id)}/>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+        
+        {/* Modal ajout/modification */}
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier la vidéo':'Ajouter une vidéo'} size="lg">
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
+              <div>
+                <Input label="URL Vimeo *" value={form.vimeo_url} onChange={e=>setForm({...form,vimeo_url:e.target.value})} placeholder="https://vimeo.com/123456789/abcdef" onBlur={e=>fetchVimeoDuration(e.target.value)}/>
+                {fetchingDuration&&<p className="text-xs text-indigo-400 mt-1"><Icon name="Loader2" size={12} className="inline animate-spin mr-1"/>Récupération durée...</p>}
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <Input label="Durée" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="5:30"/>
+              <Input label="Ordre" type="number" value={form.sort_order} onChange={e=>setForm({...form,sort_order:e.target.value})}/>
+              <Select label="Catégorie" value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <Select label="Thème" value={form.theme_id} onChange={e=>setForm({...form,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/>
+              <Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Tags</label>
+              <div className="min-h-[38px] p-2 bg-gray-700 border border-gray-600 rounded-lg flex flex-wrap gap-1">
+                {form.tags.map(t=><span key={t} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-600/30 text-indigo-300 rounded text-xs">{t}<button type="button" onClick={()=>setForm({...form,tags:form.tags.filter(x=>x!==t)})} className="hover:text-white">×</button></span>)}
+                {form.tags.length===0&&<span className="text-gray-500 text-sm">Aucun tag</span>}
+              </div>
+              {predefinedTags.length>0&&<div className="flex flex-wrap gap-1 mt-2">{predefinedTags.filter(t=>!form.tags.includes(t.name)).slice(0,10).map(t=><button key={t.id} type="button" onClick={()=>setForm({...form,tags:[...form.tags,t.name]})} className="px-2 py-0.5 rounded text-xs border border-gray-600 hover:border-indigo-500" style={{color:t.color||'#6366f1'}}>+ {t.name}</button>)}</div>}
+            </div>
+            <Input label="Miniature URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})}/>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
+              <textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/>
+            </div>
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={()=>{setModal(false);setEditing(null);}}>Annuler</Button>
+              <Button onClick={handleSave} loading={saving}>Enregistrer</Button>
+            </div>
+          </div>
+        </Modal>
+        
+        {/* Modal ressources */}
+        <Modal isOpen={!!detailModal} onClose={()=>setDetailModal(null)} title={`Ressources - ${detailModal?.title}`} size="lg">
+          {detailModal&&<div className="space-y-6">
+            {/* Pièces jointes */}
+            <div>
+              <h4 className="font-semibold mb-3 flex items-center gap-2"><Icon name="Paperclip" size={18}/>Pièces jointes ({attachments.length})</h4>
+              <div className="space-y-2 mb-4">
+                {attachments.map(att=>(
+                  <div key={att.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg">
+                    <Icon name="FileText" size={20} className="text-indigo-400"/>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{att.title}</p>
+                      <p className="text-xs text-gray-400">{att.file_type?.toUpperCase()} • {Math.round((att.file_size||0)/1024)} Ko</p>
+                    </div>
+                    <a href={att.file_url} target="_blank" className="p-2 hover:bg-gray-600 rounded"><Icon name="Download" size={16}/></a>
+                    <button onClick={()=>deleteAttachment(att)} className="p-2 hover:bg-red-500/20 rounded text-red-400"><Icon name="Trash2" size={16}/></button>
+                  </div>
+                ))}
+                {attachments.length===0&&<p className="text-gray-500 text-sm">Aucune pièce jointe</p>}
+              </div>
+              <div className="flex gap-2">
+                <Input className="flex-1" placeholder="Titre du fichier" value={newAttachment.title} onChange={e=>setNewAttachment({...newAttachment,title:e.target.value})}/>
+                <input ref={attachmentFileRef} type="file" className="hidden" onChange={e=>setNewAttachment({...newAttachment,file:e.target.files[0]})}/>
+                <Button variant="secondary" icon="Upload" onClick={()=>attachmentFileRef.current?.click()}>{newAttachment.file?.name||'Fichier'}</Button>
+                <Button icon="Plus" onClick={saveAttachment} loading={uploading} disabled={!newAttachment.title||!newAttachment.file}>Ajouter</Button>
+              </div>
+            </div>
+            
+            {/* Chapitres */}
+            <div>
+              <h4 className="font-semibold mb-3 flex items-center gap-2"><Icon name="List" size={18}/>Chapitres ({chapters.length})</h4>
+              <div className="space-y-2 mb-4">
+                {chapters.map(ch=>(
+                  <div key={ch.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg">
+                    <span className="px-2 py-1 bg-indigo-600 rounded text-xs font-mono">{Math.floor(ch.timestamp_seconds/60)}:{(ch.timestamp_seconds%60).toString().padStart(2,'0')}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{ch.title}</p>
+                      {ch.description&&<p className="text-xs text-gray-400 truncate">{ch.description}</p>}
+                    </div>
+                    <button onClick={()=>deleteChapter(ch)} className="p-2 hover:bg-red-500/20 rounded text-red-400"><Icon name="Trash2" size={16}/></button>
+                  </div>
+                ))}
+                {chapters.length===0&&<p className="text-gray-500 text-sm">Aucun chapitre</p>}
+              </div>
+              <div className="flex gap-2">
+                <Input className="w-24" placeholder="0:00" value={newChapter.timestamp} onChange={e=>setNewChapter({...newChapter,timestamp:e.target.value})}/>
+                <Input className="flex-1" placeholder="Titre du chapitre" value={newChapter.title} onChange={e=>setNewChapter({...newChapter,title:e.target.value})}/>
+                <Button icon="Plus" onClick={saveChapter} disabled={!newChapter.title||!newChapter.timestamp}>Ajouter</Button>
+              </div>
+            </div>
+          </div>}
+        </Modal>
+      </div>;
+    }
+    
+    // ============================================================
+    // SECTION: Création de SCORM (wrapper vers la section existante)
+    // ============================================================
+    function ScormCreationSection(){
+      // Utilise la logique existante de VideosPage mais filtrée pour SCORM
+      const[modules,setModules]=useState([]);
+      const[loading,setLoading]=useState(true);
+      const[modal,setModal]=useState(false);
+      const[editing,setEditing]=useState(null);
+      const[form,setForm]=useState({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'index.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:'',tags:[]});
+      const[saving,setSaving]=useState(false);
+      const[search,setSearch]=useState('');
+      const[categories,setCategories]=useState([]);
+      const[themes,setThemes]=useState([]);
+      const[subThemes,setSubThemes]=useState([]);
+      const[predefinedTags,setPredefinedTags]=useState([]);
+      const[previewScorm,setPreviewScorm]=useState(null);
+      const[scormZipParsing,setScormZipParsing]=useState(false);
+      const[scormUploadProgress,setScormUploadProgress]=useState('');
+      const scormZipRef=useRef(null);
+      
+      const load=useCallback(async()=>{
+        const[{data:mods},{data:cats},{data:ths},{data:sths},{data:tags}]=await Promise.all([
+          supabase.from('scorm_modules').select('*,content_categories(id,name,color)').eq('is_lms_content',true).order('created_at',{ascending:false}),
+          supabase.from('content_categories').select('*').order('position'),
+          supabase.from('content_themes').select('*').order('position'),
+          supabase.from('content_sub_themes').select('*').order('position'),
+          supabase.from('content_tags').select('*').order('name')
+        ]);
+        setModules(mods||[]);
+        setCategories(cats||[]);
+        setThemes(ths||[]);
+        setSubThemes(sths||[]);
+        setPredefinedTags(tags||[]);
+        setLoading(false);
+      },[]);
+      
+      useEffect(()=>{load();},[load]);
+      
+      const getThemesForCategory=(catId)=>themes.filter(t=>t.category_id===catId);
+      const getSubThemesForTheme=(themeId)=>subThemes.filter(st=>st.theme_id===themeId);
+      
+      const handleSave=async()=>{
+        if(!form.title)return alert('Titre requis');
+        if(!form.package_url&&!form.remote_url)return alert('URL du package ou URL distante requise');
+        setSaving(true);
+        
+        const payload={
+          title:form.title,
+          description:form.description||null,
+          module_type:form.module_type,
+          package_url:form.package_url||null,
+          entry_point:form.entry_point||'index.html',
+          category_id:form.category_id||null,
+          theme_id:form.theme_id||null,
+          sub_theme_id:form.sub_theme_id||null,
+          version:form.version||null,
+          remote_url:form.remote_url||null,
+          tags:form.tags||[],
+          is_lms_content:true
+        };
+        
+        if(editing){
+          await supabase.from('scorm_modules').update(payload).eq('id',editing.id);
+        }else{
+          await supabase.from('scorm_modules').insert(payload);
+        }
+        
+        setModal(false);
+        setEditing(null);
+        setForm({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'index.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:'',tags:[]});
+        setSaving(false);
+        load();
+      };
+      
+      const handleDelete=async(id)=>{
+        if(!confirm('Supprimer ce module SCORM ?'))return;
+        await supabase.from('scorm_modules').delete().eq('id',id);
+        load();
+      };
+      
+      const openEdit=(m)=>{
+        setEditing(m);
+        setForm({
+          title:m.title||'',
+          description:m.description||'',
+          module_type:m.module_type||'scorm12',
+          package_url:m.package_url||'',
+          entry_point:m.entry_point||'index.html',
+          category_id:m.category_id||'',
+          theme_id:m.theme_id||'',
+          sub_theme_id:m.sub_theme_id||'',
+          version:m.version||'',
+          remote_url:m.remote_url||'',
+          tags:m.tags||[]
+        });
+        setModal(true);
+      };
+      
+      const filtered=modules.filter(m=>{
+        if(search&&!m.title.toLowerCase().includes(search.toLowerCase()))return false;
+        return true;
+      });
+      
+      if(loading)return<div className="flex items-center justify-center py-20"><Icon name="Loader2" size={32} className="animate-spin text-indigo-400"/></div>;
+      
+      return<div>
+        <div className="flex flex-wrap items-center gap-3 mb-6">
+          <Button icon="Plus" onClick={()=>{setEditing(null);setForm({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'index.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:'',tags:[]});setModal(true);}}>Ajouter un module SCORM</Button>
+          <div className="flex-1"/>
+          <Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)} className="w-64"/>
+        </div>
+        
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-purple-400">{modules.length}</p><p className="text-xs text-gray-400">Modules SCORM</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-blue-400">{modules.filter(m=>m.module_type==='scorm12').length}</p><p className="text-xs text-gray-400">SCORM 1.2</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-green-400">{modules.filter(m=>m.module_type==='scorm2004').length}</p><p className="text-xs text-gray-400">SCORM 2004</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-orange-400">{modules.filter(m=>m.remote_url).length}</p><p className="text-xs text-gray-400">Hébergés ext.</p></Card>
+        </div>
+        
+        {filtered.length===0?<Empty icon="Package" title="Aucun module SCORM" desc="Ajoutez votre premier module SCORM"/>:(
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filtered.map(m=>(
+              <Card key={m.id} className="p-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-12 h-12 bg-purple-500/20 rounded-lg flex items-center justify-center shrink-0"><Icon name="Package" size={24} className="text-purple-400"/></div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold truncate">{m.title}</h3>
+                    <p className="text-xs text-gray-400">{m.module_type?.toUpperCase()} {m.version&&`v${m.version}`}</p>
+                    {m.content_categories?.name&&<span className="inline-block mt-1 px-2 py-0.5 rounded text-xs" style={{backgroundColor:(m.content_categories?.color||'#a855f7')+'30',color:m.content_categories?.color||'#a855f7'}}>{m.content_categories.name}</span>}
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-4">
+                  <Button variant="ghost" size="sm" icon="Play" onClick={()=>setPreviewScorm(m)}>Aperçu</Button>
+                  <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>openEdit(m)}>Modifier</Button>
+                  <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(m.id)}/>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+        
+        {/* Modal SCORM */}
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier le module SCORM':'Ajouter un module SCORM'} size="lg">
+          <div className="space-y-4">
+            <Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
+            <div className="grid grid-cols-2 gap-4">
+              <Select label="Type" value={form.module_type} onChange={e=>setForm({...form,module_type:e.target.value})} options={[{value:'scorm12',label:'SCORM 1.2'},{value:'scorm2004',label:'SCORM 2004'}]}/>
+              <Input label="Version" value={form.version} onChange={e=>setForm({...form,version:e.target.value})} placeholder="1.0"/>
+            </div>
+            <Input label="URL du package (GitHub Pages)" value={form.package_url} onChange={e=>setForm({...form,package_url:e.target.value})} placeholder="https://username.github.io/scorm/module1/"/>
+            <Input label="Point d'entrée" value={form.entry_point} onChange={e=>setForm({...form,entry_point:e.target.value})} placeholder="index.html"/>
+            <Input label="URL distante (alternative)" value={form.remote_url} onChange={e=>setForm({...form,remote_url:e.target.value})} placeholder="https://lms.example.com/scorm/launch"/>
+            <div className="grid grid-cols-3 gap-4">
+              <Select label="Catégorie" value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+              <Select label="Thème" value={form.theme_id} onChange={e=>setForm({...form,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/>
+              <Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
+              <textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/>
+            </div>
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={()=>{setModal(false);setEditing(null);}}>Annuler</Button>
+              <Button onClick={handleSave} loading={saving}>Enregistrer</Button>
+            </div>
+          </div>
+        </Modal>
+        
+        {/* Preview SCORM */}
+        <Modal isOpen={!!previewScorm} onClose={()=>setPreviewScorm(null)} title={`Aperçu - ${previewScorm?.title}`} size="xl">
+          {previewScorm&&<div className="h-[70vh]">
+            <iframe src={previewScorm.remote_url||(previewScorm.package_url+(previewScorm.entry_point||'index.html'))} className="w-full h-full rounded-lg border border-gray-700"/>
+          </div>}
+        </Modal>
+      </div>;
+    }
+    
+    // ============================================================
+    // SECTION: Création de Questions (wrapper vers QuizzesPage onglet questions)
+    // ============================================================
+    function QuestionsCreationSection(){
+      // Redirige vers la gestion des questions de la banque
+      return<QuestionBankSection/>;
+    }
+    
+    // Composant QuestionBankSection extrait de QuizzesPage
+    function QuestionBankSection(){
+      const[questions,setQuestions]=useState([]);
+      const[loading,setLoading]=useState(true);
+      const[modal,setModal]=useState(false);
+      const[editing,setEditing]=useState(null);
+      const[form,setForm]=useState({question_text:'',question_type:'single',category_id:'',theme_id:'',sub_theme_id:'',difficulty:'medium',points:1,time_limit:0,feedback_correct:'',feedback_incorrect:'',answers:[{text:'',is_correct:true},{text:'',is_correct:false}]});
+      const[saving,setSaving]=useState(false);
+      const[search,setSearch]=useState('');
+      const[categories,setCategories]=useState([]);
+      const[themes,setThemes]=useState([]);
+      const[subThemes,setSubThemes]=useState([]);
+      const[filterCategory,setFilterCategory]=useState('');
+      const[filterDifficulty,setFilterDifficulty]=useState('all');
+      
+      const load=useCallback(async()=>{
+        const[{data:q},{data:cats},{data:ths},{data:sths}]=await Promise.all([
+          supabase.from('question_bank').select('*,question_bank_answers(*)').order('created_at',{ascending:false}),
+          supabase.from('content_categories').select('*').order('position'),
+          supabase.from('content_themes').select('*').order('position'),
+          supabase.from('content_sub_themes').select('*').order('position')
+        ]);
+        setQuestions(q||[]);
+        setCategories(cats||[]);
+        setThemes(ths||[]);
+        setSubThemes(sths||[]);
+        setLoading(false);
+      },[]);
+      
+      useEffect(()=>{load();},[load]);
+      
+      const getThemesForCategory=(catId)=>themes.filter(t=>t.category_id===catId);
+      const getSubThemesForTheme=(themeId)=>subThemes.filter(st=>st.theme_id===themeId);
+      const getCategoryName=(id)=>categories.find(c=>c.id===id)?.name||'';
+      
+      const handleSave=async()=>{
+        if(!form.question_text)return alert('Texte de la question requis');
+        if(form.answers.filter(a=>a.text.trim()).length<2)return alert('Au moins 2 réponses requises');
+        if(!form.answers.some(a=>a.is_correct))return alert('Au moins une réponse correcte requise');
+        
+        setSaving(true);
+        const payload={
+          question_text:form.question_text,
+          question_type:form.question_type,
+          category_id:form.category_id||null,
+          theme_id:form.theme_id||null,
+          sub_theme_id:form.sub_theme_id||null,
+          difficulty:form.difficulty,
+          points:form.points,
+          time_limit:form.time_limit||0,
+          feedback_correct:form.feedback_correct||null,
+          feedback_incorrect:form.feedback_incorrect||null
+        };
+        
+        let questionId=editing?.id;
+        if(editing){
+          await supabase.from('question_bank').update(payload).eq('id',editing.id);
+          await supabase.from('question_bank_answers').delete().eq('question_id',editing.id);
+        }else{
+          const{data}=await supabase.from('question_bank').insert(payload).select().single();
+          questionId=data.id;
+        }
+        
+        const answers=form.answers.filter(a=>a.text.trim()).map((a,i)=>({question_id:questionId,answer_text:a.text,is_correct:a.is_correct,sort_order:i}));
+        await supabase.from('question_bank_answers').insert(answers);
+        
+        setModal(false);
+        setEditing(null);
+        setForm({question_text:'',question_type:'single',category_id:'',theme_id:'',sub_theme_id:'',difficulty:'medium',points:1,time_limit:0,feedback_correct:'',feedback_incorrect:'',answers:[{text:'',is_correct:true},{text:'',is_correct:false}]});
+        setSaving(false);
+        load();
+      };
+      
+      const handleDelete=async(id)=>{
+        if(!confirm('Supprimer cette question ?'))return;
+        await supabase.from('question_bank').delete().eq('id',id);
+        load();
+      };
+      
+      const openEdit=(q)=>{
+        setEditing(q);
+        setForm({
+          question_text:q.question_text||'',
+          question_type:q.question_type||'single',
+          category_id:q.category_id||'',
+          theme_id:q.theme_id||'',
+          sub_theme_id:q.sub_theme_id||'',
+          difficulty:q.difficulty||'medium',
+          points:q.points||1,
+          time_limit:q.time_limit||0,
+          feedback_correct:q.feedback_correct||'',
+          feedback_incorrect:q.feedback_incorrect||'',
+          answers:(q.question_bank_answers||[]).map(a=>({text:a.answer_text,is_correct:a.is_correct}))
+        });
+        if(form.answers.length<2)setForm(f=>({...f,answers:[...f.answers,{text:'',is_correct:false}]}));
+        setModal(true);
+      };
+      
+      const addAnswer=()=>setForm({...form,answers:[...form.answers,{text:'',is_correct:false}]});
+      const removeAnswer=(idx)=>setForm({...form,answers:form.answers.filter((_,i)=>i!==idx)});
+      const updateAnswer=(idx,field,value)=>{
+        const answers=[...form.answers];
+        answers[idx]={...answers[idx],[field]:value};
+        if(field==='is_correct'&&value&&form.question_type==='single'){
+          answers.forEach((a,i)=>{if(i!==idx)a.is_correct=false;});
+        }
+        setForm({...form,answers});
+      };
+      
+      const filtered=questions.filter(q=>{
+        if(filterCategory&&q.category_id!==filterCategory)return false;
+        if(filterDifficulty!=='all'&&q.difficulty!==filterDifficulty)return false;
+        if(search&&!q.question_text.toLowerCase().includes(search.toLowerCase()))return false;
+        return true;
+      });
+      
+      if(loading)return<div className="flex items-center justify-center py-20"><Icon name="Loader2" size={32} className="animate-spin text-indigo-400"/></div>;
+      
+      return<div>
+        <div className="flex flex-wrap items-center gap-3 mb-6">
+          <Button icon="Plus" onClick={()=>{setEditing(null);setForm({question_text:'',question_type:'single',category_id:'',theme_id:'',sub_theme_id:'',difficulty:'medium',points:1,time_limit:0,feedback_correct:'',feedback_incorrect:'',answers:[{text:'',is_correct:true},{text:'',is_correct:false}]});setModal(true);}}>Ajouter une question</Button>
+          <div className="flex-1"/>
+          <Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)} className="w-64"/>
+          <Select value={filterCategory} onChange={e=>setFilterCategory(e.target.value)} options={[{value:'',label:'Toutes catégories'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+          <Select value={filterDifficulty} onChange={e=>setFilterDifficulty(e.target.value)} options={[{value:'all',label:'Toutes difficultés'},{value:'easy',label:'Facile'},{value:'medium',label:'Moyen'},{value:'hard',label:'Difficile'}]}/>
+        </div>
+        
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-cyan-400">{questions.length}</p><p className="text-xs text-gray-400">Questions</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-green-400">{questions.filter(q=>q.difficulty==='easy').length}</p><p className="text-xs text-gray-400">Faciles</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-yellow-400">{questions.filter(q=>q.difficulty==='medium').length}</p><p className="text-xs text-gray-400">Moyennes</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-red-400">{questions.filter(q=>q.difficulty==='hard').length}</p><p className="text-xs text-gray-400">Difficiles</p></Card>
+        </div>
+        
+        {filtered.length===0?<Empty icon="Database" title="Aucune question" desc="Ajoutez votre première question à la banque"/>:(
+          <div className="space-y-3">
+            {filtered.slice(0,50).map(q=>(
+              <Card key={q.id} className="p-4">
+                <div className="flex items-start gap-4">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${q.difficulty==='easy'?'bg-green-500/20 text-green-400':q.difficulty==='hard'?'bg-red-500/20 text-red-400':'bg-yellow-500/20 text-yellow-400'}`}>
+                    <Icon name="HelpCircle" size={20}/>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium">{q.question_text}</p>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <span className="px-2 py-0.5 bg-gray-700 rounded text-xs">{q.question_type==='single'?'Choix unique':q.question_type==='multiple'?'Choix multiple':'Vrai/Faux'}</span>
+                      {q.category_id&&<span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-300 rounded text-xs">{getCategoryName(q.category_id)}</span>}
+                      <span className="px-2 py-0.5 bg-gray-600 rounded text-xs">{q.points} pt{q.points>1?'s':''}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {(q.question_bank_answers||[]).map((a,i)=>(
+                        <span key={i} className={`px-2 py-0.5 rounded text-xs ${a.is_correct?'bg-green-500/20 text-green-400':'bg-gray-700 text-gray-400'}`}>{a.answer_text}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>openEdit(q)}/>
+                    <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(q.id)}/>
+                  </div>
+                </div>
+              </Card>
+            ))}
+            {filtered.length>50&&<p className="text-center text-gray-400 py-4">Affichage limité à 50 questions. Utilisez les filtres pour affiner.</p>}
+          </div>
+        )}
+        
+        {/* Modal Question */}
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier la question':'Ajouter une question'} size="lg">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Question *</label>
+              <textarea value={form.question_text} onChange={e=>setForm({...form,question_text:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <Select label="Type" value={form.question_type} onChange={e=>setForm({...form,question_type:e.target.value})} options={[{value:'single',label:'Choix unique'},{value:'multiple',label:'Choix multiple'},{value:'true_false',label:'Vrai/Faux'}]}/>
+              <Select label="Difficulté" value={form.difficulty} onChange={e=>setForm({...form,difficulty:e.target.value})} options={[{value:'easy',label:'Facile'},{value:'medium',label:'Moyen'},{value:'hard',label:'Difficile'}]}/>
+              <Input label="Points" type="number" value={form.points} onChange={e=>setForm({...form,points:parseInt(e.target.value)||1})}/>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <Select label="Catégorie" value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+              <Select label="Thème" value={form.theme_id} onChange={e=>setForm({...form,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/>
+              <Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/>
+            </div>
+            
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-medium text-gray-300">Réponses *</label>
+                <Button variant="ghost" size="sm" icon="Plus" onClick={addAnswer}>Ajouter</Button>
+              </div>
+              <div className="space-y-2">
+                {form.answers.map((a,i)=>(
+                  <div key={i} className="flex items-center gap-2">
+                    <input type={form.question_type==='single'?'radio':'checkbox'} checked={a.is_correct} onChange={e=>updateAnswer(i,'is_correct',e.target.checked)} className="w-4 h-4"/>
+                    <Input className="flex-1" value={a.text} onChange={e=>updateAnswer(i,'text',e.target.value)} placeholder={`Réponse ${i+1}`}/>
+                    {form.answers.length>2&&<button onClick={()=>removeAnswer(i)} className="p-2 hover:bg-red-500/20 rounded text-red-400"><Icon name="X" size={16}/></button>}
+                  </div>
+                ))}
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Feedback correct" value={form.feedback_correct} onChange={e=>setForm({...form,feedback_correct:e.target.value})} placeholder="Bravo !"/>
+              <Input label="Feedback incorrect" value={form.feedback_incorrect} onChange={e=>setForm({...form,feedback_incorrect:e.target.value})} placeholder="La bonne réponse était..."/>
+            </div>
+            
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={()=>{setModal(false);setEditing(null);}}>Annuler</Button>
+              <Button onClick={handleSave} loading={saving}>Enregistrer</Button>
+            </div>
+          </div>
+        </Modal>
+      </div>;
+    }
+    
+    // ============================================================
+    // SECTION: Création de Quiz (wrapper)
+    // ============================================================
+    function QuizCreationSection(){
+      // Utilise QuizzesPage avec l'onglet quiz
+      return<QuizManagementSection/>;
+    }
+    
+    function QuizManagementSection(){
+      const[quizzes,setQuizzes]=useState([]);
+      const[loading,setLoading]=useState(true);
+      const[modal,setModal]=useState(false);
+      const[editing,setEditing]=useState(null);
+      const[form,setForm]=useState({title:'',description:'',passing_score:70,time_limit:0,max_attempts:0,shuffle_questions:false,shuffle_answers:false,show_answers:true,show_feedback:true,category_id:'',theme_id:'',sub_theme_id:''});
+      const[saving,setSaving]=useState(false);
+      const[search,setSearch]=useState('');
+      const[categories,setCategories]=useState([]);
+      const[themes,setThemes]=useState([]);
+      const[subThemes,setSubThemes]=useState([]);
+      const[bankQuestions,setBankQuestions]=useState([]);
+      const[quizQuestions,setQuizQuestions]=useState([]);
+      const[addQuestionsModal,setAddQuestionsModal]=useState(null);
+      const[selectedBankQuestions,setSelectedBankQuestions]=useState([]);
+      
+      const load=useCallback(async()=>{
+        const[{data:q},{data:cats},{data:ths},{data:sths},{data:bank}]=await Promise.all([
+          supabase.from('quizzes').select('*,content_categories(id,name,color),quiz_questions(count)').eq('is_lms_content',true).order('created_at',{ascending:false}),
+          supabase.from('content_categories').select('*').order('position'),
+          supabase.from('content_themes').select('*').order('position'),
+          supabase.from('content_sub_themes').select('*').order('position'),
+          supabase.from('question_bank').select('*,question_bank_answers(*)').order('created_at',{ascending:false})
+        ]);
+        setQuizzes(q||[]);
+        setCategories(cats||[]);
+        setThemes(ths||[]);
+        setSubThemes(sths||[]);
+        setBankQuestions(bank||[]);
+        setLoading(false);
+      },[]);
+      
+      useEffect(()=>{load();},[load]);
+      
+      const getThemesForCategory=(catId)=>themes.filter(t=>t.category_id===catId);
+      const getSubThemesForTheme=(themeId)=>subThemes.filter(st=>st.theme_id===themeId);
+      
+      const handleSave=async()=>{
+        if(!form.title)return alert('Titre requis');
+        setSaving(true);
+        
+        const payload={
+          title:form.title,
+          description:form.description||null,
+          passing_score:form.passing_score,
+          time_limit:form.time_limit||0,
+          max_attempts:form.max_attempts||0,
+          shuffle_questions:form.shuffle_questions,
+          shuffle_answers:form.shuffle_answers,
+          show_answers:form.show_answers,
+          show_feedback:form.show_feedback,
+          category_id:form.category_id||null,
+          theme_id:form.theme_id||null,
+          sub_theme_id:form.sub_theme_id||null,
+          is_lms_content:true
+        };
+        
+        if(editing){
+          await supabase.from('quizzes').update(payload).eq('id',editing.id);
+        }else{
+          await supabase.from('quizzes').insert(payload);
+        }
+        
+        setModal(false);
+        setEditing(null);
+        setForm({title:'',description:'',passing_score:70,time_limit:0,max_attempts:0,shuffle_questions:false,shuffle_answers:false,show_answers:true,show_feedback:true,category_id:'',theme_id:'',sub_theme_id:''});
+        setSaving(false);
+        load();
+      };
+      
+      const handleDelete=async(id)=>{
+        if(!confirm('Supprimer ce quiz ?'))return;
+        await supabase.from('quizzes').delete().eq('id',id);
+        load();
+      };
+      
+      const openEdit=(q)=>{
+        setEditing(q);
+        setForm({
+          title:q.title||'',
+          description:q.description||'',
+          passing_score:q.passing_score||70,
+          time_limit:q.time_limit||0,
+          max_attempts:q.max_attempts||0,
+          shuffle_questions:q.shuffle_questions||false,
+          shuffle_answers:q.shuffle_answers||false,
+          show_answers:q.show_answers!==false,
+          show_feedback:q.show_feedback!==false,
+          category_id:q.category_id||'',
+          theme_id:q.theme_id||'',
+          sub_theme_id:q.sub_theme_id||''
+        });
+        setModal(true);
+      };
+      
+      const openAddQuestions=async(quiz)=>{
+        const{data}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('quiz_id',quiz.id).order('sort_order');
+        setQuizQuestions(data||[]);
+        setSelectedBankQuestions([]);
+        setAddQuestionsModal(quiz);
+      };
+      
+      const addQuestionsFromBank=async()=>{
+        if(!selectedBankQuestions.length)return;
+        const maxOrder=(quizQuestions.length>0?Math.max(...quizQuestions.map(q=>q.sort_order||0)):0);
+        
+        for(let i=0;i<selectedBankQuestions.length;i++){
+          const bq=bankQuestions.find(q=>q.id===selectedBankQuestions[i]);
+          if(!bq)continue;
+          
+          const{data:qq}=await supabase.from('quiz_questions').insert({
+            quiz_id:addQuestionsModal.id,
+            question_text:bq.question_text,
+            question_type:bq.question_type,
+            points:bq.points||1,
+            time_limit:bq.time_limit||0,
+            sort_order:maxOrder+i+1,
+            feedback_correct:bq.feedback_correct,
+            feedback_incorrect:bq.feedback_incorrect
+          }).select().single();
+          
+          if(qq&&bq.question_bank_answers){
+            const answers=bq.question_bank_answers.map((a,j)=>({
+              question_id:qq.id,
+              answer_text:a.answer_text,
+              is_correct:a.is_correct,
+              sort_order:j
+            }));
+            await supabase.from('quiz_answers').insert(answers);
+          }
+        }
+        
+        setAddQuestionsModal(null);
+        setSelectedBankQuestions([]);
+        load();
+      };
+      
+      const filtered=quizzes.filter(q=>{
+        if(search&&!q.title.toLowerCase().includes(search.toLowerCase()))return false;
+        return true;
+      });
+      
+      if(loading)return<div className="flex items-center justify-center py-20"><Icon name="Loader2" size={32} className="animate-spin text-indigo-400"/></div>;
+      
+      return<div>
+        <div className="flex flex-wrap items-center gap-3 mb-6">
+          <Button icon="Plus" onClick={()=>{setEditing(null);setForm({title:'',description:'',passing_score:70,time_limit:0,max_attempts:0,shuffle_questions:false,shuffle_answers:false,show_answers:true,show_feedback:true,category_id:'',theme_id:'',sub_theme_id:''});setModal(true);}}>Créer un quiz</Button>
+          <div className="flex-1"/>
+          <Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)} className="w-64"/>
+        </div>
+        
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-pink-400">{quizzes.length}</p><p className="text-xs text-gray-400">Quiz</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-cyan-400">{bankQuestions.length}</p><p className="text-xs text-gray-400">Questions en banque</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-green-400">{quizzes.reduce((a,q)=>a+(q.quiz_questions?.[0]?.count||0),0)}</p><p className="text-xs text-gray-400">Questions assignées</p></Card>
+        </div>
+        
+        {filtered.length===0?<Empty icon="HelpCircle" title="Aucun quiz" desc="Créez votre premier quiz"/>:(
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filtered.map(q=>(
+              <Card key={q.id} className="p-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-12 h-12 bg-pink-500/20 rounded-lg flex items-center justify-center shrink-0"><Icon name="HelpCircle" size={24} className="text-pink-400"/></div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold truncate">{q.title}</h3>
+                    <p className="text-xs text-gray-400">{q.quiz_questions?.[0]?.count||0} questions • Score min: {q.passing_score}%</p>
+                    {q.content_categories?.name&&<span className="inline-block mt-1 px-2 py-0.5 rounded text-xs" style={{backgroundColor:(q.content_categories?.color||'#ec4899')+'30',color:q.content_categories?.color||'#ec4899'}}>{q.content_categories.name}</span>}
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-4">
+                  <Button variant="ghost" size="sm" icon="Database" onClick={()=>openAddQuestions(q)}>Questions</Button>
+                  <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>openEdit(q)}>Modifier</Button>
+                  <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(q.id)}/>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+        
+        {/* Modal Quiz */}
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier le quiz':'Créer un quiz'} size="lg">
+          <div className="space-y-4">
+            <Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
+            <div className="grid grid-cols-3 gap-4">
+              <Input label="Score minimum (%)" type="number" value={form.passing_score} onChange={e=>setForm({...form,passing_score:parseInt(e.target.value)||70})}/>
+              <Input label="Temps limite (min)" type="number" value={form.time_limit} onChange={e=>setForm({...form,time_limit:parseInt(e.target.value)||0})} placeholder="0 = illimité"/>
+              <Input label="Tentatives max" type="number" value={form.max_attempts} onChange={e=>setForm({...form,max_attempts:parseInt(e.target.value)||0})} placeholder="0 = illimité"/>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <Select label="Catégorie" value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+              <Select label="Thème" value={form.theme_id} onChange={e=>setForm({...form,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/>
+              <Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <label className="flex items-center gap-2"><input type="checkbox" checked={form.shuffle_questions} onChange={e=>setForm({...form,shuffle_questions:e.target.checked})} className="rounded"/>Mélanger les questions</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={form.shuffle_answers} onChange={e=>setForm({...form,shuffle_answers:e.target.checked})} className="rounded"/>Mélanger les réponses</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={form.show_answers} onChange={e=>setForm({...form,show_answers:e.target.checked})} className="rounded"/>Afficher les réponses</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={form.show_feedback} onChange={e=>setForm({...form,show_feedback:e.target.checked})} className="rounded"/>Afficher le feedback</label>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
+              <textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/>
+            </div>
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={()=>{setModal(false);setEditing(null);}}>Annuler</Button>
+              <Button onClick={handleSave} loading={saving}>Enregistrer</Button>
+            </div>
+          </div>
+        </Modal>
+        
+        {/* Modal ajouter questions */}
+        <Modal isOpen={!!addQuestionsModal} onClose={()=>setAddQuestionsModal(null)} title={`Ajouter des questions - ${addQuestionsModal?.title}`} size="xl">
+          <div className="space-y-4">
+            <p className="text-sm text-gray-400">Questions actuelles: {quizQuestions.length} • Sélectionnez des questions de la banque à ajouter</p>
+            <div className="max-h-96 overflow-y-auto space-y-2">
+              {bankQuestions.map(bq=>(
+                <label key={bq.id} className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer ${selectedBankQuestions.includes(bq.id)?'bg-indigo-600/20 border border-indigo-500':'bg-gray-700 hover:bg-gray-600'}`}>
+                  <input type="checkbox" checked={selectedBankQuestions.includes(bq.id)} onChange={e=>{
+                    if(e.target.checked)setSelectedBankQuestions([...selectedBankQuestions,bq.id]);
+                    else setSelectedBankQuestions(selectedBankQuestions.filter(id=>id!==bq.id));
+                  }} className="rounded"/>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium truncate">{bq.question_text}</p>
+                    <p className="text-xs text-gray-400">{bq.question_type} • {bq.difficulty} • {bq.points} pt{bq.points>1?'s':''}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-between">
+              <p className="text-sm text-gray-400">{selectedBankQuestions.length} question(s) sélectionnée(s)</p>
+              <div className="flex gap-3">
+                <Button variant="secondary" onClick={()=>setAddQuestionsModal(null)}>Annuler</Button>
+                <Button onClick={addQuestionsFromBank} disabled={!selectedBankQuestions.length}>Ajouter au quiz</Button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      </div>;
+    }
+    
+    // ============================================================
+    // SECTION: Création de Cours (wrapper vers PlaylistsPage)
+    // ============================================================
+    function CourseCreationSection(){
+      return<PlaylistsPage creationMode={true}/>;
+    }
+    
+    // ============================================================
+    // SECTION: Création de Parcours (wrapper vers LearningPathsPage)
+    // ============================================================
+    function PathCreationSection(){
+      return<LearningPathsPage creationMode={true}/>;
+    }
+    
+    // ============================================================
+    // SOUS-PAGE: Catalogue de contenu
+    // ============================================================
+    function ContentCataloguePage(){
+      const{isSuperAdmin,center,realRole}=useAuth();
+      const[activeTab,setActiveTab]=useState('videos');
+      const[videos,setVideos]=useState([]);
+      const[scormModules,setScormModules]=useState([]);
+      const[quizzes,setQuizzes]=useState([]);
+      const[courses,setCourses]=useState([]);
+      const[paths,setPaths]=useState([]);
+      const[loading,setLoading]=useState(true);
+      const[search,setSearch]=useState('');
+      const[categories,setCategories]=useState([]);
+      const[filterCategory,setFilterCategory]=useState('');
+      const[previewModal,setPreviewModal]=useState(null);
+      const[licensedIds,setLicensedIds]=useState({videos:[],scorm:[],quizzes:[],courses:[],paths:[]});
+      // Panier de demande
+      const[requestCart,setRequestCart]=useState({videos:[],scorm:[],quizzes:[],courses:[],paths:[]});
+      const[requestCartModal,setRequestCartModal]=useState(false);
+      const[requestCartForm,setRequestCartForm]=useState({name:'',description:'',duration_months:12,max_learners:'',message:''});
+      const[requestCartSaving,setRequestCartSaving]=useState(false);
+      
+      const canRequestLicense=!isSuperAdmin&&center?.id&&realRole==='center_admin';
+      
+      const load=useCallback(async()=>{
+        const[{data:vids},{data:scorm},{data:quiz},{data:cours},{data:path},{data:cats}]=await Promise.all([
+          supabase.from('videos').select('*,content_categories(id,name,color)').eq('is_lms_content',true).order('sort_order').order('title'),
+          supabase.from('scorm_modules').select('*,content_categories(id,name,color)').eq('is_lms_content',true).order('title'),
+          supabase.from('quizzes').select('*,content_categories(id,name,color),quiz_questions(count)').eq('is_lms_content',true).order('title'),
+          supabase.from('playlists').select('*,content_categories(id,name,color),playlist_items(count)').eq('is_lms_content',true).order('title'),
+          supabase.from('learning_paths').select('*,content_categories(id,name,color),learning_path_courses(count)').eq('is_lms_content',true).order('title'),
+          supabase.from('content_categories').select('*').order('position')
+        ]);
+        setVideos(vids||[]);
+        setScormModules(scorm||[]);
+        setQuizzes(quiz||[]);
+        setCourses(cours||[]);
+        setPaths(path||[]);
+        setCategories(cats||[]);
+        
+        // Charger les licences du centre
+        if(center?.id){
+          const{data:lic}=await supabase.from('center_licenses').select('content_type,content_id').eq('center_id',center.id).eq('is_active',true);
+          const licensed={videos:[],scorm:[],quizzes:[],courses:[],paths:[]};
+          (lic||[]).forEach(l=>{
+            if(l.content_type==='video')licensed.videos.push(l.content_id);
+            else if(l.content_type==='scorm')licensed.scorm.push(l.content_id);
+            else if(l.content_type==='quiz')licensed.quizzes.push(l.content_id);
+            else if(l.content_type==='course')licensed.courses.push(l.content_id);
+            else if(l.content_type==='path')licensed.paths.push(l.content_id);
+          });
+          setLicensedIds(licensed);
+        }
+        
+        setLoading(false);
+      },[center?.id]);
+      
+      useEffect(()=>{load();},[load]);
+      
+      const isLicensed=(type,id)=>{
+        if(isSuperAdmin)return true;
+        return licensedIds[type+'s']?.includes(id);
+      };
+      
+      const toggleRequestCart=(type,id,item)=>{
+        setRequestCart(prev=>{
+          const list=[...prev[type+'s']||[]];
+          const idx=list.findIndex(i=>i.id===id);
+          if(idx>=0)list.splice(idx,1);
+          else list.push({id,title:item.title,type});
+          return{...prev,[type+'s']:list};
+        });
+      };
+      
+      const isInRequestCart=(type,id)=>(requestCart[type+'s']||[]).some(i=>i.id===id);
+      
+      const getRequestCartCount=()=>{
+        return(requestCart.videos?.length||0)+(requestCart.scorm?.length||0)+(requestCart.quizzes?.length||0)+(requestCart.courses?.length||0)+(requestCart.paths?.length||0);
+      };
+      
+      const submitLicenseRequest=async()=>{
+        if(!requestCartForm.name)return alert('Nom de la demande requis');
+        setRequestCartSaving(true);
+        
+        // Créer la demande
+        const{data:req}=await supabase.from('license_requests').insert({
+          center_id:center.id,
+          requested_by:supabase.auth.getUser().then(u=>u.data.user.id),
+          name:requestCartForm.name,
+          description:requestCartForm.description,
+          duration_months:requestCartForm.duration_months,
+          max_learners:requestCartForm.max_learners?parseInt(requestCartForm.max_learners):null,
+          message:requestCartForm.message,
+          status:'pending'
+        }).select().single();
+        
+        if(req){
+          // Ajouter les items
+          const items=[];
+          Object.entries(requestCart).forEach(([type,list])=>{
+            const contentType=type.slice(0,-1);
+            list.forEach(item=>{
+              items.push({request_id:req.id,content_type:contentType,content_id:item.id});
+            });
+          });
+          if(items.length)await supabase.from('license_request_items').insert(items);
+        }
+        
+        setRequestCartModal(false);
+        setRequestCart({videos:[],scorm:[],quizzes:[],courses:[],paths:[]});
+        setRequestCartForm({name:'',description:'',duration_months:12,max_learners:'',message:''});
+        setRequestCartSaving(false);
+        alert('Demande de licence envoyée !');
+      };
+      
+      const filter=(items)=>{
+        return items.filter(i=>{
+          if(filterCategory&&i.category_id!==filterCategory)return false;
+          if(search&&!i.title?.toLowerCase().includes(search.toLowerCase()))return false;
+          return true;
+        });
+      };
+      
+      const buildVimeoEmbedUrl=(id,hash)=>{
+        let url=`https://player.vimeo.com/video/${id}`;
+        if(hash)url+=`?h=${hash}`;
+        return url;
+      };
+      
+      if(loading)return<div className="flex items-center justify-center py-20"><Icon name="Loader2" size={32} className="animate-spin text-indigo-400"/></div>;
+      
+      return<div>
+        {/* Barre d'outils */}
+        <div className="flex flex-wrap items-center gap-3 mb-6">
+          <Input icon="Search" placeholder="Rechercher dans le catalogue..." value={search} onChange={e=>setSearch(e.target.value)} className="w-72"/>
+          <Select value={filterCategory} onChange={e=>setFilterCategory(e.target.value)} options={[{value:'',label:'Toutes catégories'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+          <div className="flex-1"/>
+          {canRequestLicense&&getRequestCartCount()>0&&(
+            <Button icon="ShoppingCart" onClick={()=>setRequestCartModal(true)}>
+              Panier ({getRequestCartCount()})
+            </Button>
+          )}
+        </div>
+        
+        {/* Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+          <Card className="p-4 text-center cursor-pointer hover:border-indigo-500" onClick={()=>setActiveTab('videos')}>
+            <Icon name="Film" size={24} className={`mx-auto mb-2 ${activeTab==='videos'?'text-indigo-400':'text-gray-400'}`}/>
+            <p className="text-xl font-bold">{videos.length}</p>
+            <p className="text-xs text-gray-400">Vidéos</p>
+          </Card>
+          <Card className="p-4 text-center cursor-pointer hover:border-purple-500" onClick={()=>setActiveTab('scorm')}>
+            <Icon name="Package" size={24} className={`mx-auto mb-2 ${activeTab==='scorm'?'text-purple-400':'text-gray-400'}`}/>
+            <p className="text-xl font-bold">{scormModules.length}</p>
+            <p className="text-xs text-gray-400">SCORM</p>
+          </Card>
+          <Card className="p-4 text-center cursor-pointer hover:border-pink-500" onClick={()=>setActiveTab('quizzes')}>
+            <Icon name="HelpCircle" size={24} className={`mx-auto mb-2 ${activeTab==='quizzes'?'text-pink-400':'text-gray-400'}`}/>
+            <p className="text-xl font-bold">{quizzes.length}</p>
+            <p className="text-xs text-gray-400">Quiz</p>
+          </Card>
+          <Card className="p-4 text-center cursor-pointer hover:border-green-500" onClick={()=>setActiveTab('courses')}>
+            <Icon name="BookOpen" size={24} className={`mx-auto mb-2 ${activeTab==='courses'?'text-green-400':'text-gray-400'}`}/>
+            <p className="text-xl font-bold">{courses.length}</p>
+            <p className="text-xs text-gray-400">Cours</p>
+          </Card>
+          <Card className="p-4 text-center cursor-pointer hover:border-orange-500" onClick={()=>setActiveTab('paths')}>
+            <Icon name="Route" size={24} className={`mx-auto mb-2 ${activeTab==='paths'?'text-orange-400':'text-gray-400'}`}/>
+            <p className="text-xl font-bold">{paths.length}</p>
+            <p className="text-xs text-gray-400">Parcours</p>
+          </Card>
+        </div>
+        
+        {/* Onglets */}
+        <Tabs tabs={[
+          {id:'videos',label:`Vidéos (${filter(videos).length})`,icon:'Film'},
+          {id:'scorm',label:`SCORM (${filter(scormModules).length})`,icon:'Package'},
+          {id:'quizzes',label:`Quiz (${filter(quizzes).length})`,icon:'HelpCircle'},
+          {id:'courses',label:`Cours (${filter(courses).length})`,icon:'BookOpen'},
+          {id:'paths',label:`Parcours (${filter(paths).length})`,icon:'Route'}
+        ]} active={activeTab} onChange={setActiveTab}/>
+        
+        <div className="mt-6">
+          {/* VIDEOS */}
+          {activeTab==='videos'&&(
+            filter(videos).length===0?<Empty icon="Film" title="Aucune vidéo"/>:(
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {filter(videos).map(v=>{
+                  const licensed=isLicensed('video',v.id);
+                  return<Card key={v.id} className={`overflow-hidden ${!licensed?'opacity-70':''}`}>
+                    <div className="aspect-video bg-gray-900 relative">
+                      {v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:
+                      <div className="w-full h-full flex items-center justify-center"><Icon name="Film" size={48} className="text-gray-600"/></div>}
+                      <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>
+                      {!licensed&&<div className="absolute top-2 right-2 px-2 py-1 bg-orange-500/90 rounded text-xs">🔒 Non licencié</div>}
+                      {licensed&&!isSuperAdmin&&<div className="absolute top-2 right-2 px-2 py-1 bg-green-500/90 rounded text-xs">✓ Licencié</div>}
+                    </div>
+                    <div className="p-3">
+                      <h3 className="font-semibold truncate text-sm">{v.title}</h3>
+                      {v.content_categories?.name&&<span className="inline-block mt-1 px-2 py-0.5 rounded text-xs" style={{backgroundColor:(v.content_categories?.color||'#6366f1')+'30',color:v.content_categories?.color||'#6366f1'}}>{v.content_categories.name}</span>}
+                      <div className="flex gap-2 mt-3">
+                        {licensed&&<Button variant="ghost" size="sm" icon="Play" onClick={()=>setPreviewModal({type:'video',item:v})}>Aperçu</Button>}
+                        {canRequestLicense&&!licensed&&(
+                          <Button variant={isInRequestCart('video',v.id)?'primary':'secondary'} size="sm" icon={isInRequestCart('video',v.id)?'Check':'Plus'} onClick={()=>toggleRequestCart('video',v.id,v)}>
+                            {isInRequestCart('video',v.id)?'Dans le panier':'Ajouter'}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </Card>;
+                })}
+              </div>
+            )
+          )}
+          
+          {/* SCORM */}
+          {activeTab==='scorm'&&(
+            filter(scormModules).length===0?<Empty icon="Package" title="Aucun module SCORM"/>:(
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filter(scormModules).map(m=>{
+                  const licensed=isLicensed('scorm',m.id);
+                  return<Card key={m.id} className={`p-4 ${!licensed?'opacity-70':''}`}>
+                    <div className="flex items-start gap-3">
+                      <div className="w-12 h-12 bg-purple-500/20 rounded-lg flex items-center justify-center shrink-0"><Icon name="Package" size={24} className="text-purple-400"/></div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold truncate">{m.title}</h3>
+                        <p className="text-xs text-gray-400">{m.module_type?.toUpperCase()}</p>
+                        {m.content_categories?.name&&<span className="inline-block mt-1 px-2 py-0.5 rounded text-xs" style={{backgroundColor:(m.content_categories?.color||'#a855f7')+'30',color:m.content_categories?.color||'#a855f7'}}>{m.content_categories.name}</span>}
+                        {!licensed&&<span className="inline-block ml-2 mt-1 px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs">🔒</span>}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-4">
+                      {licensed&&<Button variant="ghost" size="sm" icon="Play" onClick={()=>setPreviewModal({type:'scorm',item:m})}>Aperçu</Button>}
+                      {canRequestLicense&&!licensed&&(
+                        <Button variant={isInRequestCart('scorm',m.id)?'primary':'secondary'} size="sm" icon={isInRequestCart('scorm',m.id)?'Check':'Plus'} onClick={()=>toggleRequestCart('scorm',m.id,m)}>
+                          {isInRequestCart('scorm',m.id)?'Dans le panier':'Ajouter'}
+                        </Button>
+                      )}
+                    </div>
+                  </Card>;
+                })}
+              </div>
+            )
+          )}
+          
+          {/* QUIZ */}
+          {activeTab==='quizzes'&&(
+            filter(quizzes).length===0?<Empty icon="HelpCircle" title="Aucun quiz"/>:(
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filter(quizzes).map(q=>{
+                  const licensed=isLicensed('quiz',q.id);
+                  return<Card key={q.id} className={`p-4 ${!licensed?'opacity-70':''}`}>
+                    <div className="flex items-start gap-3">
+                      <div className="w-12 h-12 bg-pink-500/20 rounded-lg flex items-center justify-center shrink-0"><Icon name="HelpCircle" size={24} className="text-pink-400"/></div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold truncate">{q.title}</h3>
+                        <p className="text-xs text-gray-400">{q.quiz_questions?.[0]?.count||0} questions • Score min: {q.passing_score}%</p>
+                        {q.content_categories?.name&&<span className="inline-block mt-1 px-2 py-0.5 rounded text-xs" style={{backgroundColor:(q.content_categories?.color||'#ec4899')+'30',color:q.content_categories?.color||'#ec4899'}}>{q.content_categories.name}</span>}
+                        {!licensed&&<span className="inline-block ml-2 mt-1 px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs">🔒</span>}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-4">
+                      {licensed&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>setPreviewModal({type:'quiz',item:q})}>Voir</Button>}
+                      {canRequestLicense&&!licensed&&(
+                        <Button variant={isInRequestCart('quiz',q.id)?'primary':'secondary'} size="sm" icon={isInRequestCart('quiz',q.id)?'Check':'Plus'} onClick={()=>toggleRequestCart('quiz',q.id,q)}>
+                          {isInRequestCart('quiz',q.id)?'Dans le panier':'Ajouter'}
+                        </Button>
+                      )}
+                    </div>
+                  </Card>;
+                })}
+              </div>
+            )
+          )}
+          
+          {/* COURS */}
+          {activeTab==='courses'&&(
+            filter(courses).length===0?<Empty icon="BookOpen" title="Aucun cours"/>:(
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filter(courses).map(c=>{
+                  const licensed=isLicensed('course',c.id);
+                  return<Card key={c.id} className={`p-4 ${!licensed?'opacity-70':''}`}>
+                    <div className="flex items-start gap-3">
+                      <div className="w-12 h-12 bg-green-500/20 rounded-lg flex items-center justify-center shrink-0"><Icon name="BookOpen" size={24} className="text-green-400"/></div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold truncate">{c.title}</h3>
+                        <p className="text-xs text-gray-400">{c.playlist_items?.[0]?.count||0} éléments</p>
+                        {c.content_categories?.name&&<span className="inline-block mt-1 px-2 py-0.5 rounded text-xs" style={{backgroundColor:(c.content_categories?.color||'#22c55e')+'30',color:c.content_categories?.color||'#22c55e'}}>{c.content_categories.name}</span>}
+                        {!licensed&&<span className="inline-block ml-2 mt-1 px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs">🔒</span>}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-4">
+                      {licensed&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>setPreviewModal({type:'course',item:c})}>Voir</Button>}
+                      {canRequestLicense&&!licensed&&(
+                        <Button variant={isInRequestCart('course',c.id)?'primary':'secondary'} size="sm" icon={isInRequestCart('course',c.id)?'Check':'Plus'} onClick={()=>toggleRequestCart('course',c.id,c)}>
+                          {isInRequestCart('course',c.id)?'Dans le panier':'Ajouter'}
+                        </Button>
+                      )}
+                    </div>
+                  </Card>;
+                })}
+              </div>
+            )
+          )}
+          
+          {/* PARCOURS */}
+          {activeTab==='paths'&&(
+            filter(paths).length===0?<Empty icon="Route" title="Aucun parcours"/>:(
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filter(paths).map(p=>{
+                  const licensed=isLicensed('path',p.id);
+                  return<Card key={p.id} className={`p-4 ${!licensed?'opacity-70':''}`}>
+                    <div className="flex items-start gap-3">
+                      <div className="w-12 h-12 bg-orange-500/20 rounded-lg flex items-center justify-center shrink-0"><Icon name="Route" size={24} className="text-orange-400"/></div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold truncate">{p.title}</h3>
+                        <p className="text-xs text-gray-400">{p.learning_path_courses?.[0]?.count||0} cours</p>
+                        {p.content_categories?.name&&<span className="inline-block mt-1 px-2 py-0.5 rounded text-xs" style={{backgroundColor:(p.content_categories?.color||'#f97316')+'30',color:p.content_categories?.color||'#f97316'}}>{p.content_categories.name}</span>}
+                        {!licensed&&<span className="inline-block ml-2 mt-1 px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs">🔒</span>}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-4">
+                      {licensed&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>setPreviewModal({type:'path',item:p})}>Voir</Button>}
+                      {canRequestLicense&&!licensed&&(
+                        <Button variant={isInRequestCart('path',p.id)?'primary':'secondary'} size="sm" icon={isInRequestCart('path',p.id)?'Check':'Plus'} onClick={()=>toggleRequestCart('path',p.id,p)}>
+                          {isInRequestCart('path',p.id)?'Dans le panier':'Ajouter'}
+                        </Button>
+                      )}
+                    </div>
+                  </Card>;
+                })}
+              </div>
+            )
+          )}
+        </div>
+        
+        {/* Modal aperçu */}
+        <Modal isOpen={!!previewModal} onClose={()=>setPreviewModal(null)} title={`Aperçu - ${previewModal?.item?.title}`} size="xl">
+          {previewModal?.type==='video'&&previewModal.item&&(
+            <div className="aspect-video"><iframe src={buildVimeoEmbedUrl(previewModal.item.vimeo_id,previewModal.item.vimeo_hash)} className="w-full h-full rounded-lg" allow="autoplay; fullscreen"/></div>
+          )}
+          {previewModal?.type==='scorm'&&previewModal.item&&(
+            <div className="h-[70vh]"><iframe src={previewModal.item.remote_url||(previewModal.item.package_url+(previewModal.item.entry_point||'index.html'))} className="w-full h-full rounded-lg border border-gray-700"/></div>
+          )}
+          {(previewModal?.type==='quiz'||previewModal?.type==='course'||previewModal?.type==='path')&&previewModal.item&&(
+            <div className="p-6 text-center">
+              <Icon name={previewModal.type==='quiz'?'HelpCircle':previewModal.type==='course'?'BookOpen':'Route'} size={48} className="mx-auto text-gray-400 mb-4"/>
+              <h3 className="text-xl font-bold mb-2">{previewModal.item.title}</h3>
+              {previewModal.item.description&&<p className="text-gray-400">{previewModal.item.description}</p>}
+              <div className="mt-4 text-sm text-gray-500">
+                {previewModal.type==='quiz'&&<p>{previewModal.item.quiz_questions?.[0]?.count||0} questions • Score minimum: {previewModal.item.passing_score}%</p>}
+                {previewModal.type==='course'&&<p>{previewModal.item.playlist_items?.[0]?.count||0} éléments</p>}
+                {previewModal.type==='path'&&<p>{previewModal.item.learning_path_courses?.[0]?.count||0} cours</p>}
+              </div>
+            </div>
+          )}
+        </Modal>
+        
+        {/* Modal panier de demande */}
+        <Modal isOpen={requestCartModal} onClose={()=>setRequestCartModal(false)} title="Demande de licence" size="lg">
+          <div className="space-y-4">
+            <div className="bg-gray-700/50 rounded-lg p-4">
+              <h4 className="font-semibold mb-2">Contenus sélectionnés ({getRequestCartCount()})</h4>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {Object.entries(requestCart).map(([type,items])=>
+                  items.map(item=>(
+                    <div key={`${type}-${item.id}`} className="flex items-center justify-between p-2 bg-gray-700 rounded">
+                      <span className="text-sm">{item.title}</span>
+                      <button onClick={()=>toggleRequestCart(item.type,item.id,item)} className="text-red-400 hover:text-red-300"><Icon name="X" size={16}/></button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+            
+            <Input label="Nom de la demande *" value={requestCartForm.name} onChange={e=>setRequestCartForm({...requestCartForm,name:e.target.value})} placeholder="Ex: Formation sécurité routière"/>
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Durée (mois)" type="number" value={requestCartForm.duration_months} onChange={e=>setRequestCartForm({...requestCartForm,duration_months:parseInt(e.target.value)||12})}/>
+              <Input label="Nb max apprenants" type="number" value={requestCartForm.max_learners} onChange={e=>setRequestCartForm({...requestCartForm,max_learners:e.target.value})} placeholder="Illimité"/>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Message (optionnel)</label>
+              <textarea value={requestCartForm.message} onChange={e=>setRequestCartForm({...requestCartForm,message:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Ajoutez un message pour l'administrateur..."/>
+            </div>
+            
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={()=>setRequestCartModal(false)}>Annuler</Button>
+              <Button onClick={submitLicenseRequest} loading={requestCartSaving} disabled={!requestCartForm.name||getRequestCartCount()===0}>Envoyer la demande</Button>
+            </div>
+          </div>
+        </Modal>
       </div>;
     }
 
@@ -7081,8 +8524,10 @@
     }
 
     // Playlists
-    function PlaylistsPage(){
+    function PlaylistsPage({creationMode=false}){
       const{center,isSuperAdmin,can,profile,realRole}=useAuth();
+      // En mode création, on ne montre que les contenus LMS
+      const filterLMS=creationMode||isSuperAdmin;
       const[playlists,setPlaylists]=useState([]);
       const[videos,setVideos]=useState([]);
       const[scormModules,setScormModules]=useState([]);
@@ -10079,8 +11524,10 @@
       </div>;
     }
 
-    function LearningPathsPage(){
+    function LearningPathsPage({creationMode=false}){
       const{center,isSuperAdmin,can,profile}=useAuth();
+      // En mode création, on ne montre que les contenus LMS
+      const filterLMS=creationMode||isSuperAdmin;
       const[paths,setPaths]=useState([]);
       const[courses,setCourses]=useState([]);
       const[loading,setLoading]=useState(true);
