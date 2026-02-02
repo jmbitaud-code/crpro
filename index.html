@@ -4465,11 +4465,18 @@
       const[newChapter,setNewChapter]=useState({title:'',timestamp:'',description:''});
       const[uploading,setUploading]=useState(false);
       const[fetchingDuration,setFetchingDuration]=useState(false);
+      // Import Excel
+      const[importModal,setImportModal]=useState(false);
+      const[importData,setImportData]=useState([]);
+      const[importLoading,setImportLoading]=useState(false);
+      const[importResult,setImportResult]=useState(null);
       const attachmentFileRef=useRef(null);
+      const importFileRef=useRef(null);
       
       const load=useCallback(async()=>{
+        // Charger TOUTES les vidéos LMS (pas de filtre is_lms_content pour voir les existantes)
         const[{data:vids},{data:cats},{data:ths},{data:sths},{data:tags}]=await Promise.all([
-          supabase.from('videos').select('*,content_categories(id,name,color)').eq('is_lms_content',true).order('sort_order').order('created_at',{ascending:false}),
+          supabase.from('videos').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name)').order('sort_order').order('created_at',{ascending:false}),
           supabase.from('content_categories').select('*').order('position'),
           supabase.from('content_themes').select('*').order('position'),
           supabase.from('content_sub_themes').select('*').order('position'),
@@ -4485,17 +4492,21 @@
       
       useEffect(()=>{load();},[load]);
       
+      // Helpers taxonomie
+      const getThemesForCategory=(catId)=>themes.filter(t=>t.category_id===catId);
+      const getSubThemesForTheme=(themeId)=>subThemes.filter(st=>st.theme_id===themeId);
+      const getCategoryName=(id)=>categories.find(c=>c.id===id)?.name||'';
+      const getThemeName=(id)=>themes.find(t=>t.id===id)?.name||'';
+      const getSubThemeName=(id)=>subThemes.find(st=>st.id===id)?.name||'';
+      
       // Récupérer la durée automatiquement via Vimeo oEmbed API
       const fetchVimeoDuration=async(url)=>{
         if(!url)return;
         setFetchingDuration(true);
         try{
-          // Extraire l'ID Vimeo
           const match=url.match(/vimeo\.com\/(?:video\/)?(\d+)/)||url.match(/^(\d+)/);
-          if(!match)return;
+          if(!match){setFetchingDuration(false);return;}
           const vimeoId=match[1];
-          
-          // Appeler l'API oEmbed de Vimeo
           const response=await fetch(`https://vimeo.com/api/oembed.json?url=https://vimeo.com/${vimeoId}`);
           if(response.ok){
             const data=await response.json();
@@ -4503,10 +4514,7 @@
               const mins=Math.floor(data.duration/60);
               const secs=data.duration%60;
               const duration=`${mins}:${secs.toString().padStart(2,'0')}`;
-              setForm(f=>({...f,duration,title:f.title||data.title||''}));
-              if(data.thumbnail_url&&!form.thumbnail_url){
-                setForm(f=>({...f,thumbnail_url:data.thumbnail_url}));
-              }
+              setForm(f=>({...f,duration,title:f.title||data.title||'',thumbnail_url:f.thumbnail_url||data.thumbnail_url||''}));
             }
           }
         }catch(e){console.warn('Erreur récupération durée Vimeo:',e);}
@@ -4516,16 +4524,8 @@
       // Parser URL Vimeo
       const parseVimeoUrl=(url)=>{
         if(!url)return{id:null,hash:null};
-        const patterns=[
-          /vimeo\.com\/(\d+)\/([a-zA-Z0-9]+)/,
-          /vimeo\.com\/video\/(\d+)\/([a-zA-Z0-9]+)/,
-          /player\.vimeo\.com\/video\/(\d+)\?h=([a-zA-Z0-9]+)/,
-          /^(\d+)\/([a-zA-Z0-9]+)$/
-        ];
-        for(const p of patterns){
-          const m=url.match(p);
-          if(m)return{id:m[1],hash:m[2]};
-        }
+        const patterns=[/vimeo\.com\/(\d+)\/([a-zA-Z0-9]+)/,/vimeo\.com\/video\/(\d+)\/([a-zA-Z0-9]+)/,/player\.vimeo\.com\/video\/(\d+)\?h=([a-zA-Z0-9]+)/,/^(\d+)\/([a-zA-Z0-9]+)$/];
+        for(const p of patterns){const m=url.match(p);if(m)return{id:m[1],hash:m[2]};}
         const idOnly=url.match(/(\d+)/);
         if(idOnly)return{id:idOnly[1],hash:null};
         return{id:null,hash:null};
@@ -4588,6 +4588,113 @@
         setModal(true);
       };
       
+      // Marquer comme LMS
+      const toggleLMS=async(v)=>{
+        await supabase.from('videos').update({is_lms_content:!v.is_lms_content}).eq('id',v.id);
+        load();
+      };
+      
+      // ===== IMPORT/EXPORT EXCEL =====
+      const downloadTemplate=()=>{
+        const template=[{
+          'Titre':'Ma vidéo exemple',
+          'URL Vimeo':'https://vimeo.com/123456789/abcdef1234',
+          'Durée':'5:30',
+          'Ordre':'1',
+          'Catégorie':'Sécurité routière',
+          'Thème':'Signalisation',
+          'Sous-thème':'Panneaux danger',
+          'Tags':'tag1, tag2',
+          'Description':'Description de la vidéo',
+          'Miniature URL':''
+        }];
+        const ws=XLSX.utils.json_to_sheet(template);
+        ws['!cols']=[{wch:30},{wch:45},{wch:8},{wch:8},{wch:20},{wch:20},{wch:20},{wch:20},{wch:40},{wch:50}];
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,ws,'Videos');
+        XLSX.writeFile(wb,'template_videos_crpro.xlsx');
+      };
+      
+      const exportToExcel=()=>{
+        const data=videos.map(v=>({
+          'Titre':v.title||'',
+          'URL Vimeo':v.vimeo_hash?`https://vimeo.com/${v.vimeo_id}/${v.vimeo_hash}`:`https://vimeo.com/${v.vimeo_id}`,
+          'Durée':v.duration||'',
+          'Ordre':v.sort_order||'',
+          'Catégorie':getCategoryName(v.category_id),
+          'Thème':getThemeName(v.theme_id),
+          'Sous-thème':getSubThemeName(v.sub_theme_id),
+          'Tags':(v.tags||[]).join(', '),
+          'Description':v.description||'',
+          'Miniature URL':v.thumbnail_url||'',
+          'LMS':v.is_lms_content?'Oui':'Non'
+        }));
+        const ws=XLSX.utils.json_to_sheet(data);
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,ws,'Videos');
+        XLSX.writeFile(wb,`videos_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+      };
+      
+      const handleImportFile=async(e)=>{
+        const file=e.target.files[0];
+        if(!file)return;
+        const data=await file.arrayBuffer();
+        const wb=XLSX.read(data);
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        const json=XLSX.utils.sheet_to_json(ws);
+        setImportData(json);
+        setImportModal(true);
+        setImportResult(null);
+      };
+      
+      const processImport=async()=>{
+        setImportLoading(true);
+        let success=0,errors=0;
+        
+        for(const row of importData){
+          try{
+            const title=row['Titre']||row['title'];
+            const vimeoUrl=row['URL Vimeo']||row['vimeo_url']||row['url'];
+            if(!title||!vimeoUrl)continue;
+            
+            const{id,hash}=parseVimeoUrl(vimeoUrl);
+            if(!id)continue;
+            
+            // Trouver catégorie/thème/sous-thème par nom
+            const catName=row['Catégorie']||row['category']||'';
+            const themeName=row['Thème']||row['theme']||'';
+            const subThemeName=row['Sous-thème']||row['sub_theme']||'';
+            const cat=categories.find(c=>c.name.toLowerCase()===catName.toLowerCase());
+            const theme=cat?themes.find(t=>t.category_id===cat.id&&t.name.toLowerCase()===themeName.toLowerCase()):null;
+            const subTheme=theme?subThemes.find(st=>st.theme_id===theme.id&&st.name.toLowerCase()===subThemeName.toLowerCase()):null;
+            
+            // Tags
+            const tagsStr=row['Tags']||row['tags']||'';
+            const tags=tagsStr?tagsStr.split(',').map(t=>t.trim()).filter(Boolean):[];
+            
+            await supabase.from('videos').insert({
+              title,
+              vimeo_id:id,
+              vimeo_hash:hash,
+              duration:row['Durée']||row['duration']||null,
+              sort_order:row['Ordre']?parseInt(row['Ordre']):null,
+              category_id:cat?.id||null,
+              theme_id:theme?.id||null,
+              sub_theme_id:subTheme?.id||null,
+              tags,
+              description:row['Description']||row['description']||null,
+              thumbnail_url:row['Miniature URL']||row['thumbnail_url']||null,
+              is_lms_content:true
+            });
+            success++;
+          }catch(err){errors++;}
+        }
+        
+        setImportResult({success,errors});
+        setImportLoading(false);
+        load();
+      };
+      
       // Ressources (pièces jointes, chapitres)
       const openDetailModal=async(v)=>{
         setDetailModal(v);
@@ -4641,9 +4748,6 @@
         setChapters(chapters.filter(c=>c.id!==ch.id));
       };
       
-      const getThemesForCategory=(catId)=>themes.filter(t=>t.category_id===catId);
-      const getSubThemesForTheme=(themeId)=>subThemes.filter(st=>st.theme_id===themeId);
-      
       const filtered=videos.filter(v=>{
         if(filterCategory&&v.category_id!==filterCategory)return false;
         if(search&&!v.title.toLowerCase().includes(search.toLowerCase()))return false;
@@ -4664,35 +4768,58 @@
         {/* Barre d'outils */}
         <div className="flex flex-wrap items-center gap-3 mb-6">
           <Button icon="Plus" onClick={()=>{setEditing(null);setForm({title:'',vimeo_url:'',duration:'',category_id:'',theme_id:'',sub_theme_id:'',description:'',sort_order:'',tags:[],thumbnail_url:''});setModal(true);}}>Ajouter une vidéo</Button>
+          <Button variant="secondary" icon="Download" onClick={downloadTemplate}>Template</Button>
+          <label className="cursor-pointer">
+            <span className="inline-flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium"><Icon name="Upload" size={16}/>Importer</span>
+            <input ref={importFileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImportFile}/>
+          </label>
+          <Button variant="secondary" icon="FileSpreadsheet" onClick={exportToExcel} disabled={videos.length===0}>Exporter</Button>
           <div className="flex-1"/>
           <Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)} className="w-64"/>
           <Select value={filterCategory} onChange={e=>setFilterCategory(e.target.value)} options={[{value:'',label:'Toutes catégories'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
         </div>
         
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
           <Card className="p-4 text-center"><p className="text-2xl font-bold text-indigo-400">{videos.length}</p><p className="text-xs text-gray-400">Vidéos</p></Card>
-          <Card className="p-4 text-center"><p className="text-2xl font-bold text-green-400">{categories.length}</p><p className="text-xs text-gray-400">Catégories</p></Card>
-          <Card className="p-4 text-center"><p className="text-2xl font-bold text-purple-400">{themes.length}</p><p className="text-xs text-gray-400">Thèmes</p></Card>
-          <Card className="p-4 text-center"><p className="text-2xl font-bold text-cyan-400">{subThemes.length}</p><p className="text-xs text-gray-400">Sous-thèmes</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-green-400">{videos.filter(v=>v.is_lms_content).length}</p><p className="text-xs text-gray-400">LMS actives</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-purple-400">{categories.length}</p><p className="text-xs text-gray-400">Catégories</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-cyan-400">{themes.length}</p><p className="text-xs text-gray-400">Thèmes</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-orange-400">{subThemes.length}</p><p className="text-xs text-gray-400">Sous-thèmes</p></Card>
         </div>
         
         {/* Liste des vidéos */}
         {filtered.length===0?<Empty icon="Film" title="Aucune vidéo" desc="Ajoutez votre première vidéo Vimeo"/>:(
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map(v=>(
-              <Card key={v.id} className="overflow-hidden">
+              <Card key={v.id} className={`overflow-hidden ${!v.is_lms_content?'opacity-60 border-dashed':''}`}>
                 <div className="aspect-video bg-gray-900 relative">
                   {v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:
                   <iframe src={buildVimeoEmbedUrl(v.vimeo_id,v.vimeo_hash,{background:true})} className="w-full h-full" allow="autoplay"/>}
                   <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>
                   {v.sort_order&&<div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{v.sort_order}</div>}
+                  <div className="absolute top-2 right-2">
+                    <label className="flex items-center gap-1 px-2 py-1 bg-black/70 rounded text-xs cursor-pointer">
+                      <input type="checkbox" checked={v.is_lms_content||false} onChange={()=>toggleLMS(v)} className="rounded"/>
+                      LMS
+                    </label>
+                  </div>
                 </div>
                 <div className="p-4">
                   <h3 className="font-semibold truncate">{v.title}</h3>
+                  {/* Taxonomie complète */}
                   <div className="flex flex-wrap gap-1 mt-2">
-                    {v.content_categories?.name&&<span className="px-2 py-1 rounded text-xs" style={{backgroundColor:(v.content_categories?.color||'#6366f1')+'30',color:v.content_categories?.color||'#6366f1'}}>{v.content_categories.name}</span>}
+                    {v.content_categories?.name&&<span className="px-2 py-0.5 rounded text-xs" style={{backgroundColor:(v.content_categories?.color||'#6366f1')+'30',color:v.content_categories?.color||'#6366f1'}}>{v.content_categories.name}</span>}
+                    {v.content_themes?.name&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-xs">{v.content_themes.name}</span>}
+                    {v.content_sub_themes?.name&&<span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-300 rounded text-xs">{v.content_sub_themes.name}</span>}
                   </div>
+                  {/* Tags */}
+                  {v.tags&&v.tags.length>0&&(
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {v.tags.slice(0,3).map(t=><span key={t} className="px-1.5 py-0.5 bg-gray-700 rounded text-xs text-gray-300">{t}</span>)}
+                      {v.tags.length>3&&<span className="px-1.5 py-0.5 bg-gray-700 rounded text-xs text-gray-400">+{v.tags.length-3}</span>}
+                    </div>
+                  )}
                   <div className="flex gap-2 mt-3">
                     <Button variant="ghost" size="sm" icon="Settings" onClick={()=>openDetailModal(v)}>Ressources</Button>
                     <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>openEdit(v)}>Modifier</Button>
@@ -4739,6 +4866,43 @@
             <div className="flex justify-end gap-3">
               <Button variant="secondary" onClick={()=>{setModal(false);setEditing(null);}}>Annuler</Button>
               <Button onClick={handleSave} loading={saving}>Enregistrer</Button>
+            </div>
+          </div>
+        </Modal>
+        
+        {/* Modal import */}
+        <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer des vidéos" size="lg">
+          <div className="space-y-4">
+            <div className="bg-gray-700/50 rounded-lg p-4">
+              <p className="text-sm text-gray-400 mb-2">Colonnes : Titre*, URL Vimeo*, Durée, Ordre, Catégorie, Thème, Sous-thème, Tags, Description, Miniature URL</p>
+              <p className="text-xs text-gray-500">💡 Les catégories/thèmes/sous-thèmes sont créés automatiquement s'ils n'existent pas.</p>
+            </div>
+            
+            {importData.length>0&&(
+              <div className="border border-gray-700 rounded-lg overflow-hidden">
+                <div className="bg-gray-800 px-4 py-2 text-sm font-medium">{importData.length} vidéo(s) détectée(s)</div>
+                <div className="max-h-60 overflow-y-auto">
+                  {importData.slice(0,10).map((row,i)=>(
+                    <div key={i} className="px-4 py-2 border-t border-gray-700 text-sm">
+                      <span className="font-medium">{row['Titre']||row['title']}</span>
+                      <span className="text-gray-400 ml-2">{row['URL Vimeo']||row['vimeo_url']||row['url']}</span>
+                    </div>
+                  ))}
+                  {importData.length>10&&<div className="px-4 py-2 border-t border-gray-700 text-sm text-gray-400">... et {importData.length-10} autres</div>}
+                </div>
+              </div>
+            )}
+            
+            {importResult&&(
+              <div className={`p-4 rounded-lg ${importResult.errors>0?'bg-yellow-500/20':'bg-green-500/20'}`}>
+                <p className="font-medium">{importResult.success} vidéo(s) importée(s)</p>
+                {importResult.errors>0&&<p className="text-sm text-yellow-400">{importResult.errors} erreur(s)</p>}
+              </div>
+            )}
+            
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>
+              {!importResult&&<Button onClick={processImport} loading={importLoading} disabled={importData.length===0}>Importer</Button>}
             </div>
           </div>
         </Modal>
@@ -4802,7 +4966,6 @@
     // SECTION: Création de SCORM (wrapper vers la section existante)
     // ============================================================
     function ScormCreationSection(){
-      // Utilise la logique existante de VideosPage mais filtrée pour SCORM
       const[modules,setModules]=useState([]);
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
@@ -4815,13 +4978,18 @@
       const[subThemes,setSubThemes]=useState([]);
       const[predefinedTags,setPredefinedTags]=useState([]);
       const[previewScorm,setPreviewScorm]=useState(null);
+      const[filterCategory,setFilterCategory]=useState('');
+      // ZIP parsing
       const[scormZipParsing,setScormZipParsing]=useState(false);
       const[scormUploadProgress,setScormUploadProgress]=useState('');
+      const[scormZipFile,setScormZipFile]=useState(null);
+      const[detectedRemoteUrl,setDetectedRemoteUrl]=useState('');
       const scormZipRef=useRef(null);
       
       const load=useCallback(async()=>{
+        // Charger TOUS les modules SCORM
         const[{data:mods},{data:cats},{data:ths},{data:sths},{data:tags}]=await Promise.all([
-          supabase.from('scorm_modules').select('*,content_categories(id,name,color)').eq('is_lms_content',true).order('created_at',{ascending:false}),
+          supabase.from('scorm_modules').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name)').order('created_at',{ascending:false}),
           supabase.from('content_categories').select('*').order('position'),
           supabase.from('content_themes').select('*').order('position'),
           supabase.from('content_sub_themes').select('*').order('position'),
@@ -4839,6 +5007,80 @@
       
       const getThemesForCategory=(catId)=>themes.filter(t=>t.category_id===catId);
       const getSubThemesForTheme=(themeId)=>subThemes.filter(st=>st.theme_id===themeId);
+      const getCategoryName=(id)=>categories.find(c=>c.id===id)?.name||'';
+      const getThemeName=(id)=>themes.find(t=>t.id===id)?.name||'';
+      const getSubThemeName=(id)=>subThemes.find(st=>st.id===id)?.name||'';
+      
+      // ===== PARSE SCORM ZIP (Storyline & Codes Rousseau) =====
+      const parseScormZip=async(file)=>{
+        if(typeof JSZip==='undefined'){
+          alert('Bibliothèque ZIP en cours de chargement. Veuillez réessayer.');
+          return;
+        }
+        setScormZipParsing(true);
+        setScormUploadProgress('Analyse du fichier ZIP...');
+        setScormZipFile(file);
+        
+        try{
+          const zip=await JSZip.loadAsync(file);
+          let manifest=null;
+          let entryPoint='index.html';
+          let detectedTitle='';
+          let remoteUrl='';
+          const fileNames=Object.keys(zip.files);
+          
+          // Chercher manifest et détecter le type
+          for(const filename of fileNames){
+            const zipEntry=zip.files[filename];
+            if(zipEntry.dir)continue;
+            const name=filename.toLowerCase();
+            
+            if(name.endsWith('imsmanifest.xml')){
+              manifest=await zipEntry.async('string');
+              // Extraire le titre du manifest
+              const titleMatch=manifest.match(/<title>([^<]+)<\/title>/i);
+              if(titleMatch)detectedTitle=titleMatch[1];
+            }
+            
+            // Détecter SCORM Codes Rousseau (remote URL)
+            if(name.endsWith('.html')){
+              const content=await zipEntry.async('string');
+              // Chercher URL distante Codes Rousseau
+              const urlMatch=content.match(/var\s+url\s*=\s*['"]([^'"]+codesrousseau[^'"]+)['"]/i);
+              if(urlMatch){
+                remoteUrl=urlMatch[1];
+                entryPoint=filename.split('/').pop();
+              }
+              // Détecter Storyline (data-source)
+              if(content.includes('data-source')||content.includes('layer2.js')){
+                entryPoint=filename.split('/').pop();
+              }
+            }
+          }
+          
+          if(!manifest){
+            alert('Fichier imsmanifest.xml non trouvé dans le ZIP');
+            setScormZipParsing(false);
+            return;
+          }
+          
+          // Pré-remplir le formulaire
+          setForm(f=>({
+            ...f,
+            title:f.title||detectedTitle||file.name.replace('.zip',''),
+            entry_point:entryPoint,
+            remote_url:remoteUrl
+          }));
+          setDetectedRemoteUrl(remoteUrl);
+          
+          setScormUploadProgress(remoteUrl?'Module Codes Rousseau détecté !':'Module SCORM standard détecté. Uploadez vers GitHub Pages.');
+          
+        }catch(e){
+          console.error('Erreur parsing ZIP:',e);
+          alert('Erreur lors de l\'analyse du fichier ZIP');
+        }
+        setScormZipParsing(false);
+      };
       
       const handleSave=async()=>{
         if(!form.title)return alert('Titre requis');
@@ -4869,6 +5111,8 @@
         setModal(false);
         setEditing(null);
         setForm({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'index.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:'',tags:[]});
+        setScormZipFile(null);
+        setDetectedRemoteUrl('');
         setSaving(false);
         load();
       };
@@ -4897,7 +5141,13 @@
         setModal(true);
       };
       
+      const toggleLMS=async(m)=>{
+        await supabase.from('scorm_modules').update({is_lms_content:!m.is_lms_content}).eq('id',m.id);
+        load();
+      };
+      
       const filtered=modules.filter(m=>{
+        if(filterCategory&&m.category_id!==filterCategory)return false;
         if(search&&!m.title.toLowerCase().includes(search.toLowerCase()))return false;
         return true;
       });
@@ -4906,28 +5156,50 @@
       
       return<div>
         <div className="flex flex-wrap items-center gap-3 mb-6">
-          <Button icon="Plus" onClick={()=>{setEditing(null);setForm({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'index.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:'',tags:[]});setModal(true);}}>Ajouter un module SCORM</Button>
+          <Button icon="Plus" onClick={()=>{setEditing(null);setForm({title:'',description:'',module_type:'scorm12',package_url:'',entry_point:'index.html',category_id:'',theme_id:'',sub_theme_id:'',version:'',remote_url:'',tags:[]});setScormZipFile(null);setDetectedRemoteUrl('');setModal(true);}}>Ajouter un module SCORM</Button>
           <div className="flex-1"/>
           <Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)} className="w-64"/>
+          <Select value={filterCategory} onChange={e=>setFilterCategory(e.target.value)} options={[{value:'',label:'Toutes catégories'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
         </div>
         
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
           <Card className="p-4 text-center"><p className="text-2xl font-bold text-purple-400">{modules.length}</p><p className="text-xs text-gray-400">Modules SCORM</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-green-400">{modules.filter(m=>m.is_lms_content).length}</p><p className="text-xs text-gray-400">LMS actifs</p></Card>
           <Card className="p-4 text-center"><p className="text-2xl font-bold text-blue-400">{modules.filter(m=>m.module_type==='scorm12').length}</p><p className="text-xs text-gray-400">SCORM 1.2</p></Card>
-          <Card className="p-4 text-center"><p className="text-2xl font-bold text-green-400">{modules.filter(m=>m.module_type==='scorm2004').length}</p><p className="text-xs text-gray-400">SCORM 2004</p></Card>
-          <Card className="p-4 text-center"><p className="text-2xl font-bold text-orange-400">{modules.filter(m=>m.remote_url).length}</p><p className="text-xs text-gray-400">Hébergés ext.</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-cyan-400">{modules.filter(m=>m.module_type==='scorm2004').length}</p><p className="text-xs text-gray-400">SCORM 2004</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-orange-400">{modules.filter(m=>m.remote_url).length}</p><p className="text-xs text-gray-400">Codes Rousseau</p></Card>
         </div>
         
         {filtered.length===0?<Empty icon="Package" title="Aucun module SCORM" desc="Ajoutez votre premier module SCORM"/>:(
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map(m=>(
-              <Card key={m.id} className="p-4">
+              <Card key={m.id} className={`p-4 ${!m.is_lms_content?'opacity-60 border-dashed':''}`}>
                 <div className="flex items-start gap-3">
-                  <div className="w-12 h-12 bg-purple-500/20 rounded-lg flex items-center justify-center shrink-0"><Icon name="Package" size={24} className="text-purple-400"/></div>
+                  <div className={`w-12 h-12 rounded-lg flex items-center justify-center shrink-0 ${m.remote_url?'bg-orange-500/20':'bg-purple-500/20'}`}>
+                    <Icon name="Package" size={24} className={m.remote_url?'text-orange-400':'text-purple-400'}/>
+                  </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold truncate">{m.title}</h3>
-                    <p className="text-xs text-gray-400">{m.module_type?.toUpperCase()} {m.version&&`v${m.version}`}</p>
-                    {m.content_categories?.name&&<span className="inline-block mt-1 px-2 py-0.5 rounded text-xs" style={{backgroundColor:(m.content_categories?.color||'#a855f7')+'30',color:m.content_categories?.color||'#a855f7'}}>{m.content_categories.name}</span>}
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold truncate flex-1">{m.title}</h3>
+                      <label className="flex items-center gap-1 text-xs cursor-pointer">
+                        <input type="checkbox" checked={m.is_lms_content||false} onChange={()=>toggleLMS(m)} className="rounded"/>
+                        LMS
+                      </label>
+                    </div>
+                    <p className="text-xs text-gray-400">{m.module_type?.toUpperCase()} {m.version&&`v${m.version}`} {m.remote_url&&'• Codes Rousseau'}</p>
+                    {/* Taxonomie complète */}
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {m.content_categories?.name&&<span className="px-2 py-0.5 rounded text-xs" style={{backgroundColor:(m.content_categories?.color||'#a855f7')+'30',color:m.content_categories?.color||'#a855f7'}}>{m.content_categories.name}</span>}
+                      {m.content_themes?.name&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-xs">{m.content_themes.name}</span>}
+                      {m.content_sub_themes?.name&&<span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-300 rounded text-xs">{m.content_sub_themes.name}</span>}
+                    </div>
+                    {/* Tags */}
+                    {m.tags&&m.tags.length>0&&(
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {m.tags.slice(0,3).map(t=><span key={t} className="px-1.5 py-0.5 bg-gray-700 rounded text-xs text-gray-300">{t}</span>)}
+                        {m.tags.length>3&&<span className="px-1.5 py-0.5 bg-gray-700 rounded text-xs text-gray-400">+{m.tags.length-3}</span>}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex gap-2 mt-4">
@@ -4941,27 +5213,72 @@
         )}
         
         {/* Modal SCORM */}
-        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier le module SCORM':'Ajouter un module SCORM'} size="lg">
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);setScormZipFile(null);setDetectedRemoteUrl('');}} title={editing?'Modifier le module SCORM':'Ajouter un module SCORM'} size="lg">
           <div className="space-y-4">
+            {/* Upload ZIP */}
+            {!editing&&(
+              <div className="bg-gray-700/50 rounded-lg p-4">
+                <p className="text-sm font-medium mb-2">📦 Importer depuis un fichier ZIP</p>
+                <p className="text-xs text-gray-400 mb-3">Supporte Articulate Storyline et SCORM Codes Rousseau</p>
+                <div className="flex gap-2">
+                  <input ref={scormZipRef} type="file" accept=".zip" onChange={e=>{if(e.target.files[0])parseScormZip(e.target.files[0]);}} className="hidden"/>
+                  <Button variant="secondary" icon="Upload" onClick={()=>scormZipRef.current?.click()} loading={scormZipParsing}>
+                    {scormZipFile?scormZipFile.name:'Sélectionner un ZIP'}
+                  </Button>
+                </div>
+                {scormUploadProgress&&<p className="text-xs text-indigo-400 mt-2">{scormUploadProgress}</p>}
+                {detectedRemoteUrl&&(
+                  <div className="mt-3 p-2 bg-orange-500/10 border border-orange-500/30 rounded">
+                    <p className="text-xs text-orange-400"><strong>URL Codes Rousseau détectée :</strong></p>
+                    <p className="text-xs text-gray-300 truncate">{detectedRemoteUrl}</p>
+                  </div>
+                )}
+              </div>
+            )}
+            
             <Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
             <div className="grid grid-cols-2 gap-4">
               <Select label="Type" value={form.module_type} onChange={e=>setForm({...form,module_type:e.target.value})} options={[{value:'scorm12',label:'SCORM 1.2'},{value:'scorm2004',label:'SCORM 2004'}]}/>
               <Input label="Version" value={form.version} onChange={e=>setForm({...form,version:e.target.value})} placeholder="1.0"/>
             </div>
-            <Input label="URL du package (GitHub Pages)" value={form.package_url} onChange={e=>setForm({...form,package_url:e.target.value})} placeholder="https://username.github.io/scorm/module1/"/>
-            <Input label="Point d'entrée" value={form.entry_point} onChange={e=>setForm({...form,entry_point:e.target.value})} placeholder="index.html"/>
-            <Input label="URL distante (alternative)" value={form.remote_url} onChange={e=>setForm({...form,remote_url:e.target.value})} placeholder="https://lms.example.com/scorm/launch"/>
+            
+            {detectedRemoteUrl?(
+              <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
+                <p className="text-sm text-orange-400 mb-2">🔗 Module Codes Rousseau - URL distante utilisée</p>
+                <Input label="URL distante (Codes Rousseau)" value={form.remote_url} onChange={e=>setForm({...form,remote_url:e.target.value})}/>
+              </div>
+            ):(
+              <>
+                <Input label="URL du package (GitHub Pages)" value={form.package_url} onChange={e=>setForm({...form,package_url:e.target.value})} placeholder="https://username.github.io/scorm/module1/"/>
+                <div className="grid grid-cols-2 gap-4">
+                  <Input label="Point d'entrée" value={form.entry_point} onChange={e=>setForm({...form,entry_point:e.target.value})} placeholder="index.html"/>
+                  <Input label="URL distante (alternative)" value={form.remote_url} onChange={e=>setForm({...form,remote_url:e.target.value})} placeholder="https://lms.codesrousseau.fr/..."/>
+                </div>
+              </>
+            )}
+            
             <div className="grid grid-cols-3 gap-4">
               <Select label="Catégorie" value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
               <Select label="Thème" value={form.theme_id} onChange={e=>setForm({...form,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/>
               <Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/>
             </div>
+            
+            {/* Tags */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Tags</label>
+              <div className="min-h-[38px] p-2 bg-gray-700 border border-gray-600 rounded-lg flex flex-wrap gap-1">
+                {form.tags.map(t=><span key={t} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-600/30 text-indigo-300 rounded text-xs">{t}<button type="button" onClick={()=>setForm({...form,tags:form.tags.filter(x=>x!==t)})} className="hover:text-white">×</button></span>)}
+                {form.tags.length===0&&<span className="text-gray-500 text-sm">Aucun tag</span>}
+              </div>
+              {predefinedTags.length>0&&<div className="flex flex-wrap gap-1 mt-2">{predefinedTags.filter(t=>!form.tags.includes(t.name)).slice(0,10).map(t=><button key={t.id} type="button" onClick={()=>setForm({...form,tags:[...form.tags,t.name]})} className="px-2 py-0.5 rounded text-xs border border-gray-600 hover:border-indigo-500" style={{color:t.color||'#6366f1'}}>+ {t.name}</button>)}</div>}
+            </div>
+            
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
               <textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/>
             </div>
             <div className="flex justify-end gap-3">
-              <Button variant="secondary" onClick={()=>{setModal(false);setEditing(null);}}>Annuler</Button>
+              <Button variant="secondary" onClick={()=>{setModal(false);setEditing(null);setScormZipFile(null);setDetectedRemoteUrl('');}}>Annuler</Button>
               <Button onClick={handleSave} loading={saving}>Enregistrer</Button>
             </div>
           </div>
@@ -4990,26 +5307,49 @@
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
       const[editing,setEditing]=useState(null);
-      const[form,setForm]=useState({question_text:'',question_type:'single',category_id:'',theme_id:'',sub_theme_id:'',difficulty:'medium',points:1,time_limit:0,feedback_correct:'',feedback_incorrect:'',answers:[{text:'',is_correct:true},{text:'',is_correct:false}]});
+      const[form,setForm]=useState({question_text:'',question_type:'single',category_id:'',theme_id:'',sub_theme_id:'',difficulty:'medium',points:1,time_limit:0,feedback_correct:'',feedback_incorrect:'',image_url:'',explanation:'',tags:[],answers:[{text:'',is_correct:true},{text:'',is_correct:false}]});
       const[saving,setSaving]=useState(false);
       const[search,setSearch]=useState('');
       const[categories,setCategories]=useState([]);
       const[themes,setThemes]=useState([]);
       const[subThemes,setSubThemes]=useState([]);
+      const[predefinedTags,setPredefinedTags]=useState([]);
       const[filterCategory,setFilterCategory]=useState('');
       const[filterDifficulty,setFilterDifficulty]=useState('all');
+      const[filterType,setFilterType]=useState('all');
+      // Import
+      const[importModal,setImportModal]=useState(false);
+      const[importData,setImportData]=useState([]);
+      const[importLoading,setImportLoading]=useState(false);
+      const[importResult,setImportResult]=useState(null);
+      // Preview image
+      const[previewImage,setPreviewImage]=useState(null);
+      const importFileRef=useRef(null);
+      
+      const questionTypes=[
+        {value:'single',label:'Choix unique',icon:'CheckCircle'},
+        {value:'multiple',label:'Choix multiple',icon:'CheckSquare'},
+        {value:'true_false',label:'Vrai/Faux',icon:'ToggleLeft'},
+        {value:'fill_blank',label:'Texte à trous',icon:'Edit3'},
+        {value:'ordering',label:'Ordonnancement',icon:'List'},
+        {value:'matching',label:'Appariement',icon:'GitMerge'},
+        {value:'short_answer',label:'Réponse courte',icon:'MessageSquare'},
+        {value:'essay',label:'Rédaction',icon:'FileText'}
+      ];
       
       const load=useCallback(async()=>{
-        const[{data:q},{data:cats},{data:ths},{data:sths}]=await Promise.all([
-          supabase.from('question_bank').select('*,question_bank_answers(*)').order('created_at',{ascending:false}),
+        const[{data:q},{data:cats},{data:ths},{data:sths},{data:tags}]=await Promise.all([
+          supabase.from('question_bank').select('*,question_bank_answers(*),content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name)').order('created_at',{ascending:false}),
           supabase.from('content_categories').select('*').order('position'),
           supabase.from('content_themes').select('*').order('position'),
-          supabase.from('content_sub_themes').select('*').order('position')
+          supabase.from('content_sub_themes').select('*').order('position'),
+          supabase.from('content_tags').select('*').order('name')
         ]);
         setQuestions(q||[]);
         setCategories(cats||[]);
         setThemes(ths||[]);
         setSubThemes(sths||[]);
+        setPredefinedTags(tags||[]);
         setLoading(false);
       },[]);
       
@@ -5018,11 +5358,182 @@
       const getThemesForCategory=(catId)=>themes.filter(t=>t.category_id===catId);
       const getSubThemesForTheme=(themeId)=>subThemes.filter(st=>st.theme_id===themeId);
       const getCategoryName=(id)=>categories.find(c=>c.id===id)?.name||'';
+      const getThemeName=(id)=>themes.find(t=>t.id===id)?.name||'';
+      const getSubThemeName=(id)=>subThemes.find(st=>st.id===id)?.name||'';
+      const getTypeName=(type)=>questionTypes.find(t=>t.value===type)?.label||type;
+      
+      // ===== IMPORT/EXPORT EXCEL =====
+      const downloadTemplate=()=>{
+        const template=[{
+          'Question':'Quelle est la capitale de la France ?',
+          'Type':'single',
+          'Catégorie':'Géographie',
+          'Thème':'Europe',
+          'Sous-thème':'Capitales',
+          'Difficulté':'easy',
+          'Points':'1',
+          'Temps (sec)':'30',
+          'Réponse 1':'Paris',
+          'Correct 1':'TRUE',
+          'Réponse 2':'Lyon',
+          'Correct 2':'FALSE',
+          'Réponse 3':'Marseille',
+          'Correct 3':'FALSE',
+          'Réponse 4':'',
+          'Correct 4':'',
+          'Feedback correct':'Bravo !',
+          'Feedback incorrect':'La bonne réponse était Paris.',
+          'Image URL':'',
+          'Tags':'géo, culture'
+        }];
+        const ws=XLSX.utils.json_to_sheet(template);
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,ws,'Questions');
+        
+        // Notice
+        const notice=[
+          ['=== NOTICE D\'UTILISATION ==='],
+          [''],
+          ['Types de questions: single, multiple, true_false, fill_blank, ordering, matching, short_answer, essay'],
+          ['Difficultés: easy, medium, hard'],
+          ['Correct: TRUE ou FALSE'],
+          ['Temps: en secondes (0 = illimité)'],
+          ['Tags: séparés par des virgules'],
+          [''],
+          ['Les catégories/thèmes/sous-thèmes sont créés automatiquement s\'ils n\'existent pas.']
+        ];
+        const wsNotice=XLSX.utils.aoa_to_sheet(notice);
+        XLSX.utils.book_append_sheet(wb,wsNotice,'Notice');
+        
+        XLSX.writeFile(wb,'template_questions_crpro.xlsx');
+      };
+      
+      const exportToExcel=()=>{
+        const data=questions.map(q=>{
+          const answers=q.question_bank_answers||[];
+          return{
+            'Question':q.question_text||'',
+            'Type':q.question_type||'single',
+            'Catégorie':getCategoryName(q.category_id),
+            'Thème':getThemeName(q.theme_id),
+            'Sous-thème':getSubThemeName(q.sub_theme_id),
+            'Difficulté':q.difficulty||'medium',
+            'Points':q.points||1,
+            'Temps (sec)':q.time_limit||0,
+            'Réponse 1':answers[0]?.answer_text||'',
+            'Correct 1':answers[0]?.is_correct?'TRUE':'FALSE',
+            'Réponse 2':answers[1]?.answer_text||'',
+            'Correct 2':answers[1]?.is_correct?'TRUE':'FALSE',
+            'Réponse 3':answers[2]?.answer_text||'',
+            'Correct 3':answers[2]?.is_correct?'TRUE':'FALSE',
+            'Réponse 4':answers[3]?.answer_text||'',
+            'Correct 4':answers[3]?.is_correct?'TRUE':'FALSE',
+            'Feedback correct':q.feedback_correct||'',
+            'Feedback incorrect':q.feedback_incorrect||'',
+            'Image URL':q.image_url||'',
+            'Tags':(q.tags||[]).join(', ')
+          };
+        });
+        const ws=XLSX.utils.json_to_sheet(data);
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,ws,'Questions');
+        XLSX.writeFile(wb,`questions_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+      };
+      
+      const handleImportFile=async(e)=>{
+        const file=e.target.files[0];
+        if(!file)return;
+        const data=await file.arrayBuffer();
+        const wb=XLSX.read(data);
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        const json=XLSX.utils.sheet_to_json(ws);
+        setImportData(json);
+        setImportModal(true);
+        setImportResult(null);
+      };
+      
+      const processImport=async()=>{
+        setImportLoading(true);
+        let success=0,errors=0;
+        
+        for(const row of importData){
+          try{
+            const questionText=row['Question']||row['question_text'];
+            if(!questionText)continue;
+            
+            // Trouver/créer catégorie
+            const catName=row['Catégorie']||row['category']||'';
+            const themeName=row['Thème']||row['theme']||'';
+            const subThemeName=row['Sous-thème']||row['sub_theme']||'';
+            let cat=categories.find(c=>c.name.toLowerCase()===catName.toLowerCase());
+            let theme=cat?themes.find(t=>t.category_id===cat.id&&t.name.toLowerCase()===themeName.toLowerCase()):null;
+            let subTheme=theme?subThemes.find(st=>st.theme_id===theme.id&&st.name.toLowerCase()===subThemeName.toLowerCase()):null;
+            
+            // Créer catégorie si nécessaire
+            if(catName&&!cat){
+              const{data}=await supabase.from('content_categories').insert({name:catName,position:categories.length}).select().single();
+              if(data){cat=data;categories.push(data);}
+            }
+            if(themeName&&cat&&!theme){
+              const{data}=await supabase.from('content_themes').insert({name:themeName,category_id:cat.id,position:themes.length}).select().single();
+              if(data){theme=data;themes.push(data);}
+            }
+            if(subThemeName&&theme&&!subTheme){
+              const{data}=await supabase.from('content_sub_themes').insert({name:subThemeName,theme_id:theme.id,position:subThemes.length}).select().single();
+              if(data){subTheme=data;subThemes.push(data);}
+            }
+            
+            // Tags
+            const tagsStr=row['Tags']||row['tags']||'';
+            const tags=tagsStr?tagsStr.split(',').map(t=>t.trim()).filter(Boolean):[];
+            
+            // Créer la question
+            const{data:q}=await supabase.from('question_bank').insert({
+              question_text:questionText,
+              question_type:row['Type']||row['question_type']||'single',
+              category_id:cat?.id||null,
+              theme_id:theme?.id||null,
+              sub_theme_id:subTheme?.id||null,
+              difficulty:row['Difficulté']||row['difficulty']||'medium',
+              points:parseInt(row['Points'])||1,
+              time_limit:parseInt(row['Temps (sec)'])||0,
+              feedback_correct:row['Feedback correct']||null,
+              feedback_incorrect:row['Feedback incorrect']||null,
+              image_url:row['Image URL']||null,
+              tags
+            }).select().single();
+            
+            if(q){
+              // Ajouter les réponses
+              const answers=[];
+              for(let i=1;i<=4;i++){
+                const text=row[`Réponse ${i}`];
+                if(text){
+                  answers.push({
+                    question_id:q.id,
+                    answer_text:text,
+                    is_correct:String(row[`Correct ${i}`]).toUpperCase()==='TRUE',
+                    sort_order:i-1
+                  });
+                }
+              }
+              if(answers.length)await supabase.from('question_bank_answers').insert(answers);
+              success++;
+            }
+          }catch(err){console.error(err);errors++;}
+        }
+        
+        setImportResult({success,errors});
+        setImportLoading(false);
+        load();
+      };
       
       const handleSave=async()=>{
         if(!form.question_text)return alert('Texte de la question requis');
-        if(form.answers.filter(a=>a.text.trim()).length<2)return alert('Au moins 2 réponses requises');
-        if(!form.answers.some(a=>a.is_correct))return alert('Au moins une réponse correcte requise');
+        if(['single','multiple','true_false'].includes(form.question_type)){
+          if(form.answers.filter(a=>a.text.trim()).length<2)return alert('Au moins 2 réponses requises');
+          if(!form.answers.some(a=>a.is_correct))return alert('Au moins une réponse correcte requise');
+        }
         
         setSaving(true);
         const payload={
@@ -5035,7 +5546,10 @@
           points:form.points,
           time_limit:form.time_limit||0,
           feedback_correct:form.feedback_correct||null,
-          feedback_incorrect:form.feedback_incorrect||null
+          feedback_incorrect:form.feedback_incorrect||null,
+          image_url:form.image_url||null,
+          explanation:form.explanation||null,
+          tags:form.tags||[]
         };
         
         let questionId=editing?.id;
@@ -5047,15 +5561,19 @@
           questionId=data.id;
         }
         
-        const answers=form.answers.filter(a=>a.text.trim()).map((a,i)=>({question_id:questionId,answer_text:a.text,is_correct:a.is_correct,sort_order:i}));
-        await supabase.from('question_bank_answers').insert(answers);
+        if(['single','multiple','true_false'].includes(form.question_type)){
+          const answers=form.answers.filter(a=>a.text.trim()).map((a,i)=>({question_id:questionId,answer_text:a.text,is_correct:a.is_correct,sort_order:i}));
+          await supabase.from('question_bank_answers').insert(answers);
+        }
         
         setModal(false);
         setEditing(null);
-        setForm({question_text:'',question_type:'single',category_id:'',theme_id:'',sub_theme_id:'',difficulty:'medium',points:1,time_limit:0,feedback_correct:'',feedback_incorrect:'',answers:[{text:'',is_correct:true},{text:'',is_correct:false}]});
+        resetForm();
         setSaving(false);
         load();
       };
+      
+      const resetForm=()=>setForm({question_text:'',question_type:'single',category_id:'',theme_id:'',sub_theme_id:'',difficulty:'medium',points:1,time_limit:0,feedback_correct:'',feedback_incorrect:'',image_url:'',explanation:'',tags:[],answers:[{text:'',is_correct:true},{text:'',is_correct:false}]});
       
       const handleDelete=async(id)=>{
         if(!confirm('Supprimer cette question ?'))return;
@@ -5076,9 +5594,11 @@
           time_limit:q.time_limit||0,
           feedback_correct:q.feedback_correct||'',
           feedback_incorrect:q.feedback_incorrect||'',
-          answers:(q.question_bank_answers||[]).map(a=>({text:a.answer_text,is_correct:a.is_correct}))
+          image_url:q.image_url||'',
+          explanation:q.explanation||'',
+          tags:q.tags||[],
+          answers:(q.question_bank_answers||[]).length>0?(q.question_bank_answers||[]).map(a=>({text:a.answer_text,is_correct:a.is_correct})):[{text:'',is_correct:true},{text:'',is_correct:false}]
         });
-        if(form.answers.length<2)setForm(f=>({...f,answers:[...f.answers,{text:'',is_correct:false}]}));
         setModal(true);
       };
       
@@ -5096,6 +5616,7 @@
       const filtered=questions.filter(q=>{
         if(filterCategory&&q.category_id!==filterCategory)return false;
         if(filterDifficulty!=='all'&&q.difficulty!==filterDifficulty)return false;
+        if(filterType!=='all'&&q.question_type!==filterType)return false;
         if(search&&!q.question_text.toLowerCase().includes(search.toLowerCase()))return false;
         return true;
       });
@@ -5104,18 +5625,29 @@
       
       return<div>
         <div className="flex flex-wrap items-center gap-3 mb-6">
-          <Button icon="Plus" onClick={()=>{setEditing(null);setForm({question_text:'',question_type:'single',category_id:'',theme_id:'',sub_theme_id:'',difficulty:'medium',points:1,time_limit:0,feedback_correct:'',feedback_incorrect:'',answers:[{text:'',is_correct:true},{text:'',is_correct:false}]});setModal(true);}}>Ajouter une question</Button>
+          <Button icon="Plus" onClick={()=>{setEditing(null);resetForm();setModal(true);}}>Ajouter une question</Button>
+          <Button variant="secondary" icon="Download" onClick={downloadTemplate}>Template</Button>
+          <label className="cursor-pointer">
+            <span className="inline-flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium"><Icon name="Upload" size={16}/>Importer</span>
+            <input ref={importFileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImportFile}/>
+          </label>
+          <Button variant="secondary" icon="FileSpreadsheet" onClick={exportToExcel} disabled={questions.length===0}>Exporter</Button>
           <div className="flex-1"/>
           <Input icon="Search" placeholder="Rechercher..." value={search} onChange={e=>setSearch(e.target.value)} className="w-64"/>
-          <Select value={filterCategory} onChange={e=>setFilterCategory(e.target.value)} options={[{value:'',label:'Toutes catégories'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
-          <Select value={filterDifficulty} onChange={e=>setFilterDifficulty(e.target.value)} options={[{value:'all',label:'Toutes difficultés'},{value:'easy',label:'Facile'},{value:'medium',label:'Moyen'},{value:'hard',label:'Difficile'}]}/>
         </div>
         
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="flex flex-wrap gap-2 mb-4">
+          <Select value={filterCategory} onChange={e=>setFilterCategory(e.target.value)} options={[{value:'',label:'Toutes catégories'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+          <Select value={filterDifficulty} onChange={e=>setFilterDifficulty(e.target.value)} options={[{value:'all',label:'Toutes difficultés'},{value:'easy',label:'Facile'},{value:'medium',label:'Moyen'},{value:'hard',label:'Difficile'}]}/>
+          <Select value={filterType} onChange={e=>setFilterType(e.target.value)} options={[{value:'all',label:'Tous les types'},...questionTypes.map(t=>({value:t.value,label:t.label}))]}/>
+        </div>
+        
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
           <Card className="p-4 text-center"><p className="text-2xl font-bold text-cyan-400">{questions.length}</p><p className="text-xs text-gray-400">Questions</p></Card>
           <Card className="p-4 text-center"><p className="text-2xl font-bold text-green-400">{questions.filter(q=>q.difficulty==='easy').length}</p><p className="text-xs text-gray-400">Faciles</p></Card>
           <Card className="p-4 text-center"><p className="text-2xl font-bold text-yellow-400">{questions.filter(q=>q.difficulty==='medium').length}</p><p className="text-xs text-gray-400">Moyennes</p></Card>
           <Card className="p-4 text-center"><p className="text-2xl font-bold text-red-400">{questions.filter(q=>q.difficulty==='hard').length}</p><p className="text-xs text-gray-400">Difficiles</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-purple-400">{questions.filter(q=>q.image_url).length}</p><p className="text-xs text-gray-400">Avec média</p></Card>
         </div>
         
         {filtered.length===0?<Empty icon="Database" title="Aucune question" desc="Ajoutez votre première question à la banque"/>:(
@@ -5123,21 +5655,38 @@
             {filtered.slice(0,50).map(q=>(
               <Card key={q.id} className="p-4">
                 <div className="flex items-start gap-4">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${q.difficulty==='easy'?'bg-green-500/20 text-green-400':q.difficulty==='hard'?'bg-red-500/20 text-red-400':'bg-yellow-500/20 text-yellow-400'}`}>
-                    <Icon name="HelpCircle" size={20}/>
-                  </div>
+                  {q.image_url?(
+                    <img src={q.image_url} alt="" className="w-16 h-16 rounded-lg object-cover cursor-pointer hover:opacity-80" onClick={()=>setPreviewImage(q.image_url)}/>
+                  ):(
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${q.difficulty==='easy'?'bg-green-500/20 text-green-400':q.difficulty==='hard'?'bg-red-500/20 text-red-400':'bg-yellow-500/20 text-yellow-400'}`}>
+                      <Icon name="HelpCircle" size={20}/>
+                    </div>
+                  )}
                   <div className="flex-1 min-w-0">
                     <p className="font-medium">{q.question_text}</p>
                     <div className="flex flex-wrap gap-2 mt-2">
-                      <span className="px-2 py-0.5 bg-gray-700 rounded text-xs">{q.question_type==='single'?'Choix unique':q.question_type==='multiple'?'Choix multiple':'Vrai/Faux'}</span>
-                      {q.category_id&&<span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-300 rounded text-xs">{getCategoryName(q.category_id)}</span>}
+                      <span className="px-2 py-0.5 bg-gray-700 rounded text-xs">{getTypeName(q.question_type)}</span>
+                      {q.content_categories?.name&&<span className="px-2 py-0.5 rounded text-xs" style={{backgroundColor:(q.content_categories?.color||'#6366f1')+'30',color:q.content_categories?.color||'#6366f1'}}>{q.content_categories.name}</span>}
+                      {q.content_themes?.name&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-xs">{q.content_themes.name}</span>}
+                      {q.content_sub_themes?.name&&<span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-300 rounded text-xs">{q.content_sub_themes.name}</span>}
                       <span className="px-2 py-0.5 bg-gray-600 rounded text-xs">{q.points} pt{q.points>1?'s':''}</span>
+                      {q.time_limit>0&&<span className="px-2 py-0.5 bg-orange-500/20 text-orange-300 rounded text-xs">{q.time_limit}s</span>}
                     </div>
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {(q.question_bank_answers||[]).map((a,i)=>(
-                        <span key={i} className={`px-2 py-0.5 rounded text-xs ${a.is_correct?'bg-green-500/20 text-green-400':'bg-gray-700 text-gray-400'}`}>{a.answer_text}</span>
-                      ))}
-                    </div>
+                    {/* Tags */}
+                    {q.tags&&q.tags.length>0&&(
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {q.tags.slice(0,3).map(t=><span key={t} className="px-1.5 py-0.5 bg-gray-700 rounded text-xs text-gray-300">{t}</span>)}
+                        {q.tags.length>3&&<span className="text-xs text-gray-400">+{q.tags.length-3}</span>}
+                      </div>
+                    )}
+                    {/* Réponses */}
+                    {['single','multiple','true_false'].includes(q.question_type)&&(
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {(q.question_bank_answers||[]).map((a,i)=>(
+                          <span key={i} className={`px-2 py-0.5 rounded text-xs ${a.is_correct?'bg-green-500/20 text-green-400':'bg-gray-700 text-gray-400'}`}>{a.answer_text}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="flex gap-2">
                     <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>openEdit(q)}/>
@@ -5151,42 +5700,85 @@
         )}
         
         {/* Modal Question */}
-        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier la question':'Ajouter une question'} size="lg">
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier la question':'Ajouter une question'} size="xl">
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-1">Question *</label>
-              <textarea value={form.question_text} onChange={e=>setForm({...form,question_text:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/>
+              <textarea value={form.question_text} onChange={e=>setForm({...form,question_text:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/>
             </div>
-            <div className="grid grid-cols-3 gap-4">
-              <Select label="Type" value={form.question_type} onChange={e=>setForm({...form,question_type:e.target.value})} options={[{value:'single',label:'Choix unique'},{value:'multiple',label:'Choix multiple'},{value:'true_false',label:'Vrai/Faux'}]}/>
+            
+            {/* Image/Média */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Image / Média (URL)</label>
+              <div className="flex gap-2">
+                <Input className="flex-1" value={form.image_url} onChange={e=>setForm({...form,image_url:e.target.value})} placeholder="https://..."/>
+                {form.image_url&&<img src={form.image_url} alt="" className="w-12 h-12 rounded object-cover"/>}
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-4 gap-4">
+              <Select label="Type *" value={form.question_type} onChange={e=>setForm({...form,question_type:e.target.value})} options={questionTypes.map(t=>({value:t.value,label:t.label}))}/>
               <Select label="Difficulté" value={form.difficulty} onChange={e=>setForm({...form,difficulty:e.target.value})} options={[{value:'easy',label:'Facile'},{value:'medium',label:'Moyen'},{value:'hard',label:'Difficile'}]}/>
               <Input label="Points" type="number" value={form.points} onChange={e=>setForm({...form,points:parseInt(e.target.value)||1})}/>
+              <Input label="Temps limite (sec)" type="number" value={form.time_limit} onChange={e=>setForm({...form,time_limit:parseInt(e.target.value)||0})} placeholder="0 = illimité"/>
             </div>
+            
             <div className="grid grid-cols-3 gap-4">
               <Select label="Catégorie" value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
               <Select label="Thème" value={form.theme_id} onChange={e=>setForm({...form,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/>
               <Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/>
             </div>
             
+            {/* Tags */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-medium text-gray-300">Réponses *</label>
-                <Button variant="ghost" size="sm" icon="Plus" onClick={addAnswer}>Ajouter</Button>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Tags</label>
+              <div className="min-h-[38px] p-2 bg-gray-700 border border-gray-600 rounded-lg flex flex-wrap gap-1">
+                {form.tags.map(t=><span key={t} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-600/30 text-indigo-300 rounded text-xs">{t}<button type="button" onClick={()=>setForm({...form,tags:form.tags.filter(x=>x!==t)})} className="hover:text-white">×</button></span>)}
+                {form.tags.length===0&&<span className="text-gray-500 text-sm">Aucun tag</span>}
               </div>
-              <div className="space-y-2">
-                {form.answers.map((a,i)=>(
-                  <div key={i} className="flex items-center gap-2">
-                    <input type={form.question_type==='single'?'radio':'checkbox'} checked={a.is_correct} onChange={e=>updateAnswer(i,'is_correct',e.target.checked)} className="w-4 h-4"/>
-                    <Input className="flex-1" value={a.text} onChange={e=>updateAnswer(i,'text',e.target.value)} placeholder={`Réponse ${i+1}`}/>
-                    {form.answers.length>2&&<button onClick={()=>removeAnswer(i)} className="p-2 hover:bg-red-500/20 rounded text-red-400"><Icon name="X" size={16}/></button>}
-                  </div>
-                ))}
-              </div>
+              {predefinedTags.length>0&&<div className="flex flex-wrap gap-1 mt-2">{predefinedTags.filter(t=>!form.tags.includes(t.name)).slice(0,10).map(t=><button key={t.id} type="button" onClick={()=>setForm({...form,tags:[...form.tags,t.name]})} className="px-2 py-0.5 rounded text-xs border border-gray-600 hover:border-indigo-500" style={{color:t.color||'#6366f1'}}>+ {t.name}</button>)}</div>}
             </div>
+            
+            {/* Réponses (pour les types choix) */}
+            {['single','multiple','true_false'].includes(form.question_type)&&(
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium text-gray-300">Réponses *</label>
+                  <Button variant="ghost" size="sm" icon="Plus" onClick={addAnswer}>Ajouter</Button>
+                </div>
+                <div className="space-y-2">
+                  {form.answers.map((a,i)=>(
+                    <div key={i} className="flex items-center gap-2">
+                      <input type={form.question_type==='single'||form.question_type==='true_false'?'radio':'checkbox'} checked={a.is_correct} onChange={e=>updateAnswer(i,'is_correct',e.target.checked)} className="w-4 h-4"/>
+                      <Input className="flex-1" value={a.text} onChange={e=>updateAnswer(i,'text',e.target.value)} placeholder={form.question_type==='true_false'?(i===0?'Vrai':'Faux'):`Réponse ${i+1}`}/>
+                      {form.answers.length>2&&form.question_type!=='true_false'&&<button onClick={()=>removeAnswer(i)} className="p-2 hover:bg-red-500/20 rounded text-red-400"><Icon name="X" size={16}/></button>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* Instructions pour autres types */}
+            {['fill_blank','ordering','matching','short_answer','essay'].includes(form.question_type)&&(
+              <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
+                <p className="text-sm text-blue-400">
+                  {form.question_type==='fill_blank'&&'💡 Utilisez [___] dans le texte pour indiquer les trous. Ex: "La capitale de la France est [___]"'}
+                  {form.question_type==='ordering'&&'💡 Les réponses seront présentées dans un ordre aléatoire. L\'apprenant devra les remettre dans l\'ordre.'}
+                  {form.question_type==='matching'&&'💡 Définissez les paires à associer. Format: "Élément gauche | Élément droit"'}
+                  {form.question_type==='short_answer'&&'💡 L\'apprenant devra saisir une réponse courte (texte libre).'}
+                  {form.question_type==='essay'&&'💡 L\'apprenant devra rédiger une réponse longue. Correction manuelle requise.'}
+                </p>
+              </div>
+            )}
             
             <div className="grid grid-cols-2 gap-4">
               <Input label="Feedback correct" value={form.feedback_correct} onChange={e=>setForm({...form,feedback_correct:e.target.value})} placeholder="Bravo !"/>
-              <Input label="Feedback incorrect" value={form.feedback_incorrect} onChange={e=>setForm({...form,feedback_incorrect:e.target.value})} placeholder="La bonne réponse était..."/>
+              <Input label="Feedback incorrect" value={form.feedback_incorrect} onChange={e=>setForm({...form,feedback_incorrect:e.target.value})} placeholder="Essayez encore..."/>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Explication (affichée après réponse)</label>
+              <textarea value={form.explanation} onChange={e=>setForm({...form,explanation:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Explication détaillée de la bonne réponse..."/>
             </div>
             
             <div className="flex justify-end gap-3">
@@ -5194,6 +5786,47 @@
               <Button onClick={handleSave} loading={saving}>Enregistrer</Button>
             </div>
           </div>
+        </Modal>
+        
+        {/* Modal Import */}
+        <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer des questions" size="lg">
+          <div className="space-y-4">
+            <div className="bg-gray-700/50 rounded-lg p-4">
+              <p className="text-sm text-gray-400 mb-2">Colonnes : Question*, Type, Catégorie, Thème, Sous-thème, Difficulté, Points, Temps, Réponse 1-4, Correct 1-4, Feedbacks, Image URL, Tags</p>
+              <p className="text-xs text-gray-500">💡 Les catégories/thèmes/sous-thèmes sont créés automatiquement.</p>
+            </div>
+            
+            {importData.length>0&&(
+              <div className="border border-gray-700 rounded-lg overflow-hidden">
+                <div className="bg-gray-800 px-4 py-2 text-sm font-medium">{importData.length} question(s) détectée(s)</div>
+                <div className="max-h-60 overflow-y-auto">
+                  {importData.slice(0,10).map((row,i)=>(
+                    <div key={i} className="px-4 py-2 border-t border-gray-700 text-sm truncate">
+                      <span className="font-medium">{row['Question']||row['question_text']}</span>
+                    </div>
+                  ))}
+                  {importData.length>10&&<div className="px-4 py-2 border-t border-gray-700 text-sm text-gray-400">... et {importData.length-10} autres</div>}
+                </div>
+              </div>
+            )}
+            
+            {importResult&&(
+              <div className={`p-4 rounded-lg ${importResult.errors>0?'bg-yellow-500/20':'bg-green-500/20'}`}>
+                <p className="font-medium">{importResult.success} question(s) importée(s)</p>
+                {importResult.errors>0&&<p className="text-sm text-yellow-400">{importResult.errors} erreur(s)</p>}
+              </div>
+            )}
+            
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>
+              {!importResult&&<Button onClick={processImport} loading={importLoading} disabled={importData.length===0}>Importer</Button>}
+            </div>
+          </div>
+        </Modal>
+        
+        {/* Preview Image */}
+        <Modal isOpen={!!previewImage} onClose={()=>setPreviewImage(null)} title="Aperçu média" size="lg">
+          {previewImage&&<img src={previewImage} alt="" className="w-full max-h-[70vh] object-contain rounded-lg"/>}
         </Modal>
       </div>;
     }
