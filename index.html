@@ -1031,7 +1031,30 @@
       // Écouter les changements de hash pour la navigation
       useEffect(()=>{
         const handleHashChange=()=>{
-          const hash=window.location.hash.replace('#','');
+          let hash=window.location.hash.replace('#','');
+          // Redirections pour les anciennes pages vers les nouvelles
+          const redirects={
+            'dashboard':'pilotage',
+            'scorm-tracking':'pilotage',
+            'analytics':'pilotage',
+            'categories':'parametres',
+            'badges':'parametres',
+            'emails':'parametres',
+            'permissions':'parametres',
+            'centers':'licences',
+            'licenses':'licences',
+            'videos':'contenus',
+            'playlists':'contenus',
+            'paths':'contenus',
+            'quizzes':'contenus',
+            'enrollments':'sessions',
+            'my-courses':'my-training',
+            'my-paths':'my-training',
+            'my-badges':'rewards',
+            'my-certificates':'rewards',
+            'leaderboard':'rewards'
+          };
+          if(redirects[hash])hash=redirects[hash];
           if(hash)setPage(hash);
         };
         // Vérifier le hash initial
@@ -2007,34 +2030,51 @@
         XLSX.utils.book_append_sheet(wb,ws1,'Resume Apprenants');
         
         // Feuille 2: Détail des cours
-        const coursesData=[['Apprenant','Email','Cours','Statut','Progression','Temps passé','Date inscription']];
+        const coursesData=[['Apprenant','Email','Cours','Statut','Progression','Temps Vidéo','Temps SCORM','Temps Quiz','Temps Total','Date inscription']];
         enrollments.forEach(e=>{
           const l=learners.find(x=>x.id===e.learner_id);
+          // Calculer le temps réel pour cette inscription
+          const eVideoTime=videoProgress.filter(v=>v.enrollment_id===e.id).reduce((a,v)=>a+(v.watch_time_seconds||0),0);
+          const eScormTime=scormProgress.filter(s=>s.enrollment_id===e.id||s.learner_id===e.learner_id).reduce((a,s)=>a+parseScormTime(s.total_time),0);
+          const eQuizTime=quizAttempts.filter(q=>q.enrollment_id===e.id||q.learner_id===e.learner_id).reduce((a,q)=>a+(q.duration_seconds||0),0);
+          const eTotalTime=eVideoTime+eScormTime+eQuizTime;
           coursesData.push([
             l?l.first_name+' '+l.last_name:'',
             l?.email||'',
             e.playlists?.title||'',
             e.status==='completed'?'Terminé':e.status==='in_progress'?'En cours':'Non commencé',
             (e.progress_percent||0)+'%',
-            formatDuration(e.time_spent_seconds||0),
+            formatDuration(eVideoTime),
+            formatDuration(eScormTime),
+            formatDuration(eQuizTime),
+            formatDuration(eTotalTime),
             e.created_at?new Date(e.created_at).toLocaleDateString('fr-FR'):''
           ]);
         });
         const ws2=XLSX.utils.aoa_to_sheet(coursesData);
-        ws2['!cols']=[{wch:25},{wch:30},{wch:35},{wch:15},{wch:12},{wch:15},{wch:15}];
+        ws2['!cols']=[{wch:25},{wch:30},{wch:35},{wch:15},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:15}];
         XLSX.utils.book_append_sheet(wb,ws2,'Detail Cours');
         
         // Feuille 3: Parcours
-        const pathsData=[['Apprenant','Email','Parcours','Statut','Progression','Temps passé','Date début']];
+        const pathsData=[['Apprenant','Email','Parcours','Statut','Progression','Temps Total','Date début']];
         pathEnrollments.forEach(pe=>{
           const l=learners.find(x=>x.id===pe.learner_id);
+          // Récupérer les cours du parcours et calculer le temps
+          const pathObj=paths.find(p=>p.id===pe.path_id);
+          const pathCourseIds=(pathObj?.learning_path_courses||[]).map(lpc=>lpc.playlist_id);
+          const pathCourseEnrs=enrollments.filter(e=>pathCourseIds.includes(e.playlist_id)&&e.learner_id===pe.learner_id);
+          const pathEnrIds=pathCourseEnrs.map(e=>e.id);
+          const peVideoTime=videoProgress.filter(v=>pathEnrIds.includes(v.enrollment_id)).reduce((a,v)=>a+(v.watch_time_seconds||0),0);
+          const peScormTime=scormProgress.filter(s=>pathEnrIds.includes(s.enrollment_id)||s.learner_id===pe.learner_id).reduce((a,s)=>a+parseScormTime(s.total_time),0);
+          const peQuizTime=quizAttempts.filter(q=>pathEnrIds.includes(q.enrollment_id)||q.learner_id===pe.learner_id).reduce((a,q)=>a+(q.duration_seconds||0),0);
+          const peTotalTime=peVideoTime+peScormTime+peQuizTime;
           pathsData.push([
             l?l.first_name+' '+l.last_name:'',
             l?.email||'',
             pe.learning_paths?.title||'Parcours',
             pe.status==='completed'||pe.progress_percent===100?'Terminé':pe.progress_percent>0?'En cours':'Non commencé',
             (pe.progress_percent||0)+'%',
-            formatDuration(pe.time_spent_seconds||0),
+            formatDuration(peTotalTime),
             pe.started_at?new Date(pe.started_at).toLocaleDateString('fr-FR'):''
           ]);
         });
@@ -2318,7 +2358,7 @@
         </div>
 
         {/* Stats globales */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4 mb-6">
           <Card className="p-4 text-center">
             <Icon name="Users" size={24} className="mx-auto text-indigo-400 mb-2"/>
             <p className="text-2xl font-bold">{stats.activeLearners}<span className="text-base text-gray-500">/{stats.totalLearners}</span></p>
@@ -2355,6 +2395,16 @@
             <Icon name="Play" size={24} className="mx-auto text-green-400 mb-2"/>
             <p className="text-2xl font-bold">{formatDuration(stats.totalWatchTime)}</p>
             <p className="text-xs text-gray-400">Temps vidéo</p>
+          </Card>
+          <Card className="p-4 text-center">
+            <Icon name="Package" size={24} className="mx-auto text-orange-400 mb-2"/>
+            <p className="text-2xl font-bold">{formatDuration(stats.totalScormTime)}</p>
+            <p className="text-xs text-gray-400">Temps SCORM</p>
+          </Card>
+          <Card className="p-4 text-center">
+            <Icon name="HelpCircle" size={24} className="mx-auto text-pink-400 mb-2"/>
+            <p className="text-2xl font-bold">{formatDuration(stats.totalQuizTime)}</p>
+            <p className="text-xs text-gray-400">Temps Quiz</p>
           </Card>
         </div>
 
@@ -2476,10 +2526,16 @@
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {courses.map(c=>{
               const cEnr=enrollments.filter(e=>e.playlist_id===c.id);
+              const cEnrIds=cEnr.map(e=>e.id);
+              const cLearnerIds=cEnr.map(e=>e.learner_id);
               const completed=cEnr.filter(e=>e.status==='completed').length;
               const inProgress=cEnr.filter(e=>e.status==='in_progress').length;
               const avgProgress=cEnr.length>0?Math.round(cEnr.reduce((a,e)=>a+(e.progress_percent||0),0)/cEnr.length):0;
-              const totalTime=cEnr.reduce((a,e)=>a+(e.time_spent_seconds||0),0);
+              // Temps réel = vidéos + SCORM + quiz pour ce cours
+              const courseVideoTime=videoProgress.filter(v=>cEnrIds.includes(v.enrollment_id)).reduce((a,v)=>a+(v.watch_time_seconds||0),0);
+              const courseScormTime=scormProgress.filter(s=>cEnrIds.includes(s.enrollment_id)||cLearnerIds.includes(s.learner_id)).reduce((a,s)=>a+parseScormTime(s.total_time),0);
+              const courseQuizTime=quizAttempts.filter(q=>cEnrIds.includes(q.enrollment_id)||cLearnerIds.includes(q.learner_id)).reduce((a,q)=>a+(q.duration_seconds||0),0);
+              const totalTime=courseVideoTime+courseScormTime+courseQuizTime;
               return(
                 <Card key={c.id} className="p-4">
                   <div className="flex items-center gap-3 mb-4">
@@ -2507,10 +2563,20 @@
             {paths.length===0?<div className="col-span-full"><Empty icon="Route" title="Aucun parcours"/></div>:
             paths.map(p=>{
               const pEnr=pathEnrollments.filter(pe=>pe.path_id===p.id);
+              const pLearnerIds=pEnr.map(pe=>pe.learner_id);
+              // Récupérer les cours du parcours
+              const pathCourseIds=(p.learning_path_courses||[]).map(lpc=>lpc.playlist_id);
+              // Récupérer les enrollments des cours du parcours pour ces apprenants
+              const pathCourseEnrollments=enrollments.filter(e=>pathCourseIds.includes(e.playlist_id)&&pLearnerIds.includes(e.learner_id));
+              const pathEnrIds=pathCourseEnrollments.map(e=>e.id);
               const completed=pEnr.filter(pe=>pe.status==='completed'||pe.progress_percent===100).length;
               const inProgress=pEnr.filter(pe=>pe.progress_percent>0&&pe.progress_percent<100).length;
               const avgProgress=pEnr.length>0?Math.round(pEnr.reduce((a,pe)=>a+(pe.progress_percent||0),0)/pEnr.length):0;
-              const totalTime=pEnr.reduce((a,pe)=>a+(pe.time_spent_seconds||0),0);
+              // Temps réel = vidéos + SCORM + quiz pour les cours du parcours
+              const pathVideoTime=videoProgress.filter(v=>pathEnrIds.includes(v.enrollment_id)).reduce((a,v)=>a+(v.watch_time_seconds||0),0);
+              const pathScormTime=scormProgress.filter(s=>pathEnrIds.includes(s.enrollment_id)||pLearnerIds.includes(s.learner_id)).reduce((a,s)=>a+parseScormTime(s.total_time),0);
+              const pathQuizTime=quizAttempts.filter(q=>pathEnrIds.includes(q.enrollment_id)||pLearnerIds.includes(q.learner_id)).reduce((a,q)=>a+(q.duration_seconds||0),0);
+              const totalTime=pathVideoTime+pathScormTime+pathQuizTime;
               return(
                 <Card key={p.id} className="p-4">
                   <div className="flex items-center gap-3 mb-4">
@@ -6397,10 +6463,7 @@
           {/* Panel latéral taxonomie */}
           {showTaxonomyPanel&&<div className="w-64 shrink-0">
             <Card className="p-3 sticky top-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-sm">Filtrer par catégorie</h3>
-                <button onClick={()=>window.location.hash='categories'} className="p-1 hover:bg-indigo-600 rounded" title="Gérer les catégories"><Icon name="Settings" size={14}/></button>
-              </div>
+              <h3 className="font-semibold text-sm mb-3">Filtrer par catégorie</h3>
               <div className="space-y-1 max-h-[calc(100vh-200px)] overflow-y-auto">
                 <button onClick={()=>{setFilterCategory('');setFilterTheme('');}} className={`w-full text-left px-2 py-1.5 rounded text-sm ${!filterCategory?'bg-indigo-600':'hover:bg-gray-700'}`}>Toutes ({videos.length+scormModules.length+quizzes.length+courses.length+paths.length})</button>
                 {categories.map(cat=>{
@@ -6417,10 +6480,7 @@
                     </div>}
                   </div>;
                 })}
-                {categories.length===0&&<div className="text-center py-4">
-                  <p className="text-sm text-gray-500 mb-2">Aucune catégorie</p>
-                  <Button size="sm" variant="secondary" onClick={()=>window.location.hash='categories'}>Créer des catégories</Button>
-                </div>}
+                {categories.length===0&&<p className="text-sm text-gray-500 text-center py-4">Aucune catégorie</p>}
               </div>
             </Card>
           </div>}
@@ -9062,41 +9122,51 @@
       // Chargement
       const load=useCallback(async()=>{
         try{
-          const[{data:cats},{data:ths},{data:sths},{data:tags}]=await Promise.all([
-            supabase.from('content_categories').select('*').order('position').order('name'),
-            supabase.from('content_themes').select('*').order('position').order('name'),
-            supabase.from('content_sub_themes').select('*').order('position').order('name'),
-            supabase.from('content_tags').select('*').order('usage_count',{ascending:false}).order('name')
-          ]);
+          // Charger les catégories en premier (table principale)
+          const{data:cats,error:catsError}=await supabase.from('content_categories').select('*').order('position').order('name');
+          if(catsError)console.error('Erreur content_categories:',catsError);
           setCategories(cats||[]);
-          setThemes(ths||[]);
-          setSubThemes(sths||[]);
-          setPredefinedTags(tags||[]);
+          
+          // Charger les tables secondaires (peuvent ne pas exister)
+          try{
+            const[{data:ths},{data:sths},{data:tags}]=await Promise.all([
+              supabase.from('content_themes').select('*').order('position').order('name'),
+              supabase.from('content_sub_themes').select('*').order('position').order('name'),
+              supabase.from('content_tags').select('*').order('usage_count',{ascending:false}).order('name')
+            ]);
+            setThemes(ths||[]);
+            setSubThemes(sths||[]);
+            setPredefinedTags(tags||[]);
+          }catch(e){console.warn('Tables secondaires non disponibles:',e);}
           
           // Compter les contenus par catégorie
           const stats={};
-          const[{data:vids},{data:scorm},{data:quiz},{data:cours},{data:paths}]=await Promise.all([
-            supabase.from('videos').select('id,category_id'),
-            supabase.from('scorm_modules').select('id,category_id'),
-            supabase.from('quizzes').select('id,category_id'),
-            supabase.from('playlists').select('id,category_id'),
-            supabase.from('learning_paths').select('id,category_id')
-          ]);
+          try{
+            const[{data:vids},{data:scorm},{data:quiz},{data:cours},{data:paths}]=await Promise.all([
+              supabase.from('videos').select('id,category_id'),
+              supabase.from('scorm_modules').select('id,category_id'),
+              supabase.from('quizzes').select('id,category_id'),
+              supabase.from('playlists').select('id,category_id'),
+              supabase.from('learning_paths').select('id,category_id')
+            ]);
+            
+            const countByCat=(items)=>{
+              const c={};
+              (items||[]).forEach(i=>{if(i.category_id){c[i.category_id]=(c[i.category_id]||0)+1;}});
+              return c;
+            };
+            
+            stats.videos=countByCat(vids);
+            stats.scorm=countByCat(scorm);
+            stats.quizzes=countByCat(quiz);
+            stats.courses=countByCat(cours);
+            stats.paths=countByCat(paths);
+            setContentStats(stats);
+          }catch(e){console.warn('Stats contenus non disponibles:',e);}
           
-          const countByCat=(items)=>{
-            const c={};
-            (items||[]).forEach(i=>{if(i.category_id){c[i.category_id]=(c[i.category_id]||0)+1;}});
-            return c;
-          };
-          
-          stats.videos=countByCat(vids);
-          stats.scorm=countByCat(scorm);
-          stats.quizzes=countByCat(quiz);
-          stats.courses=countByCat(cours);
-          stats.paths=countByCat(paths);
-          setContentStats(stats);
-          
-        }catch(e){console.error(e);}
+        }catch(e){
+          console.error('Erreur chargement catégories:',e);
+        }
         setLoading(false);
       },[]);
       
@@ -9597,6 +9667,8 @@
           {onRemove&&<button onClick={onRemove} className="hover:bg-white/20 rounded-full p-0.5"><Icon name="X" size={small?10:12}/></button>}
         </span>
       );
+      
+      if(loading)return<div className="flex items-center justify-center py-20"><Icon name="Loader2" size={32} className="animate-spin text-indigo-400"/><span className="ml-3 text-gray-400">Chargement des catégories...</span></div>;
       
       return<div>
         {/* Bandeau lecture seule */}
