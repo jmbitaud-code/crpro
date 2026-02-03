@@ -4750,7 +4750,16 @@
       
       const filtered=videos.filter(v=>{
         if(filterCategory&&v.category_id!==filterCategory)return false;
-        if(search&&!v.title.toLowerCase().includes(search.toLowerCase()))return false;
+        if(search){
+          const s=search.toLowerCase();
+          const inTitle=v.title?.toLowerCase().includes(s);
+          const inDesc=v.description?.toLowerCase().includes(s);
+          const inCat=v.content_categories?.name?.toLowerCase().includes(s);
+          const inTheme=v.content_themes?.name?.toLowerCase().includes(s);
+          const inSubTheme=v.content_sub_themes?.name?.toLowerCase().includes(s);
+          const inTags=(v.tags||[]).some(t=>t.toLowerCase().includes(s));
+          if(!inTitle&&!inDesc&&!inCat&&!inTheme&&!inSubTheme&&!inTags)return false;
+        }
         return true;
       });
       
@@ -5148,7 +5157,16 @@
       
       const filtered=modules.filter(m=>{
         if(filterCategory&&m.category_id!==filterCategory)return false;
-        if(search&&!m.title.toLowerCase().includes(search.toLowerCase()))return false;
+        if(search){
+          const s=search.toLowerCase();
+          const inTitle=m.title?.toLowerCase().includes(s);
+          const inDesc=m.description?.toLowerCase().includes(s);
+          const inCat=m.content_categories?.name?.toLowerCase().includes(s);
+          const inTheme=m.content_themes?.name?.toLowerCase().includes(s);
+          const inSubTheme=m.content_sub_themes?.name?.toLowerCase().includes(s);
+          const inTags=(m.tags||[]).some(t=>t.toLowerCase().includes(s));
+          if(!inTitle&&!inDesc&&!inCat&&!inTheme&&!inSubTheme&&!inTags)return false;
+        }
         return true;
       });
       
@@ -5706,7 +5724,17 @@
         if(filterCategory&&q.category_id!==filterCategory)return false;
         if(filterDifficulty!=='all'&&q.difficulty!==filterDifficulty)return false;
         if(filterType!=='all'&&q.question_type!==filterType)return false;
-        if(search&&!q.question_text.toLowerCase().includes(search.toLowerCase()))return false;
+        if(search){
+          const s=search.toLowerCase();
+          const inText=q.question_text?.toLowerCase().includes(s);
+          const inCat=q.content_categories?.name?.toLowerCase().includes(s);
+          const inTheme=q.content_themes?.name?.toLowerCase().includes(s);
+          const inSubTheme=q.content_sub_themes?.name?.toLowerCase().includes(s);
+          const inTags=(q.tags||[]).some(t=>t.toLowerCase().includes(s));
+          const inFeedback=q.feedback_correct?.toLowerCase().includes(s)||q.feedback_incorrect?.toLowerCase().includes(s);
+          const inExplanation=q.explanation?.toLowerCase().includes(s);
+          if(!inText&&!inCat&&!inTheme&&!inSubTheme&&!inTags&&!inFeedback&&!inExplanation)return false;
+        }
         return true;
       });
       
@@ -6050,7 +6078,7 @@
       
       const load=useCallback(async()=>{
         const[{data:q},{data:cats},{data:ths},{data:sths},{data:bank}]=await Promise.all([
-          supabase.from('quizzes').select('*,content_categories(id,name,color),quiz_questions(count)').eq('is_lms_content',true).order('created_at',{ascending:false}),
+          supabase.from('quizzes').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name),quiz_questions(count)').eq('is_lms_content',true).order('created_at',{ascending:false}),
           supabase.from('content_categories').select('*').order('position'),
           supabase.from('content_themes').select('*').order('position'),
           supabase.from('content_sub_themes').select('*').order('position'),
@@ -6170,7 +6198,16 @@
       };
       
       const filtered=quizzes.filter(q=>{
-        if(search&&!q.title.toLowerCase().includes(search.toLowerCase()))return false;
+        if(search){
+          const s=search.toLowerCase();
+          const inTitle=q.title?.toLowerCase().includes(s);
+          const inDesc=q.description?.toLowerCase().includes(s);
+          const inCat=q.content_categories?.name?.toLowerCase().includes(s);
+          const inTheme=q.content_themes?.name?.toLowerCase().includes(s);
+          const inSubTheme=q.content_sub_themes?.name?.toLowerCase().includes(s);
+          const inTags=(q.tags||[]).some(t=>t.toLowerCase().includes(s));
+          if(!inTitle&&!inDesc&&!inCat&&!inTheme&&!inSubTheme&&!inTags)return false;
+        }
         return true;
       });
       
@@ -6313,11 +6350,11 @@
       
       const load=useCallback(async()=>{
         const[{data:vids},{data:scorm},{data:quiz},{data:cours},{data:path},{data:cats}]=await Promise.all([
-          supabase.from('videos').select('*,content_categories(id,name,color)').eq('is_lms_content',true).order('sort_order').order('title'),
-          supabase.from('scorm_modules').select('*,content_categories(id,name,color)').eq('is_lms_content',true).order('title'),
-          supabase.from('quizzes').select('*,content_categories(id,name,color),quiz_questions(count)').eq('is_lms_content',true).order('title'),
-          supabase.from('playlists').select('*,content_categories(id,name,color),playlist_items(count)').eq('is_lms_content',true).order('title'),
-          supabase.from('learning_paths').select('*,content_categories(id,name,color),learning_path_courses(count)').eq('is_lms_content',true).order('title'),
+          supabase.from('videos').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name)').eq('is_lms_content',true).order('sort_order').order('title'),
+          supabase.from('scorm_modules').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name)').eq('is_lms_content',true).order('title'),
+          supabase.from('quizzes').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name),quiz_questions(count)').eq('is_lms_content',true).order('title'),
+          supabase.from('playlists').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name),playlist_items(count)').eq('is_lms_content',true).order('title'),
+          supabase.from('learning_paths').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name),learning_path_courses(count)').eq('is_lms_content',true).order('title'),
           supabase.from('content_categories').select('*').order('position')
         ]);
         setVideos(vids||[]);
@@ -6405,7 +6442,16 @@
       const filter=(items)=>{
         return items.filter(i=>{
           if(filterCategory&&i.category_id!==filterCategory)return false;
-          if(search&&!i.title?.toLowerCase().includes(search.toLowerCase()))return false;
+          if(search){
+            const s=search.toLowerCase();
+            const inTitle=i.title?.toLowerCase().includes(s);
+            const inDesc=i.description?.toLowerCase().includes(s);
+            const inCat=i.content_categories?.name?.toLowerCase().includes(s);
+            const inTheme=i.content_themes?.name?.toLowerCase().includes(s);
+            const inSubTheme=i.content_sub_themes?.name?.toLowerCase().includes(s);
+            const inTags=(i.tags||[]).some(t=>t.toLowerCase().includes(s));
+            if(!inTitle&&!inDesc&&!inCat&&!inTheme&&!inSubTheme&&!inTags)return false;
+          }
           return true;
         });
       };
@@ -7792,7 +7838,7 @@
         setLicensedIds(licenseInfo);
         
         // Charger TOUTES les videos
-        let q=supabase.from('videos').select('*,content_categories(id,name,color)').order('sort_order',{ascending:true,nullsFirst:false}).order('created_at',{ascending:false});
+        let q=supabase.from('videos').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name)').order('sort_order',{ascending:true,nullsFirst:false}).order('created_at',{ascending:false});
         if(!isSuperAdmin&&center?.id){
           q=q.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
         }
@@ -7801,7 +7847,7 @@
         
         // Charger TOUS les modules SCORM
         try {
-          let qs=supabase.from('scorm_modules').select('*,content_categories(id,name,color)').order('created_at',{ascending:false});
+          let qs=supabase.from('scorm_modules').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name)').order('created_at',{ascending:false});
           if(!isSuperAdmin&&center?.id){
             qs=qs.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
           }
@@ -7811,7 +7857,7 @@
         
         // Charger les Quiz
         try {
-          let qq=supabase.from('quizzes').select('*,content_categories(id,name,color)').order('created_at',{ascending:false});
+          let qq=supabase.from('quizzes').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name)').order('created_at',{ascending:false});
           if(!isSuperAdmin&&center?.id){
             qq=qq.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
           }
@@ -7821,7 +7867,7 @@
         
         // Charger les Cours (playlists)
         try {
-          let qc=supabase.from('playlists').select('*,content_categories(id,name,color)').order('created_at',{ascending:false});
+          let qc=supabase.from('playlists').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name)').order('created_at',{ascending:false});
           if(!isSuperAdmin&&center?.id){
             qc=qc.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
           }
@@ -7831,7 +7877,7 @@
         
         // Charger les Parcours
         try {
-          let qp=supabase.from('learning_paths').select('*,content_categories(id,name,color),learning_path_courses(count)').order('created_at',{ascending:false});
+          let qp=supabase.from('learning_paths').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name),learning_path_courses(count)').order('created_at',{ascending:false});
           if(!isSuperAdmin&&center?.id){
             qp=qp.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
           }
@@ -7880,7 +7926,18 @@
         }
         if(filterCategory){result=result.filter(item=>item.category_id===filterCategory);}
         if(filterTheme){result=result.filter(item=>item.theme_id===filterTheme);}
-        if(search){const s=search.toLowerCase();result=result.filter(item=>item.title?.toLowerCase().includes(s));}
+        if(search){const s=search.toLowerCase();result=result.filter(item=>{
+          const inTitle=item.title?.toLowerCase().includes(s);
+          const inDesc=item.description?.toLowerCase().includes(s);
+          const catName=getCategoryName(item.category_id)?.toLowerCase();
+          const inCat=catName&&catName.includes(s);
+          const themeName=item.content_themes?.name?.toLowerCase()||'';
+          const inTheme=themeName&&themeName.includes(s);
+          const subThemeName=item.content_sub_themes?.name?.toLowerCase()||'';
+          const inSubTheme=subThemeName&&subThemeName.includes(s);
+          const inTags=(item.tags||[]).some(t=>t.toLowerCase().includes(s));
+          return inTitle||inDesc||inCat||inTheme||inSubTheme||inTags;
+        });}
         return result;
       };
       
