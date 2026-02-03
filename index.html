@@ -2,7 +2,11 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <!-- VERSION 6.6.14-fix3 -->
   <title>Course Builder Pro</title>
   <meta name="description" content="Plateforme de création et diffusion de cours vidéo multi-centres">
   <meta name="theme-color" content="#1f2937">
@@ -5102,7 +5106,8 @@
             if(name.endsWith('imsmanifest.xml')){
               manifest=await zipEntry.async('string');
               // Extraire le titre du manifest
-              const titleMatch=manifest.match(/<title>([^<]+)<\/title>/i);
+              const titleMatch=manifest.match(/<!-- VERSION 6.6.14-fix3 -->
+  <title>([^<]+)<\/title>/i);
               if(titleMatch)detectedTitle=titleMatch[1];
             }
             
