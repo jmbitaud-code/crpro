@@ -5307,7 +5307,28 @@
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
       const[editing,setEditing]=useState(null);
-      const[form,setForm]=useState({question_text:'',question_type:'single',category_id:'',theme_id:'',sub_theme_id:'',difficulty:'medium',points:1,time_limit:0,feedback_correct:'',feedback_incorrect:'',image_url:'',explanation:'',tags:[],answers:[{text:'',is_correct:true},{text:'',is_correct:false}]});
+      const defaultForm={question_text:'',question_type:'single',category_id:'',theme_id:'',sub_theme_id:'',difficulty:'medium',points:1,time_limit:0,
+        // Médias question (array d'objets {type,url,name})
+        media:[],
+        // Réponses classiques (choix unique/multiple/vrai-faux)
+        answers:[{text:'',is_correct:true,image_url:''},{text:'',is_correct:false,image_url:''}],
+        // Texte à trous : réponses attendues
+        blank_answers:[''],
+        // Ordonnancement : items dans l'ordre correct
+        order_items:['',''],
+        // Appariement : paires gauche-droite
+        match_pairs:[{left:'',right:''}],
+        // Réponse courte : réponses acceptées
+        accepted_answers:[''],
+        // Rédaction
+        word_limit:0,rubric:'',
+        // Feedback & correction
+        feedback_correct:'',feedback_incorrect:'',explanation:'',
+        // Médias correction
+        correction_media:[],
+        tags:[]
+      };
+      const[form,setForm]=useState({...defaultForm});
       const[saving,setSaving]=useState(false);
       const[search,setSearch]=useState('');
       const[categories,setCategories]=useState([]);
@@ -5322,19 +5343,24 @@
       const[importData,setImportData]=useState([]);
       const[importLoading,setImportLoading]=useState(false);
       const[importResult,setImportResult]=useState(null);
-      // Preview image
-      const[previewImage,setPreviewImage]=useState(null);
+      // Preview
+      const[previewMedia,setPreviewMedia]=useState(null);
+      const[uploading,setUploading]=useState(false);
       const importFileRef=useRef(null);
+      const mediaFileRef=useRef(null);
+      const correctionMediaRef=useRef(null);
+      const answerImageRef=useRef(null);
+      const[answerImageIdx,setAnswerImageIdx]=useState(null);
       
       const questionTypes=[
-        {value:'single',label:'Choix unique',icon:'CheckCircle'},
-        {value:'multiple',label:'Choix multiple',icon:'CheckSquare'},
-        {value:'true_false',label:'Vrai/Faux',icon:'ToggleLeft'},
-        {value:'fill_blank',label:'Texte à trous',icon:'Edit3'},
-        {value:'ordering',label:'Ordonnancement',icon:'List'},
-        {value:'matching',label:'Appariement',icon:'GitMerge'},
-        {value:'short_answer',label:'Réponse courte',icon:'MessageSquare'},
-        {value:'essay',label:'Rédaction',icon:'FileText'}
+        {value:'single',label:'Choix unique',icon:'CheckCircle',color:'text-blue-400'},
+        {value:'multiple',label:'Choix multiple',icon:'CheckSquare',color:'text-indigo-400'},
+        {value:'true_false',label:'Vrai/Faux',icon:'ToggleLeft',color:'text-green-400'},
+        {value:'fill_blank',label:'Texte à trous',icon:'Edit3',color:'text-yellow-400'},
+        {value:'ordering',label:'Ordonnancement',icon:'List',color:'text-purple-400'},
+        {value:'matching',label:'Appariement',icon:'GitMerge',color:'text-pink-400'},
+        {value:'short_answer',label:'Réponse courte',icon:'MessageSquare',color:'text-cyan-400'},
+        {value:'essay',label:'Rédaction',icon:'FileText',color:'text-orange-400'}
       ];
       
       const load=useCallback(async()=>{
@@ -5361,78 +5387,173 @@
       const getThemeName=(id)=>themes.find(t=>t.id===id)?.name||'';
       const getSubThemeName=(id)=>subThemes.find(st=>st.id===id)?.name||'';
       const getTypeName=(type)=>questionTypes.find(t=>t.value===type)?.label||type;
+      const getTypeColor=(type)=>questionTypes.find(t=>t.value===type)?.color||'text-gray-400';
+      
+      // ===== MEDIA UPLOAD =====
+      const detectMediaType=(file)=>{
+        if(!file)return 'file';
+        if(file.type.startsWith('image/'))return 'image';
+        if(file.type.startsWith('video/'))return 'video';
+        if(file.type.startsWith('audio/'))return 'audio';
+        return 'file';
+      };
+      
+      const detectUrlMediaType=(url)=>{
+        if(!url)return 'file';
+        const lower=url.toLowerCase();
+        if(lower.match(/\.(jpg|jpeg|png|gif|webp|svg|bmp)(\?|$)/))return 'image';
+        if(lower.match(/\.(mp4|webm|ogg|mov|avi)(\?|$)/))return 'video';
+        if(lower.match(/\.(mp3|wav|ogg|aac|m4a|flac)(\?|$)/))return 'audio';
+        if(lower.includes('vimeo.com')||lower.includes('youtube.com')||lower.includes('youtu.be'))return 'video';
+        return 'image';
+      };
+      
+      const uploadMediaFile=async(file,target)=>{
+        setUploading(true);
+        try{
+          const ext=file.name.split('.').pop();
+          const path=`question-media/${Date.now()}_${Math.random().toString(36).substr(2,9)}.${ext}`;
+          const{error}=await supabase.storage.from('video-resources').upload(path,file);
+          if(error){
+            // Fallback : essayer le bucket public
+            const{error:err2}=await supabase.storage.from('public').upload(path,file);
+            if(err2){alert('Erreur upload : '+err2.message);setUploading(false);return;}
+            const{data:{publicUrl}}=supabase.storage.from('public').getPublicUrl(path);
+            addMediaToTarget(target,{type:detectMediaType(file),url:publicUrl,name:file.name});
+          }else{
+            const{data:{publicUrl}}=supabase.storage.from('video-resources').getPublicUrl(path);
+            addMediaToTarget(target,{type:detectMediaType(file),url:publicUrl,name:file.name});
+          }
+        }catch(e){
+          console.error('Upload error:',e);
+          alert('Erreur lors de l\'upload');
+        }
+        setUploading(false);
+      };
+      
+      const addMediaToTarget=(target,mediaItem)=>{
+        if(target==='question'){
+          setForm(f=>({...f,media:[...f.media,mediaItem]}));
+        }else if(target==='correction'){
+          setForm(f=>({...f,correction_media:[...f.correction_media,mediaItem]}));
+        }
+      };
+      
+      const removeMedia=(target,idx)=>{
+        if(target==='question'){
+          setForm(f=>({...f,media:f.media.filter((_,i)=>i!==idx)}));
+        }else{
+          setForm(f=>({...f,correction_media:f.correction_media.filter((_,i)=>i!==idx)}));
+        }
+      };
+      
+      const addMediaUrl=(target,url)=>{
+        if(!url)return;
+        const type=detectUrlMediaType(url);
+        addMediaToTarget(target,{type,url,name:url.split('/').pop()});
+      };
+      
+      // Upload image pour une réponse
+      const uploadAnswerImage=async(file,idx)=>{
+        setUploading(true);
+        try{
+          const ext=file.name.split('.').pop();
+          const path=`question-media/answer_${Date.now()}.${ext}`;
+          const{error}=await supabase.storage.from('video-resources').upload(path,file);
+          if(!error){
+            const{data:{publicUrl}}=supabase.storage.from('video-resources').getPublicUrl(path);
+            updateAnswer(idx,'image_url',publicUrl);
+          }
+        }catch(e){console.error(e);}
+        setUploading(false);
+      };
+      
+      // ===== RENDER MEDIA PREVIEW =====
+      const renderMediaPreview=(item,size='md')=>{
+        const sizeClass=size==='sm'?'w-16 h-16':size==='lg'?'w-full max-h-64':'w-24 h-24';
+        if(item.type==='image')return<img src={item.url} alt={item.name||''} className={`${sizeClass} rounded-lg object-cover cursor-pointer`} onClick={()=>setPreviewMedia(item)}/>;
+        if(item.type==='video'){
+          // Detect Vimeo/YouTube
+          const vimeoMatch=item.url.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+          const ytMatch=item.url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/);
+          if(vimeoMatch)return<div className={`${sizeClass} relative rounded-lg overflow-hidden bg-gray-900`}><iframe src={`https://player.vimeo.com/video/${vimeoMatch[1]}?background=1`} className="w-full h-full" allow="autoplay"/><div className="absolute inset-0 flex items-center justify-center pointer-events-none"><Icon name="Play" size={24} className="text-white/70"/></div></div>;
+          if(ytMatch)return<div className={`${sizeClass} relative rounded-lg overflow-hidden bg-gray-900`}><img src={`https://img.youtube.com/vi/${ytMatch[1]}/mqdefault.jpg`} className="w-full h-full object-cover"/><div className="absolute inset-0 flex items-center justify-center pointer-events-none"><Icon name="Play" size={24} className="text-white/70"/></div></div>;
+          return<div className={`${sizeClass} bg-gray-800 rounded-lg flex items-center justify-center cursor-pointer`} onClick={()=>setPreviewMedia(item)}><Icon name="Video" size={24} className="text-purple-400"/></div>;
+        }
+        if(item.type==='audio')return<div className={`${size==='sm'?'w-16':'w-full'} bg-gray-800 rounded-lg p-2`}><audio controls src={item.url} className="w-full h-8" style={{minWidth:'120px'}}/></div>;
+        return<div className={`${sizeClass} bg-gray-800 rounded-lg flex items-center justify-center`}><Icon name="File" size={20} className="text-gray-400"/></div>;
+      };
+      
+      // ===== MEDIA ZONE COMPONENT =====
+      const MediaZone=({target,mediaList,label,fileRef})=>{
+        const[urlInput,setUrlInput]=useState('');
+        return<div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <label className="text-sm font-medium text-gray-300 flex items-center gap-2">
+              <Icon name={target==='question'?'Image':'BookOpen'} size={16}/>
+              {label}
+            </label>
+            <div className="flex gap-2">
+              <input ref={fileRef} type="file" accept="image/*,video/*,audio/*" className="hidden" onChange={e=>{if(e.target.files[0])uploadMediaFile(e.target.files[0],target);}}/>
+              <Button variant="ghost" size="sm" icon="Upload" onClick={()=>fileRef.current?.click()} loading={uploading}>Upload</Button>
+            </div>
+          </div>
+          
+          {/* Médias existants */}
+          {mediaList.length>0&&(
+            <div className="flex flex-wrap gap-3 mb-3">
+              {mediaList.map((m,i)=>(
+                <div key={i} className="relative group">
+                  {renderMediaPreview(m)}
+                  <button onClick={()=>removeMedia(target,i)} className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity">×</button>
+                  <p className="text-xs text-gray-500 mt-1 truncate max-w-[96px]">{m.name}</p>
+                </div>
+              ))}
+            </div>
+          )}
+          
+          {/* Ajout par URL */}
+          <div className="flex gap-2">
+            <Input className="flex-1" value={urlInput} onChange={e=>setUrlInput(e.target.value)} placeholder="Ou coller une URL (image, vidéo Vimeo/YouTube, audio)..." icon="Link"/>
+            <Button variant="ghost" size="sm" icon="Plus" onClick={()=>{if(urlInput.trim()){addMediaUrl(target,urlInput.trim());setUrlInput('');}}} disabled={!urlInput.trim()}>Ajouter</Button>
+          </div>
+          
+          {mediaList.length===0&&<p className="text-xs text-gray-500 mt-2">Glissez ou uploadez des images, vidéos, fichiers audio • ou collez une URL</p>}
+        </div>;
+      };
       
       // ===== IMPORT/EXPORT EXCEL =====
       const downloadTemplate=()=>{
         const template=[{
           'Question':'Quelle est la capitale de la France ?',
           'Type':'single',
-          'Catégorie':'Géographie',
-          'Thème':'Europe',
-          'Sous-thème':'Capitales',
-          'Difficulté':'easy',
-          'Points':'1',
-          'Temps (sec)':'30',
-          'Réponse 1':'Paris',
-          'Correct 1':'TRUE',
-          'Réponse 2':'Lyon',
-          'Correct 2':'FALSE',
-          'Réponse 3':'Marseille',
-          'Correct 3':'FALSE',
-          'Réponse 4':'',
-          'Correct 4':'',
-          'Feedback correct':'Bravo !',
-          'Feedback incorrect':'La bonne réponse était Paris.',
-          'Image URL':'',
-          'Tags':'géo, culture'
+          'Catégorie':'Géographie','Thème':'Europe','Sous-thème':'Capitales',
+          'Difficulté':'easy','Points':'1','Temps (sec)':'30',
+          'Réponse 1':'Paris','Correct 1':'TRUE',
+          'Réponse 2':'Lyon','Correct 2':'FALSE',
+          'Réponse 3':'Marseille','Correct 3':'FALSE',
+          'Réponse 4':'','Correct 4':'',
+          'Feedback correct':'Bravo !','Feedback incorrect':'La bonne réponse était Paris.',
+          'Image URL':'','Tags':'géo, culture'
         }];
         const ws=XLSX.utils.json_to_sheet(template);
         const wb=XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb,ws,'Questions');
-        
-        // Notice
-        const notice=[
-          ['=== NOTICE D\'UTILISATION ==='],
-          [''],
-          ['Types de questions: single, multiple, true_false, fill_blank, ordering, matching, short_answer, essay'],
-          ['Difficultés: easy, medium, hard'],
-          ['Correct: TRUE ou FALSE'],
-          ['Temps: en secondes (0 = illimité)'],
-          ['Tags: séparés par des virgules'],
-          [''],
-          ['Les catégories/thèmes/sous-thèmes sont créés automatiquement s\'ils n\'existent pas.']
-        ];
-        const wsNotice=XLSX.utils.aoa_to_sheet(notice);
-        XLSX.utils.book_append_sheet(wb,wsNotice,'Notice');
-        
+        const notice=[['=== NOTICE ==='],[''],['Types: single, multiple, true_false, fill_blank, ordering, matching, short_answer, essay'],['Difficultés: easy, medium, hard'],['Correct: TRUE ou FALSE'],['Temps: secondes (0=illimité)'],['Tags: séparés par virgules']];
+        XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(notice),'Notice');
         XLSX.writeFile(wb,'template_questions_crpro.xlsx');
       };
       
       const exportToExcel=()=>{
         const data=questions.map(q=>{
           const answers=q.question_bank_answers||[];
-          return{
-            'Question':q.question_text||'',
-            'Type':q.question_type||'single',
-            'Catégorie':getCategoryName(q.category_id),
-            'Thème':getThemeName(q.theme_id),
-            'Sous-thème':getSubThemeName(q.sub_theme_id),
-            'Difficulté':q.difficulty||'medium',
-            'Points':q.points||1,
-            'Temps (sec)':q.time_limit||0,
-            'Réponse 1':answers[0]?.answer_text||'',
-            'Correct 1':answers[0]?.is_correct?'TRUE':'FALSE',
-            'Réponse 2':answers[1]?.answer_text||'',
-            'Correct 2':answers[1]?.is_correct?'TRUE':'FALSE',
-            'Réponse 3':answers[2]?.answer_text||'',
-            'Correct 3':answers[2]?.is_correct?'TRUE':'FALSE',
-            'Réponse 4':answers[3]?.answer_text||'',
-            'Correct 4':answers[3]?.is_correct?'TRUE':'FALSE',
-            'Feedback correct':q.feedback_correct||'',
-            'Feedback incorrect':q.feedback_incorrect||'',
-            'Image URL':q.image_url||'',
-            'Tags':(q.tags||[]).join(', ')
-          };
+          return{'Question':q.question_text||'','Type':q.question_type||'single','Catégorie':getCategoryName(q.category_id),'Thème':getThemeName(q.theme_id),'Sous-thème':getSubThemeName(q.sub_theme_id),'Difficulté':q.difficulty||'medium','Points':q.points||1,'Temps (sec)':q.time_limit||0,
+          'Réponse 1':answers[0]?.answer_text||'','Correct 1':answers[0]?.is_correct?'TRUE':'FALSE',
+          'Réponse 2':answers[1]?.answer_text||'','Correct 2':answers[1]?.is_correct?'TRUE':'FALSE',
+          'Réponse 3':answers[2]?.answer_text||'','Correct 3':answers[2]?.is_correct?'TRUE':'FALSE',
+          'Réponse 4':answers[3]?.answer_text||'','Correct 4':answers[3]?.is_correct?'TRUE':'FALSE',
+          'Feedback correct':q.feedback_correct||'','Feedback incorrect':q.feedback_incorrect||'',
+          'Médias':JSON.stringify(q.media||[]),'Tags':(q.tags||[]).join(', ')};
         });
         const ws=XLSX.utils.json_to_sheet(data);
         const wb=XLSX.utils.book_new();
@@ -5441,99 +5562,52 @@
       };
       
       const handleImportFile=async(e)=>{
-        const file=e.target.files[0];
-        if(!file)return;
+        const file=e.target.files[0];if(!file)return;
         const data=await file.arrayBuffer();
         const wb=XLSX.read(data);
-        const ws=wb.Sheets[wb.SheetNames[0]];
-        const json=XLSX.utils.sheet_to_json(ws);
-        setImportData(json);
-        setImportModal(true);
-        setImportResult(null);
+        const json=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+        setImportData(json);setImportModal(true);setImportResult(null);
       };
       
       const processImport=async()=>{
         setImportLoading(true);
         let success=0,errors=0;
-        
         for(const row of importData){
           try{
             const questionText=row['Question']||row['question_text'];
             if(!questionText)continue;
-            
-            // Trouver/créer catégorie
-            const catName=row['Catégorie']||row['category']||'';
-            const themeName=row['Thème']||row['theme']||'';
-            const subThemeName=row['Sous-thème']||row['sub_theme']||'';
+            const catName=row['Catégorie']||'';const themeName=row['Thème']||'';const subThemeName=row['Sous-thème']||'';
             let cat=categories.find(c=>c.name.toLowerCase()===catName.toLowerCase());
             let theme=cat?themes.find(t=>t.category_id===cat.id&&t.name.toLowerCase()===themeName.toLowerCase()):null;
             let subTheme=theme?subThemes.find(st=>st.theme_id===theme.id&&st.name.toLowerCase()===subThemeName.toLowerCase()):null;
-            
-            // Créer catégorie si nécessaire
-            if(catName&&!cat){
-              const{data}=await supabase.from('content_categories').insert({name:catName,position:categories.length}).select().single();
-              if(data){cat=data;categories.push(data);}
-            }
-            if(themeName&&cat&&!theme){
-              const{data}=await supabase.from('content_themes').insert({name:themeName,category_id:cat.id,position:themes.length}).select().single();
-              if(data){theme=data;themes.push(data);}
-            }
-            if(subThemeName&&theme&&!subTheme){
-              const{data}=await supabase.from('content_sub_themes').insert({name:subThemeName,theme_id:theme.id,position:subThemes.length}).select().single();
-              if(data){subTheme=data;subThemes.push(data);}
-            }
-            
-            // Tags
-            const tagsStr=row['Tags']||row['tags']||'';
-            const tags=tagsStr?tagsStr.split(',').map(t=>t.trim()).filter(Boolean):[];
-            
-            // Créer la question
-            const{data:q}=await supabase.from('question_bank').insert({
-              question_text:questionText,
-              question_type:row['Type']||row['question_type']||'single',
-              category_id:cat?.id||null,
-              theme_id:theme?.id||null,
-              sub_theme_id:subTheme?.id||null,
-              difficulty:row['Difficulté']||row['difficulty']||'medium',
-              points:parseInt(row['Points'])||1,
-              time_limit:parseInt(row['Temps (sec)'])||0,
-              feedback_correct:row['Feedback correct']||null,
-              feedback_incorrect:row['Feedback incorrect']||null,
-              image_url:row['Image URL']||null,
-              tags
-            }).select().single();
-            
+            if(catName&&!cat){const{data}=await supabase.from('content_categories').insert({name:catName,position:categories.length}).select().single();if(data){cat=data;categories.push(data);}}
+            if(themeName&&cat&&!theme){const{data}=await supabase.from('content_themes').insert({name:themeName,category_id:cat.id,position:themes.length}).select().single();if(data){theme=data;themes.push(data);}}
+            if(subThemeName&&theme&&!subTheme){const{data}=await supabase.from('content_sub_themes').insert({name:subThemeName,theme_id:theme.id,position:subThemes.length}).select().single();if(data){subTheme=data;subThemes.push(data);}}
+            const tagsStr=row['Tags']||'';const tags=tagsStr?tagsStr.split(',').map(t=>t.trim()).filter(Boolean):[];
+            const{data:q}=await supabase.from('question_bank').insert({question_text:questionText,question_type:row['Type']||'single',category_id:cat?.id||null,theme_id:theme?.id||null,sub_theme_id:subTheme?.id||null,difficulty:row['Difficulté']||'medium',points:parseInt(row['Points'])||1,time_limit:parseInt(row['Temps (sec)'])||0,feedback_correct:row['Feedback correct']||null,feedback_incorrect:row['Feedback incorrect']||null,media:row['Image URL']?[{type:'image',url:row['Image URL'],name:'image'}]:[],tags}).select().single();
             if(q){
-              // Ajouter les réponses
               const answers=[];
-              for(let i=1;i<=4;i++){
-                const text=row[`Réponse ${i}`];
-                if(text){
-                  answers.push({
-                    question_id:q.id,
-                    answer_text:text,
-                    is_correct:String(row[`Correct ${i}`]).toUpperCase()==='TRUE',
-                    sort_order:i-1
-                  });
-                }
-              }
+              for(let i=1;i<=4;i++){const text=row[`Réponse ${i}`];if(text)answers.push({question_id:q.id,answer_text:text,is_correct:String(row[`Correct ${i}`]).toUpperCase()==='TRUE',sort_order:i-1});}
               if(answers.length)await supabase.from('question_bank_answers').insert(answers);
               success++;
             }
           }catch(err){console.error(err);errors++;}
         }
-        
-        setImportResult({success,errors});
-        setImportLoading(false);
-        load();
+        setImportResult({success,errors});setImportLoading(false);load();
       };
       
+      // ===== SAVE =====
       const handleSave=async()=>{
         if(!form.question_text)return alert('Texte de la question requis');
+        
+        // Validations par type
         if(['single','multiple','true_false'].includes(form.question_type)){
           if(form.answers.filter(a=>a.text.trim()).length<2)return alert('Au moins 2 réponses requises');
           if(!form.answers.some(a=>a.is_correct))return alert('Au moins une réponse correcte requise');
         }
+        if(form.question_type==='fill_blank'&&form.blank_answers.filter(a=>a.trim()).length===0)return alert('Au moins une réponse attendue pour les trous');
+        if(form.question_type==='ordering'&&form.order_items.filter(a=>a.trim()).length<2)return alert('Au moins 2 éléments à ordonner');
+        if(form.question_type==='matching'&&form.match_pairs.filter(p=>p.left.trim()&&p.right.trim()).length<2)return alert('Au moins 2 paires à associer');
         
         setSaving(true);
         const payload={
@@ -5547,8 +5621,19 @@
           time_limit:form.time_limit||0,
           feedback_correct:form.feedback_correct||null,
           feedback_incorrect:form.feedback_incorrect||null,
-          image_url:form.image_url||null,
           explanation:form.explanation||null,
+          // Stocker médias, réponses spécifiques dans un JSON
+          media:form.media||[],
+          correction_media:form.correction_media||[],
+          // Données spécifiques au type
+          type_data:JSON.stringify({
+            blank_answers:form.blank_answers,
+            order_items:form.order_items,
+            match_pairs:form.match_pairs,
+            accepted_answers:form.accepted_answers,
+            word_limit:form.word_limit,
+            rubric:form.rubric
+          }),
           tags:form.tags||[]
         };
         
@@ -5558,22 +5643,18 @@
           await supabase.from('question_bank_answers').delete().eq('question_id',editing.id);
         }else{
           const{data}=await supabase.from('question_bank').insert(payload).select().single();
-          questionId=data.id;
+          questionId=data?.id;
         }
         
-        if(['single','multiple','true_false'].includes(form.question_type)){
-          const answers=form.answers.filter(a=>a.text.trim()).map((a,i)=>({question_id:questionId,answer_text:a.text,is_correct:a.is_correct,sort_order:i}));
+        if(questionId&&['single','multiple','true_false'].includes(form.question_type)){
+          const answers=form.answers.filter(a=>a.text.trim()).map((a,i)=>({question_id:questionId,answer_text:a.text,is_correct:a.is_correct,sort_order:i,image_url:a.image_url||null}));
           await supabase.from('question_bank_answers').insert(answers);
         }
         
-        setModal(false);
-        setEditing(null);
-        resetForm();
-        setSaving(false);
-        load();
+        setModal(false);setEditing(null);
+        setForm({...defaultForm});
+        setSaving(false);load();
       };
-      
-      const resetForm=()=>setForm({question_text:'',question_type:'single',category_id:'',theme_id:'',sub_theme_id:'',difficulty:'medium',points:1,time_limit:0,feedback_correct:'',feedback_incorrect:'',image_url:'',explanation:'',tags:[],answers:[{text:'',is_correct:true},{text:'',is_correct:false}]});
       
       const handleDelete=async(id)=>{
         if(!confirm('Supprimer cette question ?'))return;
@@ -5582,6 +5663,7 @@
       };
       
       const openEdit=(q)=>{
+        const typeData=q.type_data?JSON.parse(q.type_data):{};
         setEditing(q);
         setForm({
           question_text:q.question_text||'',
@@ -5592,22 +5674,29 @@
           difficulty:q.difficulty||'medium',
           points:q.points||1,
           time_limit:q.time_limit||0,
+          media:q.media||[],
+          answers:(q.question_bank_answers||[]).length>0?(q.question_bank_answers||[]).map(a=>({text:a.answer_text,is_correct:a.is_correct,image_url:a.image_url||''})):[{text:'',is_correct:true,image_url:''},{text:'',is_correct:false,image_url:''}],
+          blank_answers:typeData.blank_answers||[''],
+          order_items:typeData.order_items||['',''],
+          match_pairs:typeData.match_pairs||[{left:'',right:''}],
+          accepted_answers:typeData.accepted_answers||[''],
+          word_limit:typeData.word_limit||0,
+          rubric:typeData.rubric||'',
           feedback_correct:q.feedback_correct||'',
           feedback_incorrect:q.feedback_incorrect||'',
-          image_url:q.image_url||'',
           explanation:q.explanation||'',
-          tags:q.tags||[],
-          answers:(q.question_bank_answers||[]).length>0?(q.question_bank_answers||[]).map(a=>({text:a.answer_text,is_correct:a.is_correct})):[{text:'',is_correct:true},{text:'',is_correct:false}]
+          correction_media:q.correction_media||[],
+          tags:q.tags||[]
         });
         setModal(true);
       };
       
-      const addAnswer=()=>setForm({...form,answers:[...form.answers,{text:'',is_correct:false}]});
+      const addAnswer=()=>setForm({...form,answers:[...form.answers,{text:'',is_correct:false,image_url:''}]});
       const removeAnswer=(idx)=>setForm({...form,answers:form.answers.filter((_,i)=>i!==idx)});
       const updateAnswer=(idx,field,value)=>{
         const answers=[...form.answers];
         answers[idx]={...answers[idx],[field]:value};
-        if(field==='is_correct'&&value&&form.question_type==='single'){
+        if(field==='is_correct'&&value&&(form.question_type==='single'||form.question_type==='true_false')){
           answers.forEach((a,i)=>{if(i!==idx)a.is_correct=false;});
         }
         setForm({...form,answers});
@@ -5625,7 +5714,7 @@
       
       return<div>
         <div className="flex flex-wrap items-center gap-3 mb-6">
-          <Button icon="Plus" onClick={()=>{setEditing(null);resetForm();setModal(true);}}>Ajouter une question</Button>
+          <Button icon="Plus" onClick={()=>{setEditing(null);setForm({...defaultForm});setModal(true);}}>Ajouter une question</Button>
           <Button variant="secondary" icon="Download" onClick={downloadTemplate}>Template</Button>
           <label className="cursor-pointer">
             <span className="inline-flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium"><Icon name="Upload" size={16}/>Importer</span>
@@ -5647,16 +5736,25 @@
           <Card className="p-4 text-center"><p className="text-2xl font-bold text-green-400">{questions.filter(q=>q.difficulty==='easy').length}</p><p className="text-xs text-gray-400">Faciles</p></Card>
           <Card className="p-4 text-center"><p className="text-2xl font-bold text-yellow-400">{questions.filter(q=>q.difficulty==='medium').length}</p><p className="text-xs text-gray-400">Moyennes</p></Card>
           <Card className="p-4 text-center"><p className="text-2xl font-bold text-red-400">{questions.filter(q=>q.difficulty==='hard').length}</p><p className="text-xs text-gray-400">Difficiles</p></Card>
-          <Card className="p-4 text-center"><p className="text-2xl font-bold text-purple-400">{questions.filter(q=>q.image_url).length}</p><p className="text-xs text-gray-400">Avec média</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-purple-400">{questions.filter(q=>(q.media||[]).length>0).length}</p><p className="text-xs text-gray-400">Avec média</p></Card>
         </div>
         
+        {/* Liste des questions */}
         {filtered.length===0?<Empty icon="Database" title="Aucune question" desc="Ajoutez votre première question à la banque"/>:(
           <div className="space-y-3">
-            {filtered.slice(0,50).map(q=>(
+            {filtered.slice(0,50).map(q=>{
+              const hasMedia=(q.media||[]).length>0;
+              return(
               <Card key={q.id} className="p-4">
                 <div className="flex items-start gap-4">
-                  {q.image_url?(
-                    <img src={q.image_url} alt="" className="w-16 h-16 rounded-lg object-cover cursor-pointer hover:opacity-80" onClick={()=>setPreviewImage(q.image_url)}/>
+                  {/* Média preview dans la liste */}
+                  {hasMedia?(
+                    <div className="flex gap-1 shrink-0">
+                      {(q.media||[]).slice(0,2).map((m,i)=>(
+                        <div key={i}>{renderMediaPreview(m,'sm')}</div>
+                      ))}
+                      {(q.media||[]).length>2&&<div className="w-16 h-16 bg-gray-800 rounded-lg flex items-center justify-center text-xs text-gray-400">+{q.media.length-2}</div>}
+                    </div>
                   ):(
                     <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${q.difficulty==='easy'?'bg-green-500/20 text-green-400':q.difficulty==='hard'?'bg-red-500/20 text-red-400':'bg-yellow-500/20 text-yellow-400'}`}>
                       <Icon name="HelpCircle" size={20}/>
@@ -5665,21 +5763,15 @@
                   <div className="flex-1 min-w-0">
                     <p className="font-medium">{q.question_text}</p>
                     <div className="flex flex-wrap gap-2 mt-2">
-                      <span className="px-2 py-0.5 bg-gray-700 rounded text-xs">{getTypeName(q.question_type)}</span>
+                      <span className={`px-2 py-0.5 bg-gray-700 rounded text-xs ${getTypeColor(q.question_type)}`}>{getTypeName(q.question_type)}</span>
                       {q.content_categories?.name&&<span className="px-2 py-0.5 rounded text-xs" style={{backgroundColor:(q.content_categories?.color||'#6366f1')+'30',color:q.content_categories?.color||'#6366f1'}}>{q.content_categories.name}</span>}
                       {q.content_themes?.name&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-xs">{q.content_themes.name}</span>}
                       {q.content_sub_themes?.name&&<span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-300 rounded text-xs">{q.content_sub_themes.name}</span>}
                       <span className="px-2 py-0.5 bg-gray-600 rounded text-xs">{q.points} pt{q.points>1?'s':''}</span>
-                      {q.time_limit>0&&<span className="px-2 py-0.5 bg-orange-500/20 text-orange-300 rounded text-xs">{q.time_limit}s</span>}
+                      {q.time_limit>0&&<span className="px-2 py-0.5 bg-orange-500/20 text-orange-300 rounded text-xs">⏱ {q.time_limit}s</span>}
+                      {hasMedia&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-xs">📎 {q.media.length} média{q.media.length>1?'s':''}</span>}
                     </div>
-                    {/* Tags */}
-                    {q.tags&&q.tags.length>0&&(
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {q.tags.slice(0,3).map(t=><span key={t} className="px-1.5 py-0.5 bg-gray-700 rounded text-xs text-gray-300">{t}</span>)}
-                        {q.tags.length>3&&<span className="text-xs text-gray-400">+{q.tags.length-3}</span>}
-                      </div>
-                    )}
-                    {/* Réponses */}
+                    {q.tags&&q.tags.length>0&&<div className="flex flex-wrap gap-1 mt-1">{q.tags.slice(0,4).map(t=><span key={t} className="px-1.5 py-0.5 bg-gray-700 rounded text-xs text-gray-300">{t}</span>)}{q.tags.length>4&&<span className="text-xs text-gray-400">+{q.tags.length-4}</span>}</div>}
                     {['single','multiple','true_false'].includes(q.question_type)&&(
                       <div className="flex flex-wrap gap-1 mt-2">
                         {(q.question_bank_answers||[]).map((a,i)=>(
@@ -5693,95 +5785,196 @@
                     <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(q.id)}/>
                   </div>
                 </div>
-              </Card>
-            ))}
-            {filtered.length>50&&<p className="text-center text-gray-400 py-4">Affichage limité à 50 questions. Utilisez les filtres pour affiner.</p>}
+              </Card>);
+            })}
+            {filtered.length>50&&<p className="text-center text-gray-400 py-4">Affichage limité à 50 questions. Utilisez les filtres.</p>}
           </div>
         )}
         
-        {/* Modal Question */}
-        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier la question':'Ajouter une question'} size="xl">
-          <div className="space-y-4">
+        {/* ===== MODAL QUESTION ===== */}
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier la question':'Créer une question'} size="xl">
+          <div className="space-y-4 max-h-[80vh] overflow-y-auto pr-2">
+            
+            {/* 1. ZONE MÉDIAS QUESTION (en haut) */}
+            <MediaZone target="question" mediaList={form.media} label="Médias de la question (images, vidéos, audio)" fileRef={mediaFileRef}/>
+            
+            {/* 2. TEXTE DE LA QUESTION */}
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-1">Question *</label>
-              <textarea value={form.question_text} onChange={e=>setForm({...form,question_text:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/>
+              <textarea value={form.question_text} onChange={e=>setForm({...form,question_text:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white" placeholder={form.question_type==='fill_blank'?'La capitale de la France est [___] et sa monnaie est l\'[___].':'Entrez votre question ici...'}/>
             </div>
             
-            {/* Image/Média */}
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">Image / Média (URL)</label>
-              <div className="flex gap-2">
-                <Input className="flex-1" value={form.image_url} onChange={e=>setForm({...form,image_url:e.target.value})} placeholder="https://..."/>
-                {form.image_url&&<img src={form.image_url} alt="" className="w-12 h-12 rounded object-cover"/>}
-              </div>
+            {/* 3. PARAMÈTRES */}
+            <div className="grid grid-cols-4 gap-3">
+              <Select label="Type *" value={form.question_type} onChange={e=>{
+                const newType=e.target.value;
+                let answers=form.answers;
+                if(newType==='true_false')answers=[{text:'Vrai',is_correct:true,image_url:''},{text:'Faux',is_correct:false,image_url:''}];
+                setForm({...form,question_type:newType,answers});
+              }} options={questionTypes.map(t=>({value:t.value,label:t.label}))}/>
+              <Select label="Difficulté" value={form.difficulty} onChange={e=>setForm({...form,difficulty:e.target.value})} options={[{value:'easy',label:'🟢 Facile'},{value:'medium',label:'🟡 Moyen'},{value:'hard',label:'🔴 Difficile'}]}/>
+              <Input label="Points" type="number" min="1" value={form.points} onChange={e=>setForm({...form,points:parseInt(e.target.value)||1})}/>
+              <Input label="Temps (sec)" type="number" min="0" value={form.time_limit} onChange={e=>setForm({...form,time_limit:parseInt(e.target.value)||0})} placeholder="0 = illimité"/>
             </div>
             
-            <div className="grid grid-cols-4 gap-4">
-              <Select label="Type *" value={form.question_type} onChange={e=>setForm({...form,question_type:e.target.value})} options={questionTypes.map(t=>({value:t.value,label:t.label}))}/>
-              <Select label="Difficulté" value={form.difficulty} onChange={e=>setForm({...form,difficulty:e.target.value})} options={[{value:'easy',label:'Facile'},{value:'medium',label:'Moyen'},{value:'hard',label:'Difficile'}]}/>
-              <Input label="Points" type="number" value={form.points} onChange={e=>setForm({...form,points:parseInt(e.target.value)||1})}/>
-              <Input label="Temps limite (sec)" type="number" value={form.time_limit} onChange={e=>setForm({...form,time_limit:parseInt(e.target.value)||0})} placeholder="0 = illimité"/>
+            {/* 4. TAXONOMIE */}
+            <div className="grid grid-cols-3 gap-3">
+              <Select label="Catégorie" value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'—'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+              <Select label="Thème" value={form.theme_id} onChange={e=>setForm({...form,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'—'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/>
+              <Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'—'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/>
             </div>
             
-            <div className="grid grid-cols-3 gap-4">
-              <Select label="Catégorie" value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
-              <Select label="Thème" value={form.theme_id} onChange={e=>setForm({...form,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/>
-              <Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/>
-            </div>
-            
-            {/* Tags */}
+            {/* TAGS */}
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-1">Tags</label>
-              <div className="min-h-[38px] p-2 bg-gray-700 border border-gray-600 rounded-lg flex flex-wrap gap-1">
+              <div className="min-h-[34px] p-2 bg-gray-700 border border-gray-600 rounded-lg flex flex-wrap gap-1">
                 {form.tags.map(t=><span key={t} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-600/30 text-indigo-300 rounded text-xs">{t}<button type="button" onClick={()=>setForm({...form,tags:form.tags.filter(x=>x!==t)})} className="hover:text-white">×</button></span>)}
-                {form.tags.length===0&&<span className="text-gray-500 text-sm">Aucun tag</span>}
+                {form.tags.length===0&&<span className="text-gray-500 text-xs">Aucun tag</span>}
               </div>
-              {predefinedTags.length>0&&<div className="flex flex-wrap gap-1 mt-2">{predefinedTags.filter(t=>!form.tags.includes(t.name)).slice(0,10).map(t=><button key={t.id} type="button" onClick={()=>setForm({...form,tags:[...form.tags,t.name]})} className="px-2 py-0.5 rounded text-xs border border-gray-600 hover:border-indigo-500" style={{color:t.color||'#6366f1'}}>+ {t.name}</button>)}</div>}
+              {predefinedTags.length>0&&<div className="flex flex-wrap gap-1 mt-1">{predefinedTags.filter(t=>!form.tags.includes(t.name)).slice(0,12).map(t=><button key={t.id} type="button" onClick={()=>setForm({...form,tags:[...form.tags,t.name]})} className="px-2 py-0.5 rounded text-xs border border-gray-600 hover:border-indigo-500" style={{color:t.color||'#6366f1'}}>+ {t.name}</button>)}</div>}
             </div>
             
-            {/* Réponses (pour les types choix) */}
-            {['single','multiple','true_false'].includes(form.question_type)&&(
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-medium text-gray-300">Réponses *</label>
-                  <Button variant="ghost" size="sm" icon="Plus" onClick={addAnswer}>Ajouter</Button>
-                </div>
-                <div className="space-y-2">
+            {/* 5. RÉPONSES PAR TYPE */}
+            <div className="border-t border-gray-700 pt-4">
+              <h4 className="text-sm font-semibold text-gray-200 mb-3 flex items-center gap-2">
+                <Icon name={questionTypes.find(t=>t.value===form.question_type)?.icon||'HelpCircle'} size={16}/>
+                {getTypeName(form.question_type)} — Réponses
+              </h4>
+              
+              {/* CHOIX UNIQUE / MULTIPLE / VRAI-FAUX */}
+              {['single','multiple','true_false'].includes(form.question_type)&&(
+                <div className="space-y-3">
                   {form.answers.map((a,i)=>(
-                    <div key={i} className="flex items-center gap-2">
-                      <input type={form.question_type==='single'||form.question_type==='true_false'?'radio':'checkbox'} checked={a.is_correct} onChange={e=>updateAnswer(i,'is_correct',e.target.checked)} className="w-4 h-4"/>
-                      <Input className="flex-1" value={a.text} onChange={e=>updateAnswer(i,'text',e.target.value)} placeholder={form.question_type==='true_false'?(i===0?'Vrai':'Faux'):`Réponse ${i+1}`}/>
-                      {form.answers.length>2&&form.question_type!=='true_false'&&<button onClick={()=>removeAnswer(i)} className="p-2 hover:bg-red-500/20 rounded text-red-400"><Icon name="X" size={16}/></button>}
+                    <div key={i} className="flex items-start gap-2 bg-gray-800/50 rounded-lg p-3">
+                      <input type={form.question_type==='multiple'?'checkbox':'radio'} checked={a.is_correct} onChange={e=>updateAnswer(i,'is_correct',e.target.checked)} className="w-4 h-4 mt-2.5"/>
+                      <div className="flex-1 space-y-2">
+                        <Input value={a.text} onChange={e=>updateAnswer(i,'text',e.target.value)} placeholder={form.question_type==='true_false'?(i===0?'Vrai':'Faux'):`Réponse ${i+1}`}/>
+                        {/* Image de la réponse */}
+                        <div className="flex items-center gap-2">
+                          {a.image_url&&<img src={a.image_url} alt="" className="w-10 h-10 rounded object-cover"/>}
+                          <Input className="flex-1" value={a.image_url||''} onChange={e=>updateAnswer(i,'image_url',e.target.value)} placeholder="URL image (optionnel)" icon="Image"/>
+                          <input ref={i===answerImageIdx?answerImageRef:null} type="file" accept="image/*" className="hidden" onChange={e=>{if(e.target.files[0])uploadAnswerImage(e.target.files[0],i);}}/>
+                          <button type="button" onClick={()=>{setAnswerImageIdx(i);setTimeout(()=>{const inp=document.querySelector(`input[type="file"][data-answer="${i}"]`);if(inp)inp.click();else{const el=document.createElement('input');el.type='file';el.accept='image/*';el.onchange=ev=>{if(ev.target.files[0])uploadAnswerImage(ev.target.files[0],i);};el.click();}},0);}} className="p-2 hover:bg-gray-600 rounded"><Icon name="Upload" size={14} className="text-gray-400"/></button>
+                        </div>
+                      </div>
+                      {form.answers.length>2&&form.question_type!=='true_false'&&<button onClick={()=>removeAnswer(i)} className="p-2 hover:bg-red-500/20 rounded text-red-400 mt-1"><Icon name="X" size={16}/></button>}
                     </div>
                   ))}
+                  {form.question_type!=='true_false'&&<Button variant="ghost" size="sm" icon="Plus" onClick={addAnswer}>Ajouter une réponse</Button>}
                 </div>
-              </div>
-            )}
-            
-            {/* Instructions pour autres types */}
-            {['fill_blank','ordering','matching','short_answer','essay'].includes(form.question_type)&&(
-              <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
-                <p className="text-sm text-blue-400">
-                  {form.question_type==='fill_blank'&&'💡 Utilisez [___] dans le texte pour indiquer les trous. Ex: "La capitale de la France est [___]"'}
-                  {form.question_type==='ordering'&&'💡 Les réponses seront présentées dans un ordre aléatoire. L\'apprenant devra les remettre dans l\'ordre.'}
-                  {form.question_type==='matching'&&'💡 Définissez les paires à associer. Format: "Élément gauche | Élément droit"'}
-                  {form.question_type==='short_answer'&&'💡 L\'apprenant devra saisir une réponse courte (texte libre).'}
-                  {form.question_type==='essay'&&'💡 L\'apprenant devra rédiger une réponse longue. Correction manuelle requise.'}
-                </p>
-              </div>
-            )}
-            
-            <div className="grid grid-cols-2 gap-4">
-              <Input label="Feedback correct" value={form.feedback_correct} onChange={e=>setForm({...form,feedback_correct:e.target.value})} placeholder="Bravo !"/>
-              <Input label="Feedback incorrect" value={form.feedback_incorrect} onChange={e=>setForm({...form,feedback_incorrect:e.target.value})} placeholder="Essayez encore..."/>
+              )}
+              
+              {/* TEXTE À TROUS */}
+              {form.question_type==='fill_blank'&&(
+                <div className="space-y-3">
+                  <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
+                    <p className="text-xs text-blue-400">💡 Utilisez <code className="bg-blue-500/20 px-1 rounded">[___]</code> dans la question pour marquer les trous. Indiquez ci-dessous les réponses attendues dans l'ordre.</p>
+                  </div>
+                  <label className="text-sm text-gray-300">Réponses attendues (dans l'ordre des trous) :</label>
+                  {form.blank_answers.map((a,i)=>(
+                    <div key={i} className="flex gap-2 items-center">
+                      <span className="text-xs text-gray-500 w-8">#{i+1}</span>
+                      <Input className="flex-1" value={a} onChange={e=>{const arr=[...form.blank_answers];arr[i]=e.target.value;setForm({...form,blank_answers:arr});}} placeholder={`Réponse trou ${i+1}`}/>
+                      {form.blank_answers.length>1&&<button onClick={()=>setForm({...form,blank_answers:form.blank_answers.filter((_,j)=>j!==i)})} className="p-2 hover:bg-red-500/20 rounded text-red-400"><Icon name="X" size={16}/></button>}
+                    </div>
+                  ))}
+                  <Button variant="ghost" size="sm" icon="Plus" onClick={()=>setForm({...form,blank_answers:[...form.blank_answers,'']})}>Ajouter un trou</Button>
+                </div>
+              )}
+              
+              {/* ORDONNANCEMENT */}
+              {form.question_type==='ordering'&&(
+                <div className="space-y-3">
+                  <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
+                    <p className="text-xs text-purple-400">💡 Saisissez les éléments dans l'ordre correct. Ils seront mélangés pour l'apprenant.</p>
+                  </div>
+                  {form.order_items.map((item,i)=>(
+                    <div key={i} className="flex gap-2 items-center">
+                      <span className="w-8 h-8 bg-purple-500/20 rounded flex items-center justify-center text-xs font-bold text-purple-400">{i+1}</span>
+                      <Input className="flex-1" value={item} onChange={e=>{const arr=[...form.order_items];arr[i]=e.target.value;setForm({...form,order_items:arr});}} placeholder={`Élément ${i+1}`}/>
+                      {form.order_items.length>2&&<button onClick={()=>setForm({...form,order_items:form.order_items.filter((_,j)=>j!==i)})} className="p-2 hover:bg-red-500/20 rounded text-red-400"><Icon name="X" size={16}/></button>}
+                    </div>
+                  ))}
+                  <Button variant="ghost" size="sm" icon="Plus" onClick={()=>setForm({...form,order_items:[...form.order_items,'']})}>Ajouter un élément</Button>
+                </div>
+              )}
+              
+              {/* APPARIEMENT */}
+              {form.question_type==='matching'&&(
+                <div className="space-y-3">
+                  <div className="bg-pink-500/10 border border-pink-500/30 rounded-lg p-3">
+                    <p className="text-xs text-pink-400">💡 Définissez les paires à associer. L'apprenant devra relier chaque élément de gauche à son correspondant à droite.</p>
+                  </div>
+                  {form.match_pairs.map((pair,i)=>(
+                    <div key={i} className="flex gap-2 items-center">
+                      <Input className="flex-1" value={pair.left} onChange={e=>{const arr=[...form.match_pairs];arr[i]={...arr[i],left:e.target.value};setForm({...form,match_pairs:arr});}} placeholder="Élément gauche"/>
+                      <Icon name="ArrowRight" size={16} className="text-gray-500 shrink-0"/>
+                      <Input className="flex-1" value={pair.right} onChange={e=>{const arr=[...form.match_pairs];arr[i]={...arr[i],right:e.target.value};setForm({...form,match_pairs:arr});}} placeholder="Élément droit"/>
+                      {form.match_pairs.length>1&&<button onClick={()=>setForm({...form,match_pairs:form.match_pairs.filter((_,j)=>j!==i)})} className="p-2 hover:bg-red-500/20 rounded text-red-400"><Icon name="X" size={16}/></button>}
+                    </div>
+                  ))}
+                  <Button variant="ghost" size="sm" icon="Plus" onClick={()=>setForm({...form,match_pairs:[...form.match_pairs,{left:'',right:''}]})}>Ajouter une paire</Button>
+                </div>
+              )}
+              
+              {/* RÉPONSE COURTE */}
+              {form.question_type==='short_answer'&&(
+                <div className="space-y-3">
+                  <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-3">
+                    <p className="text-xs text-cyan-400">💡 Indiquez les réponses acceptées. La vérification est insensible à la casse.</p>
+                  </div>
+                  <label className="text-sm text-gray-300">Réponses acceptées :</label>
+                  {form.accepted_answers.map((a,i)=>(
+                    <div key={i} className="flex gap-2 items-center">
+                      <Input className="flex-1" value={a} onChange={e=>{const arr=[...form.accepted_answers];arr[i]=e.target.value;setForm({...form,accepted_answers:arr});}} placeholder={`Réponse acceptée ${i+1}`}/>
+                      {form.accepted_answers.length>1&&<button onClick={()=>setForm({...form,accepted_answers:form.accepted_answers.filter((_,j)=>j!==i)})} className="p-2 hover:bg-red-500/20 rounded text-red-400"><Icon name="X" size={16}/></button>}
+                    </div>
+                  ))}
+                  <Button variant="ghost" size="sm" icon="Plus" onClick={()=>setForm({...form,accepted_answers:[...form.accepted_answers,'']})}>Ajouter une variante</Button>
+                </div>
+              )}
+              
+              {/* RÉDACTION */}
+              {form.question_type==='essay'&&(
+                <div className="space-y-3">
+                  <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
+                    <p className="text-xs text-orange-400">💡 Question ouverte à correction manuelle. Définissez un barème pour guider l'évaluation.</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Input label="Limite de mots (0 = illimité)" type="number" min="0" value={form.word_limit} onChange={e=>setForm({...form,word_limit:parseInt(e.target.value)||0})}/>
+                    <div/>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">Barème / Critères d'évaluation</label>
+                    <textarea value={form.rubric} onChange={e=>setForm({...form,rubric:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Ex: 3 pts pour l'argumentation, 2 pts pour les exemples, 1 pt pour la conclusion..."/>
+                  </div>
+                </div>
+              )}
             </div>
             
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">Explication (affichée après réponse)</label>
-              <textarea value={form.explanation} onChange={e=>setForm({...form,explanation:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Explication détaillée de la bonne réponse..."/>
+            {/* 6. FEEDBACK & CORRECTION */}
+            <div className="border-t border-gray-700 pt-4">
+              <h4 className="text-sm font-semibold text-gray-200 mb-3 flex items-center gap-2">
+                <Icon name="MessageCircle" size={16}/>
+                Feedback & Correction
+              </h4>
+              
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <Input label="Feedback correct" value={form.feedback_correct} onChange={e=>setForm({...form,feedback_correct:e.target.value})} placeholder="Bravo ! Bonne réponse." icon="Check"/>
+                <Input label="Feedback incorrect" value={form.feedback_incorrect} onChange={e=>setForm({...form,feedback_incorrect:e.target.value})} placeholder="Ce n'est pas la bonne réponse." icon="X"/>
+              </div>
+              
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-gray-300 mb-1">Explication détaillée (affichée après réponse)</label>
+                <textarea value={form.explanation} onChange={e=>setForm({...form,explanation:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Explication complète de la bonne réponse avec contexte, références, etc."/>
+              </div>
+              
+              {/* Zone médias correction */}
+              <MediaZone target="correction" mediaList={form.correction_media} label="Médias de la correction (images, vidéos, audio explicatifs)" fileRef={correctionMediaRef}/>
             </div>
             
-            <div className="flex justify-end gap-3">
+            {/* 7. BOUTONS */}
+            <div className="flex justify-end gap-3 border-t border-gray-700 pt-4">
               <Button variant="secondary" onClick={()=>{setModal(false);setEditing(null);}}>Annuler</Button>
               <Button onClick={handleSave} loading={saving}>Enregistrer</Button>
             </div>
@@ -5792,31 +5985,19 @@
         <Modal isOpen={importModal} onClose={()=>{setImportModal(false);setImportData([]);setImportResult(null);}} title="Importer des questions" size="lg">
           <div className="space-y-4">
             <div className="bg-gray-700/50 rounded-lg p-4">
-              <p className="text-sm text-gray-400 mb-2">Colonnes : Question*, Type, Catégorie, Thème, Sous-thème, Difficulté, Points, Temps, Réponse 1-4, Correct 1-4, Feedbacks, Image URL, Tags</p>
+              <p className="text-sm text-gray-400 mb-1">Colonnes : Question*, Type, Catégorie, Thème, Sous-thème, Difficulté, Points, Temps, Réponse 1-4, Correct 1-4, Feedbacks, Image URL, Tags</p>
               <p className="text-xs text-gray-500">💡 Les catégories/thèmes/sous-thèmes sont créés automatiquement.</p>
             </div>
-            
             {importData.length>0&&(
               <div className="border border-gray-700 rounded-lg overflow-hidden">
                 <div className="bg-gray-800 px-4 py-2 text-sm font-medium">{importData.length} question(s) détectée(s)</div>
                 <div className="max-h-60 overflow-y-auto">
-                  {importData.slice(0,10).map((row,i)=>(
-                    <div key={i} className="px-4 py-2 border-t border-gray-700 text-sm truncate">
-                      <span className="font-medium">{row['Question']||row['question_text']}</span>
-                    </div>
-                  ))}
+                  {importData.slice(0,10).map((row,i)=><div key={i} className="px-4 py-2 border-t border-gray-700 text-sm truncate"><span className="font-medium">{row['Question']||row['question_text']}</span></div>)}
                   {importData.length>10&&<div className="px-4 py-2 border-t border-gray-700 text-sm text-gray-400">... et {importData.length-10} autres</div>}
                 </div>
               </div>
             )}
-            
-            {importResult&&(
-              <div className={`p-4 rounded-lg ${importResult.errors>0?'bg-yellow-500/20':'bg-green-500/20'}`}>
-                <p className="font-medium">{importResult.success} question(s) importée(s)</p>
-                {importResult.errors>0&&<p className="text-sm text-yellow-400">{importResult.errors} erreur(s)</p>}
-              </div>
-            )}
-            
+            {importResult&&<div className={`p-4 rounded-lg ${importResult.errors>0?'bg-yellow-500/20':'bg-green-500/20'}`}><p className="font-medium">{importResult.success} importée(s)</p>{importResult.errors>0&&<p className="text-sm text-yellow-400">{importResult.errors} erreur(s)</p>}</div>}
             <div className="flex justify-end gap-3">
               <Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>
               {!importResult&&<Button onClick={processImport} loading={importLoading} disabled={importData.length===0}>Importer</Button>}
@@ -5824,9 +6005,21 @@
           </div>
         </Modal>
         
-        {/* Preview Image */}
-        <Modal isOpen={!!previewImage} onClose={()=>setPreviewImage(null)} title="Aperçu média" size="lg">
-          {previewImage&&<img src={previewImage} alt="" className="w-full max-h-[70vh] object-contain rounded-lg"/>}
+        {/* Preview Média */}
+        <Modal isOpen={!!previewMedia} onClose={()=>setPreviewMedia(null)} title={`Aperçu — ${previewMedia?.name||'Média'}`} size="lg">
+          {previewMedia&&(
+            <div className="flex items-center justify-center">
+              {previewMedia.type==='image'&&<img src={previewMedia.url} alt="" className="max-w-full max-h-[70vh] rounded-lg"/>}
+              {previewMedia.type==='video'&&(()=>{
+                const vm=previewMedia.url.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+                const yt=previewMedia.url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/);
+                if(vm)return<iframe src={`https://player.vimeo.com/video/${vm[1]}`} className="w-full h-[70vh] rounded-lg" allow="autoplay; fullscreen"/>;
+                if(yt)return<iframe src={`https://www.youtube.com/embed/${yt[1]}`} className="w-full h-[70vh] rounded-lg" allow="autoplay; fullscreen"/>;
+                return<video controls src={previewMedia.url} className="max-w-full max-h-[70vh] rounded-lg"/>;
+              })()}
+              {previewMedia.type==='audio'&&<audio controls src={previewMedia.url} className="w-full"/>}
+            </div>
+          )}
         </Modal>
       </div>;
     }
