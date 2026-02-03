@@ -11157,11 +11157,6 @@
         const startTime=progressData?.last_position_seconds||0;
         const vimeoId=currentVideo.videos?.vimeo_id;
         const vimeoHash=currentVideo.videos?.vimeo_hash;
-          videoId: currentVideo.id,
-          vimeoId,
-          vimeoHash: vimeoHash ? '***' : null,
-          startTime
-        });
         playerRef.current.innerHTML='';
         
         // Pour les vidéos privées avec hash, on doit utiliser l'URL d'embed
