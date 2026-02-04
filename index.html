@@ -7087,7 +7087,14 @@
       const[requestCartForm,setRequestCartForm]=useState({name:'',description:'',duration_months:12,max_learners:'',message:''});
       const[requestCartSaving,setRequestCartSaving]=useState(false);
       
-      const canRequestLicense=!isSuperAdmin&&center?.id&&(realRole==='center_admin'||effectiveRole==='center_admin');
+      const canRequestLicense=(()=>{
+        // Debug: aide au diagnostic en mode "Vue comme"
+        const result=!isSuperAdmin&&!!center?.id&&(realRole==='center_admin'||effectiveRole==='center_admin');
+        if(!result&&!isSuperAdmin){
+          console.log('[Catalogue] canRequestLicense=false debug:',{isSuperAdmin,centerId:center?.id,realRole,effectiveRole});
+        }
+        return result;
+      })();
       
       const load=useCallback(async()=>{
         const[{data:vids},{data:scorm},{data:quiz},{data:cours},{data:path}]=await Promise.all([
@@ -7275,6 +7282,11 @@
       if(loading)return<div className="flex items-center justify-center py-20"><Icon name="Loader2" size={32} className="animate-spin text-indigo-400"/></div>;
       
       return<div>
+        {/* DEBUG - à supprimer après diagnostic */}
+        {!isSuperAdmin&&<div className="p-2 mb-4 bg-red-900/50 border border-red-500 rounded text-xs font-mono">
+          DEBUG: isSuperAdmin={String(isSuperAdmin)} | center.id={center?.id||'NULL'} | realRole={realRole} | effectiveRole={effectiveRole} | canRequestLicense={String(canRequestLicense)}
+        </div>}
+        
         {/* GUIDE ADMIN CENTRE - Bandeau explicatif */}
         {canRequestLicense&&(
           <Card className="p-4 mb-6 bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-amber-500/10 border-indigo-500/30">
