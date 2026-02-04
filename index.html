@@ -5125,8 +5125,7 @@
             if(name.endsWith('imsmanifest.xml')){
               manifest=await zipEntry.async('string');
               // Extraire le titre du manifest
-              const titleMatch=manifest.match(/<!-- VERSION 6.6.14-fix3 -->
-  <title>([^<]+)<\/title>/i);
+              const titleMatch=manifest.match(/<title>([^<]+)<\/title>/i);
               if(titleMatch)detectedTitle=titleMatch[1];
             }
             
