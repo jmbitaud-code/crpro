@@ -9178,6 +9178,12 @@
       const extensionFileRef=useRef(null);
       const sortableRef=useRef(null);
       const sortableInstanceRef=useRef(null);
+      // Preview mode
+      const[previewCourse,setPreviewCourse]=useState(null);
+      const[previewItems,setPreviewItems]=useState([]);
+      const[previewCurrent,setPreviewCurrent]=useState(null);
+      const previewPlayerRef=useRef(null);
+      const previewVimeoRef=useRef(null);
       
       // Helpers taxonomie
       
@@ -9408,7 +9414,122 @@
       },[editContentModal,courseItems.length]);
 
       if(!can('manage_playlists')&&profile?.role!=='trainer')return<Empty icon="Lock" title="Accès refusé"/>;
+      
+      // Preview course viewer
+      const openPreview=async(course)=>{
+        setPreviewCourse(course);
+        const[{data:pvs},{data:ps}]=await Promise.all([
+          supabase.from('playlist_videos').select('*,videos(*)').eq('playlist_id',course.id).order('position'),
+          supabase.from('playlist_scorm').select('*,scorm_modules(*)').eq('playlist_id',course.id).order('position')
+        ]);
+        let pq=[];
+        try{const{data}=await supabase.from('playlist_quizzes').select('*,quizzes(*)').eq('playlist_id',course.id).order('position');pq=data||[];}catch(e){}
+        const items=[
+          ...(pvs||[]).map(pv=>({type:'video',id:pv.id,position:pv.position,data:pv.videos})),
+          ...(ps||[]).map(s=>({type:'scorm',id:s.id,position:s.position,data:s.scorm_modules})),
+          ...pq.map(q=>({type:'quiz',id:q.id,position:q.position,data:q.quizzes}))
+        ].sort((a,b)=>(a.position||0)-(b.position||0));
+        setPreviewItems(items);
+        setPreviewCurrent(items[0]||null);
+      };
+      const closePreview=()=>{
+        if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}
+        setPreviewCourse(null);setPreviewItems([]);setPreviewCurrent(null);
+      };
+      // Vimeo player for preview
+      useEffect(()=>{
+        if(!previewCurrent||previewCurrent.type!=='video')return;
+        if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}
+        if(!previewPlayerRef.current)return;
+        const vid=previewCurrent.data?.vimeo_id||previewCurrent.data?.vimeo_url?.match(/\/(\d+)/)?.[1];
+        if(!vid)return;
+        try{previewVimeoRef.current=new Vimeo.Player(previewPlayerRef.current,{id:vid,width:'100%',responsive:true,title:false,byline:false,portrait:false});}catch(e){}
+        return()=>{if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}};
+      },[previewCurrent?.id,previewCurrent?.type]);
+      
       if(loading)return<Loading/>;
+      
+      // ===== PREVIEW MODE =====
+      if(previewCourse){
+        const pIcon=t=>t==='video'?'Film':t==='scorm'?'Package':'HelpCircle';
+        const pColor=t=>t==='video'?'blue':t==='scorm'?'orange':'purple';
+        const pLabel=t=>t==='video'?'Vidéo':t==='scorm'?'SCORM':'Quiz';
+        return<div>
+          <div className="flex items-center gap-4 mb-6">
+            <Button variant="ghost" icon="ArrowLeft" onClick={closePreview}>Retour</Button>
+            <div className="flex-1">
+              <h1 className="text-xl font-bold">{previewCourse.title}</h1>
+              <p className="text-sm text-gray-400">{previewItems.length} élément{previewItems.length>1?'s':''}</p>
+            </div>
+            <span className="px-3 py-1 bg-cyan-500/20 text-cyan-400 rounded-lg text-xs font-medium">
+              <Icon name="Eye" size={14} className="inline mr-1"/>Prévisualisation
+            </span>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-4">
+              {!previewCurrent?(
+                <Card className="p-12 text-center"><Icon name="Layers" size={48} className="mx-auto text-gray-600 mb-4"/><p className="text-gray-400">Ce cours ne contient aucun élément</p></Card>
+              ):previewCurrent.type==='video'?(
+                <Card className="overflow-hidden">
+                  <div className="aspect-video bg-black relative"><div ref={previewPlayerRef} className="absolute inset-0"/></div>
+                  <div className="p-4">
+                    <div className="flex items-center gap-2 mb-1"><span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">Vidéo</span><h2 className="text-lg font-semibold">{previewCurrent.data?.title}</h2></div>
+                    {previewCurrent.data?.description&&<p className="text-gray-400 mt-2 text-sm">{previewCurrent.data.description}</p>}
+                    {previewCurrent.data?.duration&&<p className="text-xs text-gray-500 mt-2">Durée: {previewCurrent.data.duration}</p>}
+                  </div>
+                </Card>
+              ):previewCurrent.type==='scorm'?(
+                <Card className="overflow-hidden">
+                  <div className="p-6 text-center">
+                    <Icon name="Package" size={48} className="mx-auto text-orange-400 mb-4"/>
+                    <h2 className="text-lg font-semibold mb-2">{previewCurrent.data?.title}</h2>
+                    <p className="text-sm text-gray-400 mb-1">Module {previewCurrent.data?.module_type?.toUpperCase()}</p>
+                    {previewCurrent.data?.description&&<p className="text-sm text-gray-500 mb-4">{previewCurrent.data.description}</p>}
+                    {previewCurrent.data?.package_url?(
+                      <Button icon="ExternalLink" onClick={()=>{
+                        const url=previewCurrent.data.entry_point?previewCurrent.data.package_url.replace(/\/[^/]*$/,'/')+previewCurrent.data.entry_point:previewCurrent.data.package_url;
+                        window.open(url,'_blank','width=1024,height=768');
+                      }}>Lancer le module SCORM</Button>
+                    ):(<p className="text-gray-500 text-sm italic">URL du module non configurée</p>)}
+                  </div>
+                </Card>
+              ):previewCurrent.type==='quiz'?(
+                <Card className="p-6">
+                  <div className="text-center mb-4">
+                    <Icon name="HelpCircle" size={48} className="mx-auto text-purple-400 mb-4"/>
+                    <h2 className="text-lg font-semibold mb-2">{previewCurrent.data?.title}</h2>
+                    {previewCurrent.data?.description&&<p className="text-sm text-gray-400 mb-2">{previewCurrent.data.description}</p>}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 max-w-md mx-auto">
+                    <div className="p-3 bg-gray-700/50 rounded-lg text-center"><p className="text-2xl font-bold text-purple-400">{previewCurrent.data?.passing_score||70}%</p><p className="text-xs text-gray-500">Score requis</p></div>
+                    <div className="p-3 bg-gray-700/50 rounded-lg text-center"><p className="text-2xl font-bold text-purple-400">{previewCurrent.data?.max_attempts||'∞'}</p><p className="text-xs text-gray-500">Tentatives max</p></div>
+                  </div>
+                </Card>
+              ):null}
+            </div>
+            <div>
+              <Card className="p-4">
+                <h3 className="font-semibold mb-3 flex items-center gap-2"><Icon name="List" size={18}/>Contenu du cours</h3>
+                <div className="space-y-1 max-h-[60vh] overflow-y-auto">
+                  {previewItems.map((item,i)=>{
+                    const isActive=previewCurrent?.id===item.id;
+                    return<button key={item.id} onClick={()=>setPreviewCurrent(item)} className={`w-full flex items-center gap-3 p-3 rounded-lg text-left transition ${isActive?'bg-indigo-600':'hover:bg-gray-700'}`}>
+                      <span className="w-6 h-6 bg-gray-600 rounded-full flex items-center justify-center text-xs font-bold shrink-0">{i+1}</span>
+                      <Icon name={pIcon(item.type)} size={16} className={`text-${pColor(item.type)}-400 shrink-0`}/>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{item.data?.title||'Sans titre'}</p>
+                        <p className={`text-xs ${isActive?'text-indigo-200':'text-gray-500'}`}>{pLabel(item.type)}{item.data?.duration?` • ${item.data.duration}`:''}</p>
+                      </div>
+                    </button>;
+                  })}
+                  {previewItems.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucun contenu</p>}
+                </div>
+              </Card>
+              {previewCourse.description&&<Card className="p-4 mt-4"><h4 className="text-sm font-medium mb-2">Description</h4><p className="text-sm text-gray-400">{previewCourse.description}</p></Card>}
+            </div>
+          </div>
+        </div>;
+      }
       return<div>
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -9440,6 +9561,7 @@
           </div>
           {p.is_lms_content&&!isSuperAdmin&&<div className="mb-3"><span className={`text-xs px-2 py-1 rounded ${licensed?'bg-green-500/20 text-green-400':'bg-red-500/20 text-red-400'}`}>{licensed?'✓ Sous licence':(isLocked?'Consultation seule':'Non licencié')}</span>{isLocked&&licensed&&<span className="text-xs text-gray-500 ml-2">• Non modifiable</span>}</div>}
           <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" size="sm" icon="Eye" onClick={()=>openPreview(p)} title="Prévisualiser le cours">Prévisualiser</Button>
             {licensed&&(can('manage_playlists')||can('assign_content'))&&!isLocked&&<Button variant="ghost" size="sm" icon="Layers" onClick={()=>openEditContent(p)}>Contenu</Button>}
             {licensed&&isLocked&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>openEditContent(p)}>Voir contenu</Button>}
             {canModify&&<>
@@ -10656,7 +10778,7 @@
     }
 
     function LearningPathsPage({creationMode=false}){
-      const{center,isSuperAdmin,can,profile}=useAuth();
+      const{center,isSuperAdmin,can,profile,realRole}=useAuth();
       const{categories,themes,subThemes,getThemesForCategory,getSubThemesForTheme}=useTaxonomy();
       const{licensedIds,isLicensed}=useLicenseInfo();
       // En mode création, on ne montre que les contenus LMS
@@ -10673,6 +10795,14 @@
       const[filterSource,setFilterSource]=useState('all');
       const sortableRef=useRef(null);
       const sortableInstance=useRef(null);
+      // Preview
+      const[previewPath,setPreviewPath]=useState(null);
+      const[previewPathCourses,setPreviewPathCourses]=useState([]);
+      const[previewCourse,setPreviewCourse]=useState(null);
+      const[previewItems,setPreviewItems]=useState([]);
+      const[previewCurrent,setPreviewCurrent]=useState(null);
+      const previewPlayerRef=useRef(null);
+      const previewVimeoRef=useRef(null);
       
       const load=useCallback(async()=>{
         // Charger les parcours
@@ -10798,7 +10928,93 @@
       };
       
       if(!can('manage_playlists')&&!can('view_playlists'))return<Empty icon="Lock" title="Accès refusé"/>;
+      
+      // Path preview functions
+      const openPathPreview=async(path)=>{
+        setPreviewPath(path);
+        const{data}=await supabase.from('learning_path_courses').select('*,playlists(id,title,description,playlist_videos(count))').eq('path_id',path.id).order('position');
+        setPreviewPathCourses(data||[]);
+      };
+      const openCoursePreview=async(course)=>{
+        setPreviewCourse(course);
+        const[{data:pvs},{data:ps}]=await Promise.all([
+          supabase.from('playlist_videos').select('*,videos(*)').eq('playlist_id',course.id).order('position'),
+          supabase.from('playlist_scorm').select('*,scorm_modules(*)').eq('playlist_id',course.id).order('position')
+        ]);
+        let pq=[];try{const{data}=await supabase.from('playlist_quizzes').select('*,quizzes(*)').eq('playlist_id',course.id).order('position');pq=data||[];}catch(e){}
+        const items=[
+          ...(pvs||[]).map(pv=>({type:'video',id:pv.id,position:pv.position,data:pv.videos})),
+          ...(ps||[]).map(s=>({type:'scorm',id:s.id,position:s.position,data:s.scorm_modules})),
+          ...pq.map(q=>({type:'quiz',id:q.id,position:q.position,data:q.quizzes}))
+        ].sort((a,b)=>(a.position||0)-(b.position||0));
+        setPreviewItems(items);setPreviewCurrent(items[0]||null);
+      };
+      const closePathPreview=()=>{setPreviewPath(null);setPreviewPathCourses([]);};
+      const closeCoursePreview=()=>{
+        if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}
+        setPreviewCourse(null);setPreviewItems([]);setPreviewCurrent(null);
+      };
+      useEffect(()=>{
+        if(!previewCurrent||previewCurrent.type!=='video')return;
+        if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}
+        if(!previewPlayerRef.current)return;
+        const vid=previewCurrent.data?.vimeo_id||previewCurrent.data?.vimeo_url?.match(/\/(\d+)/)?.[1];
+        if(!vid)return;
+        try{previewVimeoRef.current=new Vimeo.Player(previewPlayerRef.current,{id:vid,width:'100%',responsive:true,title:false,byline:false,portrait:false});}catch(e){}
+        return()=>{if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}};
+      },[previewCurrent?.id,previewCurrent?.type]);
+      
       if(loading)return<Loading/>;
+      
+      // ===== COURSE PREVIEW FROM PATH =====
+      if(previewCourse){
+        const pI=t=>t==='video'?'Film':t==='scorm'?'Package':'HelpCircle';
+        const pC=t=>t==='video'?'blue':t==='scorm'?'orange':'purple';
+        const pL=t=>t==='video'?'Vidéo':t==='scorm'?'SCORM':'Quiz';
+        return<div>
+          <div className="flex items-center gap-4 mb-6">
+            <Button variant="ghost" icon="ArrowLeft" onClick={closeCoursePreview}>{previewPath?'Retour au parcours':'Retour'}</Button>
+            <div className="flex-1"><h1 className="text-xl font-bold">{previewCourse.title}</h1><p className="text-sm text-gray-400">{previewItems.length} élément{previewItems.length>1?'s':''}</p></div>
+            <span className="px-3 py-1 bg-cyan-500/20 text-cyan-400 rounded-lg text-xs font-medium"><Icon name="Eye" size={14} className="inline mr-1"/>Prévisualisation</span>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-4">
+              {!previewCurrent?<Card className="p-12 text-center"><Icon name="Layers" size={48} className="mx-auto text-gray-600 mb-4"/><p className="text-gray-400">Aucun élément</p></Card>
+              :previewCurrent.type==='video'?<Card className="overflow-hidden"><div className="aspect-video bg-black relative"><div ref={previewPlayerRef} className="absolute inset-0"/></div><div className="p-4"><div className="flex items-center gap-2 mb-1"><span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">Vidéo</span><h2 className="text-lg font-semibold">{previewCurrent.data?.title}</h2></div>{previewCurrent.data?.description&&<p className="text-gray-400 mt-2 text-sm">{previewCurrent.data.description}</p>}</div></Card>
+              :previewCurrent.type==='scorm'?<Card className="p-6 text-center"><Icon name="Package" size={48} className="mx-auto text-orange-400 mb-4"/><h2 className="text-lg font-semibold mb-2">{previewCurrent.data?.title}</h2>{previewCurrent.data?.package_url?<Button icon="ExternalLink" onClick={()=>{const url=previewCurrent.data.entry_point?previewCurrent.data.package_url.replace(/\/[^/]*$/,'/')+previewCurrent.data.entry_point:previewCurrent.data.package_url;window.open(url,'_blank','width=1024,height=768');}}>Lancer le module SCORM</Button>:<p className="text-gray-500 text-sm italic">URL non configurée</p>}</Card>
+              :previewCurrent.type==='quiz'?<Card className="p-6 text-center"><Icon name="HelpCircle" size={48} className="mx-auto text-purple-400 mb-4"/><h2 className="text-lg font-semibold mb-2">{previewCurrent.data?.title}</h2><div className="grid grid-cols-2 gap-4 max-w-md mx-auto"><div className="p-3 bg-gray-700/50 rounded-lg text-center"><p className="text-2xl font-bold text-purple-400">{previewCurrent.data?.passing_score||70}%</p><p className="text-xs text-gray-500">Score requis</p></div><div className="p-3 bg-gray-700/50 rounded-lg text-center"><p className="text-2xl font-bold text-purple-400">{previewCurrent.data?.max_attempts||'∞'}</p><p className="text-xs text-gray-500">Tentatives max</p></div></div></Card>
+              :null}
+            </div>
+            <Card className="p-4 h-fit"><h3 className="font-semibold mb-3 flex items-center gap-2"><Icon name="List" size={18}/>Contenu</h3><div className="space-y-1 max-h-[60vh] overflow-y-auto">{previewItems.map((item,i)=>{const isA=previewCurrent?.id===item.id;return<button key={item.id} onClick={()=>setPreviewCurrent(item)} className={`w-full flex items-center gap-3 p-3 rounded-lg text-left transition ${isA?'bg-indigo-600':'hover:bg-gray-700'}`}><span className="w-6 h-6 bg-gray-600 rounded-full flex items-center justify-center text-xs font-bold shrink-0">{i+1}</span><Icon name={pI(item.type)} size={16} className={`text-${pC(item.type)}-400 shrink-0`}/><div className="flex-1 min-w-0"><p className="text-sm font-medium truncate">{item.data?.title||'Sans titre'}</p><p className={`text-xs ${isA?'text-indigo-200':'text-gray-500'}`}>{pL(item.type)}</p></div></button>})}{previewItems.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucun contenu</p>}</div></Card>
+          </div>
+        </div>;
+      }
+      
+      // ===== PATH PREVIEW =====
+      if(previewPath){
+        return<div>
+          <div className="flex items-center gap-4 mb-6">
+            <Button variant="ghost" icon="ArrowLeft" onClick={closePathPreview}>Retour</Button>
+            <div className="flex-1"><h1 className="text-xl font-bold">{previewPath.title}</h1><p className="text-sm text-gray-400">{previewPathCourses.length} cours dans ce parcours</p></div>
+            <span className="px-3 py-1 bg-cyan-500/20 text-cyan-400 rounded-lg text-xs font-medium"><Icon name="Eye" size={14} className="inline mr-1"/>Prévisualisation</span>
+          </div>
+          {previewPath.description&&<Card className="p-4 mb-6"><p className="text-sm text-gray-400">{previewPath.description}</p></Card>}
+          <div className="space-y-3">
+            {previewPathCourses.map((pc,i)=>(
+              <Card key={pc.id} className="p-4 flex items-center gap-4">
+                <span className="w-10 h-10 bg-indigo-500/20 rounded-full flex items-center justify-center text-lg font-bold text-indigo-400 shrink-0">{i+1}</span>
+                <div className="flex-1">
+                  <h3 className="font-semibold">{pc.playlists?.title||'Cours supprimé'}</h3>
+                  {pc.playlists?.description&&<p className="text-sm text-gray-400 mt-1 line-clamp-1">{pc.playlists.description}</p>}
+                  <p className="text-xs text-gray-500 mt-1"><Icon name="Film" size={12} className="inline mr-1"/>{pc.playlists?.playlist_videos?.[0]?.count||0} éléments{pc.is_required&&<span className="ml-2 text-amber-400">• Obligatoire</span>}</p>
+                </div>
+                {pc.playlists&&<Button size="sm" icon="Play" onClick={()=>openCoursePreview(pc.playlists)}>Prévisualiser</Button>}
+              </Card>
+            ))}
+            {previewPathCourses.length===0&&<Empty icon="Route" title="Parcours vide"/>}
+          </div>
+        </div>;
+      }
       
       const filtered=filterBySource(paths);
       
@@ -10856,6 +11072,7 @@
                   {path.description&&<p className="text-sm text-gray-400 line-clamp-2 mb-3">{path.description}</p>}
                   
                   <div className="flex flex-wrap gap-2">
+                    <Button variant="ghost" size="sm" icon="Eye" onClick={()=>openPathPreview(path)}>Prévisualiser</Button>
                     {(licensed||isOwn)&&<Button variant="ghost" size="sm" icon="Layers" onClick={()=>openContentModal(path)}>{isLocked?'Voir':'Gérer'} cours</Button>}
                     {canModify&&<Button variant="ghost" size="sm" icon="Edit2" onClick={()=>openModal(path)}>Modifier</Button>}
                     {canModify&&<Button variant="ghost" size="sm" icon={path.is_published?'EyeOff':'Eye'} onClick={()=>togglePublish(path)}/>}
