@@ -8427,6 +8427,7 @@
       const[playlists,setPlaylists]=useState([]);
       const[videos,setVideos]=useState([]);
       const[scormModules,setScormModules]=useState([]);
+      const[quizzes,setQuizzes]=useState([]);
       const[trainers,setTrainers]=useState([]);
       const[trainerCourses,setTrainerCourses]=useState([]);
       const[loading,setLoading]=useState(true);
@@ -8435,9 +8436,8 @@
       const[form,setForm]=useState({title:'',description:'',category_id:'',theme_id:'',sub_theme_id:''});
       const[saving,setSaving]=useState(false);
       const[editContentModal,setEditContentModal]=useState(null);
-      const[playlistVideos,setPlaylistVideos]=useState([]);
-      const[playlistScorm,setPlaylistScorm]=useState([]);
-      const[contentTab,setContentTab]=useState('videos');
+      const[courseItems,setCourseItems]=useState([]); // unified list: {type,tableId,position,data}
+      const[addContentTab,setAddContentTab]=useState('videos');
       const[assignModal,setAssignModal]=useState(null);
       const[assignedTrainers,setAssignedTrainers]=useState([]);
       const[extensions,setExtensions]=useState([]);
@@ -8488,6 +8488,14 @@
           if(!error)setScormModules(scorm||[]);
         } catch(e) {}
         
+        // Charger les quiz
+        try {
+          let qq=supabase.from('quizzes').select('*');
+          if(!isSuperAdmin&&center?.id)qq=qq.or(`center_id.eq.${center.id},is_lms_content.eq.true`);
+          const{data:qz,error}=await qq;
+          if(!error)setQuizzes(qz||[]);
+        } catch(e) {}
+        
         // Charger les formateurs du centre (pour l'assignation)
         if(can('manage_playlists')){
           let qt=supabase.from('profiles').select('id,first_name,last_name,email').eq('role','trainer');
@@ -8532,12 +8540,23 @@
       const isCourseLicensed=(courseId)=>isLicensed('course',courseId);
       
       const openEditContent=async(playlist)=>{
+        // Load all 3 content types
         const{data:pvs}=await supabase.from('playlist_videos').select('*,videos(*)').eq('playlist_id',playlist.id).order('position');
-        setPlaylistVideos(pvs||[]);
-        
-        // Charger les modules SCORM du cours
         const{data:ps}=await supabase.from('playlist_scorm').select('*,scorm_modules(*)').eq('playlist_id',playlist.id).order('position');
-        setPlaylistScorm(ps||[]);
+        let pq=[];
+        try{
+          const{data}=await supabase.from('playlist_quizzes').select('*,quizzes(*)').eq('playlist_id',playlist.id).order('position');
+          pq=data||[];
+        }catch(e){}
+        
+        // Build unified list sorted by position
+        const items=[
+          ...(pvs||[]).map(pv=>({type:'video',tableId:pv.id,position:pv.position,contentId:pv.video_id,data:pv.videos,raw:pv})),
+          ...(ps||[]).map(s=>({type:'scorm',tableId:s.id,position:s.position,contentId:s.scorm_module_id,data:s.scorm_modules,raw:s})),
+          ...pq.map(q=>({type:'quiz',tableId:q.id,position:q.position,contentId:q.quiz_id,data:q.quizzes,raw:q}))
+        ].sort((a,b)=>(a.position||0)-(b.position||0));
+        
+        setCourseItems(items);
         
         // Charger les extensions du centre pour ce cours
         if(center?.id&&playlist.is_lms_content){
@@ -8550,7 +8569,7 @@
         }
         
         setEditContentModal(playlist);
-        setContentTab('videos');
+        setAddContentTab('videos');
       };
       
       // Gestion des extensions (documents ajoutés par le centre)
@@ -8591,24 +8610,36 @@
         setExtensions(extensions.filter(e=>e.id!==extId));
       };
       
-      const addVideoToPlaylist=async(videoId)=>{const pos=playlistVideos.length;const{data}=await supabase.from('playlist_videos').insert({playlist_id:editContentModal.id,video_id:videoId,position:pos}).select('*,videos(*)').single();if(data)setPlaylistVideos([...playlistVideos,data]);};
-      const removeVideoFromPlaylist=async(pvId)=>{await supabase.from('playlist_videos').delete().eq('id',pvId);setPlaylistVideos(playlistVideos.filter(pv=>pv.id!==pvId));};
-      
-      const addScormToPlaylist=async(scormId)=>{
-        const pos=playlistScorm.length;
-        const{data}=await supabase.from('playlist_scorm').insert({playlist_id:editContentModal.id,scorm_module_id:scormId,position:pos}).select('*,scorm_modules(*)').single();
-        if(data)setPlaylistScorm([...playlistScorm,data]);
+      // Unified add/remove content
+      const addContentItem=async(type,contentId)=>{
+        const pos=courseItems.length;
+        let newItem=null;
+        if(type==='video'){
+          const{data}=await supabase.from('playlist_videos').insert({playlist_id:editContentModal.id,video_id:contentId,position:pos}).select('*,videos(*)').single();
+          if(data)newItem={type:'video',tableId:data.id,position:pos,contentId:data.video_id,data:data.videos,raw:data};
+        }else if(type==='scorm'){
+          const{data}=await supabase.from('playlist_scorm').insert({playlist_id:editContentModal.id,scorm_module_id:contentId,position:pos}).select('*,scorm_modules(*)').single();
+          if(data)newItem={type:'scorm',tableId:data.id,position:pos,contentId:data.scorm_module_id,data:data.scorm_modules,raw:data};
+        }else if(type==='quiz'){
+          try{
+            const{data}=await supabase.from('playlist_quizzes').insert({playlist_id:editContentModal.id,quiz_id:contentId,position:pos}).select('*,quizzes(*)').single();
+            if(data)newItem={type:'quiz',tableId:data.id,position:pos,contentId:data.quiz_id,data:data.quizzes,raw:data};
+          }catch(e){console.warn('playlist_quizzes insert error:',e);}
+        }
+        if(newItem)setCourseItems(prev=>[...prev,newItem]);
       };
-      const removeScormFromPlaylist=async(psId)=>{
-        await supabase.from('playlist_scorm').delete().eq('id',psId);
-        setPlaylistScorm(playlistScorm.filter(ps=>ps.id!==psId));
+      
+      const removeContentItem=async(item)=>{
+        const table=item.type==='video'?'playlist_videos':item.type==='scorm'?'playlist_scorm':'playlist_quizzes';
+        await supabase.from(table).delete().eq('id',item.tableId);
+        setCourseItems(prev=>prev.filter(i=>i.tableId!==item.tableId));
       };
       
       const togglePublish=async(playlist)=>{await supabase.from('playlists').update({is_published:!playlist.is_published}).eq('id',playlist.id);load();};
       
-      // Drag & Drop pour vidéos
+      // Drag & Drop for unified content list
       useEffect(()=>{
-        if(!editContentModal||!sortableRef.current||contentTab!=='videos')return;
+        if(!editContentModal||!sortableRef.current)return;
         if(sortableInstanceRef.current){
           try{sortableInstanceRef.current.destroy();}catch(e){}
           sortableInstanceRef.current=null;
@@ -8621,12 +8652,16 @@
           onEnd:async(evt)=>{
             const{oldIndex,newIndex}=evt;
             if(oldIndex===newIndex)return;
-            const newOrder=[...playlistVideos];
+            const newOrder=[...courseItems];
             const[moved]=newOrder.splice(oldIndex,1);
             newOrder.splice(newIndex,0,moved);
-            setPlaylistVideos(newOrder);
-            for(let i=0;i<newOrder.length;i++){
-              await supabase.from('playlist_videos').update({position:i}).eq('id',newOrder[i].id);
+            // Update positions
+            const updated=newOrder.map((item,i)=>({...item,position:i}));
+            setCourseItems(updated);
+            // Persist positions to respective tables
+            for(const item of updated){
+              const table=item.type==='video'?'playlist_videos':item.type==='scorm'?'playlist_scorm':'playlist_quizzes';
+              await supabase.from(table).update({position:item.position}).eq('id',item.tableId);
             }
           }
         });
@@ -8637,7 +8672,7 @@
             sortableInstanceRef.current=null;
           }
         };
-      },[editContentModal,playlistVideos.length,contentTab]);
+      },[editContentModal,courseItems.length]);
 
       if(!can('manage_playlists')&&profile?.role!=='trainer')return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
@@ -8660,7 +8695,7 @@
                 <h3 className="font-semibold">{p.title}</h3>
                 {isLocked&&<Icon name="Lock" size={14} className="text-red-400"/>}
               </div>
-              <p className="text-sm text-gray-400 mt-1">{p.playlist_videos?.[0]?.count||0} vidéos</p>
+              <p className="text-sm text-gray-400 mt-1">{p.playlist_videos?.[0]?.count||0} élément(s)</p>
               {can('manage_playlists')&&getAssignedTrainersCount(p.id)>0&&(
                 <p className="text-xs text-indigo-400 mt-1"><Icon name="Users" size={12} className="inline mr-1"/>{getAssignedTrainersCount(p.id)} formateur(s)</p>
               )}
@@ -8708,105 +8743,122 @@
         
         <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier le cours':'Créer un cours'} size="lg"><div className="space-y-4"><Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><div className="grid grid-cols-3 gap-4"><Select label="Catégorie" value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/><Select label="Thème" value={form.theme_id} onChange={e=>setForm({...form,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/><Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/></div><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving} disabled={!form.title}>Enregistrer</Button></div></div></Modal>
         <Modal isOpen={!!editContentModal} onClose={()=>setEditContentModal(null)} title={`Contenu: ${editContentModal?.title}${editContentModal?.is_lms_content?' 📦':''}`} size="xl">
+          {/* Unified content tab bar */}
           <Tabs tabs={[
-            {id:'videos',label:`Vidéos (${playlistVideos.length})`,icon:'Film'},
-            {id:'scorm',label:`SCORM (${playlistScorm.length})`,icon:'Package'},
+            {id:'content',label:`Contenu (${courseItems.length})`,icon:'Layers'},
             ...(editContentModal?.is_lms_content&&!isSuperAdmin?[{id:'extensions',label:`Mes documents (${extensions.length})`,icon:'FileText'}]:[])
-          ]} active={contentTab} onChange={setContentTab}/>
+          ]} active={addContentTab==='extensions'?'extensions':'content'} onChange={t=>setAddContentTab(t==='extensions'?'extensions':'videos')}/>
           
-          {editContentModal?.is_locked&&!isSuperAdmin&&(contentTab==='videos'||contentTab==='scorm')&&(
+          {editContentModal?.is_locked&&!isSuperAdmin&&addContentTab!=='extensions'&&(
             <Alert type="info" className="mb-4"><Icon name="Lock" size={14} className="inline mr-2"/>Ce cours LMS est verrouillé. Vous pouvez ajouter vos propres documents dans l'onglet "Mes documents".</Alert>
           )}
           
-          {contentTab==='videos'&&<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {addContentTab!=='extensions'&&<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* LEFT: Unified ordered content list */}
             <div>
-              <h4 className="font-medium mb-3">Dans le cours ({playlistVideos.length}) {!editContentModal?.is_locked&&realRole!=='trainer'&&<span className="text-gray-500 text-sm font-normal">- Glissez pour réorganiser</span>}</h4>
-              <div ref={sortableRef} className="space-y-2 max-h-96 overflow-y-auto">
-                {playlistVideos.map((pv,i)=><div key={pv.id} data-id={pv.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg">
-                  {!editContentModal?.is_locked&&realRole!=='trainer'&&<div className="drag-handle cursor-grab active:cursor-grabbing p-1 hover:bg-gray-600 rounded"><Icon name="GripVertical" size={16} className="text-gray-400"/></div>}
-                  <span className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">{i+1}</span>
-                  <div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{pv.videos?.title}</p></div>
-                  {(!editContentModal?.is_locked||isSuperAdmin)&&realRole!=='trainer'&&<button onClick={()=>removeVideoFromPlaylist(pv.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button>}
-                </div>)}
-                {playlistVideos.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucune vidéo</p>}
-              </div>
-            </div>
-            {(!editContentModal?.is_locked||isSuperAdmin)&&realRole!=='trainer'&&<div>
-              <h4 className="font-medium mb-3">Vidéos disponibles</h4>
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {videos.filter(v=>{
-                  // Exclure les vidéos déjà dans le cours
-                  if(playlistVideos.find(pv=>pv.video_id===v.id))return false;
-                  // Super Admin voit tout
-                  if(isSuperAdmin)return true;
-                  // Contenu LMS = toujours vérifier la licence (même si même center_id)
-                  if(v.is_lms_content){
-                    return isLicensed('video',v.id);
-                  }
-                  // Contenu non-LMS du centre = toujours visible
-                  return v.center_id===center?.id;
-                }).map(v=>{
-                  const isOwn=!v.is_lms_content&&v.center_id===center?.id;
-                  return<div key={v.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-700/50 hover:bg-gray-700 cursor-pointer" onClick={()=>addVideoToPlaylist(v.id)}>
-                    <Icon name="Plus" size={16} className="text-indigo-400"/>
+              <h4 className="font-medium mb-3 flex items-center gap-2">
+                Contenu du cours ({courseItems.length})
+                {!editContentModal?.is_locked&&realRole!=='trainer'&&<span className="text-gray-500 text-sm font-normal">— Glissez pour réorganiser</span>}
+              </h4>
+              <div ref={sortableRef} className="space-y-2 max-h-[28rem] overflow-y-auto">
+                {courseItems.map((item,i)=>{
+                  const icon=item.type==='video'?'Film':item.type==='scorm'?'Package':'HelpCircle';
+                  const color=item.type==='video'?'blue':item.type==='scorm'?'orange':'purple';
+                  const typeBadge=item.type==='video'?'Vidéo':item.type==='scorm'?'SCORM':'Quiz';
+                  return<div key={item.tableId} data-id={item.tableId} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg group">
+                    {!editContentModal?.is_locked&&realRole!=='trainer'&&<div className="drag-handle cursor-grab active:cursor-grabbing p-1 hover:bg-gray-600 rounded"><Icon name="GripVertical" size={16} className="text-gray-400"/></div>}
+                    <span className={`w-7 h-7 bg-${color}-500/20 rounded-full flex items-center justify-center text-xs`}>
+                      <Icon name={icon} size={14} className={`text-${color}-400`}/>
+                    </span>
+                    <span className="w-6 h-6 bg-gray-600 rounded-full flex items-center justify-center text-xs font-bold text-gray-300">{i+1}</span>
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate text-sm">{v.title}</p>
-                      {v.is_lms_content&&<span className="text-xs text-indigo-400">📦 LMS</span>}
+                      <p className="font-medium truncate text-sm">{item.data?.title||'Sans titre'}</p>
+                      <span className={`text-xs px-1.5 py-0.5 rounded bg-${color}-500/10 text-${color}-400`}>{typeBadge}</span>
                     </div>
+                    {(!editContentModal?.is_locked||isSuperAdmin)&&realRole!=='trainer'&&<button onClick={()=>removeContentItem(item)} className="p-1 hover:bg-red-600 rounded opacity-0 group-hover:opacity-100 transition-opacity"><Icon name="X" size={16}/></button>}
                   </div>;
                 })}
-                {videos.filter(v=>!playlistVideos.find(pv=>pv.video_id===v.id)&&(isSuperAdmin||(v.is_lms_content?isLicensed('video',v.id):v.center_id===center?.id))).length===0&&<p className="text-gray-500 text-sm text-center py-4">Toutes les vidéos ajoutées</p>}
-              </div>
-            </div>}
-            {realRole==='trainer'&&<div className="lg:col-span-2 text-center py-4"><p className="text-gray-500 text-sm"><Icon name="Lock" size={14} className="inline mr-1"/>Seul l'administrateur du centre peut modifier le contenu des cours.</p></div>}
-          </div>}
-          
-          {contentTab==='scorm'&&<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div>
-              <h4 className="font-medium mb-3">Modules SCORM du cours ({playlistScorm.length})</h4>
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {playlistScorm.map((ps,i)=><div key={ps.id} className="flex items-center gap-3 p-3 bg-gray-700 rounded-lg">
-                  <div className="w-8 h-8 bg-orange-500/20 rounded flex items-center justify-center"><Icon name="Package" size={16} className="text-orange-400"/></div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate text-sm">{ps.scorm_modules?.title}</p>
-                    <p className="text-xs text-gray-400">{ps.scorm_modules?.module_type}</p>
-                  </div>
-                  {(!editContentModal?.is_locked||isSuperAdmin)&&realRole!=='trainer'&&<button onClick={()=>removeScormFromPlaylist(ps.id)} className="p-1 hover:bg-red-600 rounded"><Icon name="X" size={16}/></button>}
-                </div>)}
-                {playlistScorm.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucun module SCORM</p>}
+                {courseItems.length===0&&<div className="text-center py-8 text-gray-500">
+                  <Icon name="Layers" size={32} className="mx-auto mb-2 opacity-50"/>
+                  <p className="text-sm">Aucun contenu</p>
+                  <p className="text-xs mt-1">Ajoutez des vidéos, modules SCORM ou quiz →</p>
+                </div>}
               </div>
             </div>
+            
+            {/* RIGHT: Add content panel */}
             {(!editContentModal?.is_locked||isSuperAdmin)&&realRole!=='trainer'&&<div>
-              <h4 className="font-medium mb-3">Modules disponibles</h4>
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {scormModules.filter(m=>{
-                  // Exclure les modules déjà dans le cours
-                  if(playlistScorm.find(ps=>ps.scorm_module_id===m.id))return false;
-                  // Super Admin voit tout
+              <h4 className="font-medium mb-3">Ajouter du contenu</h4>
+              {/* Type selector */}
+              <div className="flex gap-1 mb-3">
+                <button onClick={()=>setAddContentTab('videos')} className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1 ${addContentTab==='videos'?'bg-blue-500/20 text-blue-400 border border-blue-500/50':'bg-gray-700/50 text-gray-400 hover:bg-gray-700'}`}>
+                  <Icon name="Film" size={14}/>Vidéos
+                </button>
+                <button onClick={()=>setAddContentTab('scorm')} className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1 ${addContentTab==='scorm'?'bg-orange-500/20 text-orange-400 border border-orange-500/50':'bg-gray-700/50 text-gray-400 hover:bg-gray-700'}`}>
+                  <Icon name="Package" size={14}/>SCORM
+                </button>
+                <button onClick={()=>setAddContentTab('quiz')} className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1 ${addContentTab==='quiz'?'bg-purple-500/20 text-purple-400 border border-purple-500/50':'bg-gray-700/50 text-gray-400 hover:bg-gray-700'}`}>
+                  <Icon name="HelpCircle" size={14}/>Quiz
+                </button>
+              </div>
+              
+              <div className="space-y-2 max-h-[24rem] overflow-y-auto">
+                {/* Videos list */}
+                {addContentTab==='videos'&&videos.filter(v=>{
+                  if(courseItems.find(ci=>ci.type==='video'&&ci.contentId===v.id))return false;
                   if(isSuperAdmin)return true;
-                  // Contenu LMS = toujours vérifier la licence (même si même center_id)
-                  if(m.is_lms_content){
-                    return isLicensed('scorm',m.id);
-                  }
-                  // Contenu non-LMS du centre = toujours visible
+                  if(v.is_lms_content)return isLicensed('video',v.id);
+                  return v.center_id===center?.id;
+                }).map(v=>(
+                  <div key={v.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-700/50 hover:bg-gray-700 cursor-pointer" onClick={()=>addContentItem('video',v.id)}>
+                    <Icon name="Plus" size={16} className="text-blue-400"/>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate text-sm">{v.title}</p>
+                      <p className="text-xs text-gray-400">{v.duration||''}{v.is_lms_content?' • 📦 LMS':''}</p>
+                    </div>
+                  </div>
+                ))}
+                {addContentTab==='videos'&&videos.filter(v=>!courseItems.find(ci=>ci.type==='video'&&ci.contentId===v.id)&&(isSuperAdmin||(v.is_lms_content?isLicensed('video',v.id):v.center_id===center?.id))).length===0&&<p className="text-gray-500 text-sm text-center py-4">Toutes les vidéos ajoutées</p>}
+                
+                {/* SCORM list */}
+                {addContentTab==='scorm'&&scormModules.filter(m=>{
+                  if(courseItems.find(ci=>ci.type==='scorm'&&ci.contentId===m.id))return false;
+                  if(isSuperAdmin)return true;
+                  if(m.is_lms_content)return isLicensed('scorm',m.id);
                   return m.center_id===center?.id;
-                }).map(m=>{
-                  const isOwn=!m.is_lms_content&&m.center_id===center?.id;
-                  return<div key={m.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-700/50 hover:bg-gray-700 cursor-pointer" onClick={()=>addScormToPlaylist(m.id)}>
+                }).map(m=>(
+                  <div key={m.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-700/50 hover:bg-gray-700 cursor-pointer" onClick={()=>addContentItem('scorm',m.id)}>
                     <Icon name="Plus" size={16} className="text-orange-400"/>
                     <div className="flex-1 min-w-0">
                       <p className="font-medium truncate text-sm">{m.title}</p>
-                      <p className="text-xs text-gray-400">{m.module_type}{m.is_lms_content&&<span className="ml-2 text-indigo-400">📦 LMS</span>}</p>
+                      <p className="text-xs text-gray-400">{m.module_type}{m.is_lms_content?' • 📦 LMS':''}</p>
                     </div>
-                  </div>;
-                })}
-                {scormModules.filter(m=>!playlistScorm.find(ps=>ps.scorm_module_id===m.id)&&(isSuperAdmin||(m.is_lms_content?isLicensed('scorm',m.id):m.center_id===center?.id))).length===0&&<p className="text-gray-500 text-sm text-center py-4">{scormModules.length===0?'Aucun module SCORM disponible':'Tous les modules ajoutés'}</p>}
+                  </div>
+                ))}
+                {addContentTab==='scorm'&&scormModules.filter(m=>!courseItems.find(ci=>ci.type==='scorm'&&ci.contentId===m.id)&&(isSuperAdmin||(m.is_lms_content?isLicensed('scorm',m.id):m.center_id===center?.id))).length===0&&<p className="text-gray-500 text-sm text-center py-4">{scormModules.length===0?'Aucun module SCORM disponible':'Tous les modules ajoutés'}</p>}
+                
+                {/* Quiz list */}
+                {addContentTab==='quiz'&&quizzes.filter(q=>{
+                  if(courseItems.find(ci=>ci.type==='quiz'&&ci.contentId===q.id))return false;
+                  if(isSuperAdmin)return true;
+                  if(q.is_lms_content)return isLicensed('quiz',q.id);
+                  return q.center_id===center?.id;
+                }).map(q=>(
+                  <div key={q.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-700/50 hover:bg-gray-700 cursor-pointer" onClick={()=>addContentItem('quiz',q.id)}>
+                    <Icon name="Plus" size={16} className="text-purple-400"/>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate text-sm">{q.title}</p>
+                      <p className="text-xs text-gray-400">{q.passing_score}% requis{q.is_lms_content?' • 📦 LMS':''}</p>
+                    </div>
+                  </div>
+                ))}
+                {addContentTab==='quiz'&&quizzes.filter(q=>!courseItems.find(ci=>ci.type==='quiz'&&ci.contentId===q.id)&&(isSuperAdmin||(q.is_lms_content?isLicensed('quiz',q.id):q.center_id===center?.id))).length===0&&<p className="text-gray-500 text-sm text-center py-4">{quizzes.length===0?'Aucun quiz disponible':'Tous les quiz ajoutés'}</p>}
               </div>
             </div>}
-            {realRole==='trainer'&&<div className="lg:col-span-2 text-center py-4"><p className="text-gray-500 text-sm"><Icon name="Lock" size={14} className="inline mr-1"/>Seul l'administrateur du centre peut modifier le contenu des cours.</p></div>}
+            {realRole==='trainer'&&<div className="lg:col-span-1 text-center py-4"><p className="text-gray-500 text-sm"><Icon name="Lock" size={14} className="inline mr-1"/>Seul l'administrateur du centre peut modifier le contenu des cours.</p></div>}
           </div>}
           
-          {contentTab==='extensions'&&<div className="space-y-4">
+          {addContentTab==='extensions'&&<div className="space-y-4">
             {realRole==='trainer'&&editContentModal?.is_lms_content?(
               <div className="text-center py-8">
                 <Icon name="Lock" size={48} className="mx-auto text-gray-500 mb-4"/>
