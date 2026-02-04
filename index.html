@@ -1086,6 +1086,7 @@
       const{profile,signOut,center,can,isSuperAdmin,realIsSuperAdmin,viewAs,switchView,exitViewAs,effectiveRole,isLearner,isCenterAdmin,sessionError,checkSession}=useAuth();
       const[sidebarOpen,setSidebarOpen]=useState(false);
       const[page,setPage]=useState('my-courses');
+      window.__setPage=setPage; // expose for cross-component navigation
       const[notifications,setNotifications]=useState([]);
       const[showNotifs,setShowNotifs]=useState(false);
       const[showViewAs,setShowViewAs]=useState(false);
@@ -10317,6 +10318,58 @@
           {/* DEMANDES */}
           {activeTab==='requests'&&<Card>{requests.filter(r=>r.status==='pending').length===0?<Empty icon="Inbox" title="Aucune demande"/>:<div className="divide-y divide-gray-700">{requests.filter(r=>r.status==='pending').map(r=><div key={r.id} className="p-4 flex items-center gap-4"><div className="flex-1"><p className="font-medium">{r.centers?.name}</p><p className="text-sm text-gray-400">{r.content_packs?.name} • {r.requested_duration_months}m • {r.requested_max_learners||'∞'} apprenants</p><p className="text-xs text-gray-500 mt-1">Par {r.profiles?.first_name} {r.profiles?.last_name} le {new Date(r.created_at).toLocaleDateString()}</p></div><Button size="sm" variant="secondary" onClick={()=>processRequest(r,false)}>Refuser</Button><Button size="sm" onClick={()=>processRequest(r,true)}>Approuver</Button></div>)}</div>}</Card>}
         </>:<>
+          {/* GUIDE ADMIN CENTRE */}
+          {canRequestLicense&&licenses.length===0&&(
+            <Card className="p-6 mb-6 bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-amber-500/10 border-indigo-500/30">
+              <h3 className="font-semibold text-lg mb-3 flex items-center gap-2">
+                <Icon name="Sparkles" size={20} className="text-indigo-400"/>Comment obtenir des licences ?
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="flex items-start gap-3 p-3 bg-gray-800/50 rounded-lg">
+                  <div className="w-8 h-8 bg-indigo-500 rounded-full flex items-center justify-center shrink-0 text-sm font-bold">1</div>
+                  <div>
+                    <p className="font-medium text-sm">Parcourir le catalogue</p>
+                    <p className="text-xs text-gray-400 mt-1">Découvrez les contenus disponibles</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-3 bg-gray-800/50 rounded-lg">
+                  <div className="w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center shrink-0 text-sm font-bold">2</div>
+                  <div>
+                    <p className="font-medium text-sm">Ajouter au panier</p>
+                    <p className="text-xs text-gray-400 mt-1">Sélectionnez les contenus souhaités</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-3 bg-gray-800/50 rounded-lg">
+                  <div className="w-8 h-8 bg-amber-500 rounded-full flex items-center justify-center shrink-0 text-sm font-bold">3</div>
+                  <div>
+                    <p className="font-medium text-sm">Envoyer la demande</p>
+                    <p className="text-xs text-gray-400 mt-1">Le super admin valide votre licence</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-3 bg-gray-800/50 rounded-lg">
+                  <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center shrink-0 text-sm font-bold">4</div>
+                  <div>
+                    <p className="font-medium text-sm">Créer des sessions</p>
+                    <p className="text-xs text-gray-400 mt-1">Assignez les contenus à vos apprenants</p>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-3 mt-4">
+                <Button icon="Library" onClick={()=>window.__setPage('contenus')}>Parcourir le catalogue</Button>
+                <Button variant="secondary" icon="Send" onClick={()=>{setActiveTab('my-requests');setRequestModal(true);}}>Demander un pack</Button>
+              </div>
+            </Card>
+          )}
+          
+          {/* CTA rapide si des licences existent */}
+          {canRequestLicense&&licenses.length>0&&(
+            <div className="flex gap-3 mb-6">
+              <Button variant="secondary" icon="Library" onClick={()=>window.__setPage('contenus')}>Parcourir le catalogue</Button>
+              <Button variant="secondary" icon="Calendar" onClick={()=>window.__setPage('sessions')}>Gérer mes sessions</Button>
+              <Button variant="secondary" icon="Send" onClick={()=>{setActiveTab('my-requests');setRequestModal(true);}}>Nouvelle demande</Button>
+            </div>
+          )}
+          
           <Tabs tabs={[{id:'my-licenses',label:`Mes licences (${licenses.length})`,icon:'Key'},{id:'my-sessions',label:'Mes sessions',icon:'Calendar'},{id:'my-requests',label:`Demandes (${requests.length})`,icon:'Send'}]} active={activeTab} onChange={setActiveTab}/>
           
           {/* Mes licences */}
