@@ -3796,19 +3796,41 @@
         if(!licenseId){setLicensePack(null);return;}
         const lic=centerLicenses.find(l=>l.id===licenseId);
         if(!lic)return;
-        if(lic.content_packs?.pack_type==='full_catalog'||!lic.pack_id){
-          // Full catalog = all LMS content
+        
+        // Full catalog (any type)
+        if(lic.content_packs?.pack_type==='full_catalog'||(lic.license_type==='full_catalog')||(lic.license_type==='resource_volume'&&lic.full_catalog===true)){
           setLicensePack({type:'full_catalog',items:[]});
           return;
         }
-        const{data:items}=await supabase.from('content_pack_items').select('content_type,content_id').eq('pack_id',lic.pack_id);
-        setLicensePack({type:'bundle',items:items||[],packName:lic.content_packs?.name});
+        
+        // Resource volume license → query license_resources
+        if(lic.license_type==='resource_volume'){
+          try{
+            const{data:resources}=await supabase.from('license_resources').select('content_type,content_id').eq('license_id',lic.id);
+            setLicensePack({type:'volume',items:(resources||[]).map(r=>({content_type:r.content_type,content_id:r.content_id})),count:resources?.length||0});
+          }catch(e){
+            console.warn('license_resources not available:',e);
+            setLicensePack({type:'volume',items:[],count:0});
+          }
+          return;
+        }
+        
+        // Content pack license → query content_pack_items
+        if(lic.pack_id){
+          const{data:items}=await supabase.from('content_pack_items').select('content_type,content_id').eq('pack_id',lic.pack_id);
+          setLicensePack({type:'bundle',items:items||[],packName:lic.content_packs?.name});
+          return;
+        }
+        
+        // No pack, no volume → full catalog by default
+        setLicensePack({type:'full_catalog',items:[]});
       },[centerLicenses]);
       
       // Vérifier si un contenu est dans le pack de la licence sélectionnée
       const isInLicensePack=(type,id)=>{
         if(!licensePack)return true; // no license = no filter
         if(licensePack.type==='full_catalog')return true;
+        // Both bundle and volume use same items array format
         return licensePack.items.some(i=>i.content_type===type&&i.content_id===id);
       };
       
@@ -4329,18 +4351,25 @@
                   <option value="">Aucune licence (contenu libre)</option>
                   {centerLicenses.map(l=>{
                     const days=Math.ceil((new Date(l.end_date)-new Date())/(1000*60*60*24));
+                    const isVol=l.license_type==='resource_volume';
+                    const label=isVol
+                      ?(l.full_catalog?'Licence volume — Tous les supports':`Licence volume — ${l.max_resources||'∞'} supports`)
+                      :(l.content_packs?.name||(l.license_type==='full_catalog'?'Catalogue complet':'Licence'));
                     return<option key={l.id} value={l.id}>
-                      {l.content_packs?.name||'Catalogue complet'} — {new Date(l.start_date).toLocaleDateString()} → {new Date(l.end_date).toLocaleDateString()} ({days}j) {l.max_learners?`• Max ${l.max_learners}`:''}
+                      {label} — {new Date(l.start_date).toLocaleDateString()} → {new Date(l.end_date).toLocaleDateString()} ({days}j) {!isVol&&l.max_learners?`• Max ${l.max_learners}`:''}
                     </option>;
                   })}
                 </select>
                 {form.license_id&&(()=>{
                   const lic=centerLicenses.find(l=>l.id===form.license_id);
                   if(!lic)return null;
+                  const isVol=lic.license_type==='resource_volume';
                   return<div className="mt-2 flex items-center gap-3 text-xs text-gray-400">
                     <span>📅 {new Date(lic.start_date).toLocaleDateString()} → {new Date(lic.end_date).toLocaleDateString()}</span>
-                    <span>👥 {lic.max_learners?`Max ${lic.max_learners} apprenants`:'Illimité'}</span>
-                    <span className="text-amber-400">{lic.content_packs?.name||'Catalogue complet'}</span>
+                    {isVol
+                      ?<span className="text-amber-400">{lic.full_catalog?'Tous les supports':`${lic.max_resources||'∞'} supports autorisés`}</span>
+                      :<><span>👥 {lic.max_learners?`Max ${lic.max_learners} apprenants`:'Illimité'}</span><span className="text-amber-400">{lic.content_packs?.name||'Catalogue complet'}</span></>
+                    }
                   </div>;
                 })()}
               </div>
@@ -8873,6 +8902,21 @@
             {/* RIGHT: Add content panel */}
             {(!editContentModal?.is_locked||isSuperAdmin)&&realRole!=='trainer'&&<div>
               <h4 className="font-medium mb-3">Ajouter du contenu</h4>
+              {!isSuperAdmin&&!licensedIds.hasFullCatalog&&licensedIds.hasAnyLicense&&(
+                <div className="mb-3 p-2 bg-indigo-500/10 border border-indigo-500/20 rounded-lg text-xs text-indigo-300">
+                  <Icon name="Key" size={12} className="inline mr-1"/>Les contenus LMS sont filtrés par vos licences actives ({licensedIds.videos.length} vidéos, {licensedIds.scorm.length} SCORM, {licensedIds.quizzes.length} quiz)
+                </div>
+              )}
+              {!isSuperAdmin&&!licensedIds.hasAnyLicense&&(
+                <div className="mb-3 p-2 bg-amber-500/10 border border-amber-500/20 rounded-lg text-xs text-amber-300">
+                  <Icon name="AlertTriangle" size={12} className="inline mr-1"/>Aucune licence active. Demandez une licence depuis la page <a className="underline cursor-pointer" onClick={()=>{if(window.__setPage)window.__setPage('licences');}}>Licences</a> pour accéder aux contenus LMS.
+                </div>
+              )}
+              {!isSuperAdmin&&licensedIds.hasFullCatalog&&(
+                <div className="mb-3 p-2 bg-green-500/10 border border-green-500/20 rounded-lg text-xs text-green-300">
+                  <Icon name="CheckCircle" size={12} className="inline mr-1"/>Accès catalogue complet — Tous les contenus LMS sont disponibles
+                </div>
+              )}
               {/* Type selector */}
               <div className="flex gap-1 mb-3">
                 <button onClick={()=>setAddContentTab('videos')} className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1 ${addContentTab==='videos'?'bg-blue-500/20 text-blue-400 border border-blue-500/50':'bg-gray-700/50 text-gray-400 hover:bg-gray-700'}`}>
@@ -10298,6 +10342,13 @@
       const[requestForm,setRequestForm]=useState({pack_id:'',requested_duration_months:12,requested_max_learners:'',request_message:''});
       const[history,setHistory]=useState([]);
       const[alertsSent,setAlertsSent]=useState([]);
+      // Resource picker for volume licenses
+      const[licenseResources,setLicenseResources]=useState([]); // [{content_type,content_id,title}]
+      const[allLmsVideos,setAllLmsVideos]=useState([]);
+      const[allLmsScorm,setAllLmsScorm]=useState([]);
+      const[allLmsQuizzes,setAllLmsQuizzes]=useState([]);
+      const[resourcePickerTab,setResourcePickerTab]=useState('video');
+      const[resourcePickerSearch,setResourcePickerSearch]=useState('');
       const[loadError,setLoadError]=useState(null);
       const[licenseUsage,setLicenseUsage]=useState({}); // {licenseId: {sessions, learners}}
       
@@ -10383,6 +10434,17 @@
         }catch(err){
           console.error('Erreur chargement licences:',err);
           setLoadError('Erreur lors du chargement: '+err.message);
+        }
+        // Super admin: Load all LMS resources for the resource picker
+        if(isSuperAdmin){
+          try{
+            const[{data:v},{data:s},{data:q}]=await Promise.all([
+              supabase.from('videos').select('id,title').eq('is_lms_content',true).order('title'),
+              supabase.from('scorm_modules').select('id,title').eq('is_lms_content',true).order('title'),
+              supabase.from('quizzes').select('id,title').eq('is_lms_content',true).order('title')
+            ]);
+            setAllLmsVideos(v||[]);setAllLmsScorm(s||[]);setAllLmsQuizzes(q||[]);
+          }catch(e){console.warn('LMS resources load:',e);}
         }
         setLoading(false);
       },[isSuperAdmin,center?.id]);
