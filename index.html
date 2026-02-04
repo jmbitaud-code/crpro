@@ -65,7 +65,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '7.8.0';
+    const APP_VERSION = '7.12.2';
     const APP_URL = window.location.origin;
     // =======================================
 
@@ -356,10 +356,35 @@
       let url=`https://player.vimeo.com/video/${vimeoId}`;
       const params=[];
       if(vimeoHash)params.push(`h=${vimeoHash}`);
-      if(options.background)params.push('background=1');
-      if(options.autoplay)params.push('autoplay=1');
+      if(options.background)params.push('background=1','muted=1','autoplay=1');
+      else if(options.autoplay)params.push('autoplay=1');
+      if(options.preview)params.push('controls=1','fullscreen=0','pip=0','quality=360p','dnt=1');
       if(params.length>0)url+=`?${params.join('&')}`;
       return url;
+    };
+    
+    // Formater le temps en format lisible (3600 → "1h 0min", 90 → "1min 30s")
+    const formatTime=(seconds)=>{
+      if(!seconds||seconds===0)return'-';
+      const h=Math.floor(seconds/3600);
+      const m=Math.floor((seconds%3600)/60);
+      const s=seconds%60;
+      if(h>0)return `${h}h ${m}min`;
+      if(m>0)return `${m}min ${s}s`;
+      return `${s}s`;
+    };
+    
+    // Formater le temps en format compact (90 → "1:30")
+    const formatTimeCompact=(seconds)=>{
+      const m=Math.floor(seconds/60);
+      const s=seconds%60;
+      return `${m}:${s.toString().padStart(2,'0')}`;
+    };
+    
+    // Générer un mot de passe aléatoire
+    const generatePassword=()=>{
+      const chars='abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%';
+      return Array.from({length:12},()=>chars[Math.floor(Math.random()*chars.length)]).join('');
     };
     
     // Labels et couleurs SCORM
@@ -741,8 +766,11 @@
       
       const getThemesForCategory=useCallback((catId)=>themes.filter(t=>t.category_id===catId),[themes]);
       const getSubThemesForTheme=useCallback((themeId)=>subThemes.filter(st=>st.theme_id===themeId),[subThemes]);
+      const getCategoryName=useCallback((id)=>categories.find(c=>c.id===id)?.name||'',[categories]);
+      const getThemeName=useCallback((id)=>themes.find(t=>t.id===id)?.name||'',[themes]);
+      const getSubThemeName=useCallback((id)=>subThemes.find(st=>st.id===id)?.name||'',[subThemes]);
       
-      const value=useMemo(()=>({categories,themes,subThemes,loading,reload:load,getThemesForCategory,getSubThemesForTheme}),[categories,themes,subThemes,loading,load,getThemesForCategory,getSubThemesForTheme]);
+      const value=useMemo(()=>({categories,themes,subThemes,loading,reload:load,getThemesForCategory,getSubThemesForTheme,getCategoryName,getThemeName,getSubThemeName}),[categories,themes,subThemes,loading,load,getThemesForCategory,getSubThemesForTheme,getCategoryName,getThemeName,getSubThemeName]);
       return<TaxonomyContext.Provider value={value}>{children}</TaxonomyContext.Provider>;
     }
     const useTaxonomy=()=>useContext(TaxonomyContext);
@@ -1489,7 +1517,7 @@
     }
 
     // ============================================================
-    // PAGE: Dashboard Admin (AdminDashboardPage) - v7.5.0
+    // PAGE: Dashboard Admin (AdminDashboardPage)
     // ============================================================
     function AdminDashboardPage(){
       const{center,isSuperAdmin,profile,can,realRole}=useAuth();
@@ -1927,7 +1955,7 @@
     }
 
     // ============================================================
-    // PAGE: Suivi SCORM (ScormTrackingPage) - v6.7.1
+    // PAGE: Suivi SCORM (ScormTrackingPage)
     // ============================================================
     function ScormTrackingPage(){
       const{can,center,isSuperAdmin,profile}=useAuth();
@@ -3030,17 +3058,6 @@
       const courseChartRef=useRef(null);
       const chartsRef=useRef({});
 
-      // Fonction pour formater le temps
-      const formatTime=(seconds)=>{
-        if(!seconds||seconds===0)return'-';
-        const h=Math.floor(seconds/3600);
-        const m=Math.floor((seconds%3600)/60);
-        const s=seconds%60;
-        if(h>0)return `${h}h ${m}min`;
-        if(m>0)return `${m}min ${s}s`;
-        return `${s}s`;
-      };
-
       const load=useCallback(async()=>{
         const seeAllCenters=isSuperAdmin||can('view_all_analytics');
         // D'abord charger les apprenants du centre pour filtrer correctement
@@ -4115,7 +4132,7 @@
     }
 
     // ============================================================
-    // PAGE: Sessions de Formation (SessionsPage) - v7.4.0
+    // PAGE: Sessions de Formation (SessionsPage)
     // ============================================================
     function SessionsPage(){
       const{can,center,isSuperAdmin,profile}=useAuth();
@@ -4293,14 +4310,6 @@
         const wb=XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb,ws,'Apprenants');
         XLSX.writeFile(wb,'template-import-apprenants.xlsx');
-      };
-      
-      // Générer un mot de passe aléatoire
-      const generatePassword=()=>{
-        const chars='abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
-        let pwd='';
-        for(let i=0;i<10;i++)pwd+=chars[Math.floor(Math.random()*chars.length)];
-        return pwd;
       };
       
       // Traiter l'import Excel
@@ -5720,7 +5729,7 @@
     // SECTION: Création de Vidéos
     // ============================================================
     function VideoCreationSection(){
-      const{categories,themes,subThemes,getThemesForCategory,getSubThemesForTheme}=useTaxonomy();
+      const{categories,themes,subThemes,getThemesForCategory,getSubThemesForTheme,getCategoryName,getThemeName,getSubThemeName}=useTaxonomy();
       const[videos,setVideos]=useState([]);
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
@@ -5757,11 +5766,6 @@
       
       useEffect(()=>{load();},[load]);
       
-      // Helpers taxonomie (getCategoryName reste local car spécifique)
-      const getCategoryName=(id)=>categories.find(c=>c.id===id)?.name||'';
-      const getThemeName=(id)=>themes.find(t=>t.id===id)?.name||'';
-      const getSubThemeName=(id)=>subThemes.find(st=>st.id===id)?.name||'';
-      
       // Récupérer la durée automatiquement via Vimeo oEmbed API
       const fetchVimeoDuration=async(url)=>{
         if(!url)return;
@@ -5785,15 +5789,6 @@
       };
       
       // Parser URL Vimeo
-      const parseVimeoUrl=(url)=>{
-        if(!url)return{id:null,hash:null};
-        const patterns=[/vimeo\.com\/(\d+)\/([a-zA-Z0-9]+)/,/vimeo\.com\/video\/(\d+)\/([a-zA-Z0-9]+)/,/player\.vimeo\.com\/video\/(\d+)\?h=([a-zA-Z0-9]+)/,/^(\d+)\/([a-zA-Z0-9]+)$/];
-        for(const p of patterns){const m=url.match(p);if(m)return{id:m[1],hash:m[2]};}
-        const idOnly=url.match(/(\d+)/);
-        if(idOnly)return{id:idOnly[1],hash:null};
-        return{id:null,hash:null};
-      };
-      
       const handleSave=async()=>{
         if(!form.title||!form.vimeo_url)return alert('Titre et URL Vimeo requis');
         setSaving(true);
@@ -6026,14 +6021,6 @@
         return true;
       });
       
-      const buildVimeoEmbedUrl=(id,hash,opts={})=>{
-        let url=`https://player.vimeo.com/video/${id}`;
-        const params=[];
-        if(hash)params.push(`h=${hash}`);
-        if(opts.background)params.push('background=1','muted=1','autoplay=1');
-        return params.length?`${url}?${params.join('&')}`:url;
-      };
-      
       if(loading)return<div className="flex items-center justify-center py-20"><Icon name="Loader2" size={32} className="animate-spin text-indigo-400"/></div>;
       
       return<div>
@@ -6238,7 +6225,7 @@
     // SECTION: Création de SCORM (wrapper vers la section existante)
     // ============================================================
     function ScormCreationSection(){
-      const{categories,themes,subThemes,getThemesForCategory,getSubThemesForTheme}=useTaxonomy();
+      const{categories,themes,subThemes,getThemesForCategory,getSubThemesForTheme,getCategoryName,getThemeName,getSubThemeName}=useTaxonomy();
       const[modules,setModules]=useState([]);
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
@@ -6267,10 +6254,6 @@
       },[]);
       
       useEffect(()=>{load();},[load]);
-      
-      const getCategoryName=(id)=>categories.find(c=>c.id===id)?.name||'';
-      const getThemeName=(id)=>themes.find(t=>t.id===id)?.name||'';
-      const getSubThemeName=(id)=>subThemes.find(st=>st.id===id)?.name||'';
       
       // ===== PARSE SCORM ZIP (Storyline & Codes Rousseau) =====
       const parseScormZip=async(file)=>{
@@ -6561,7 +6544,7 @@
     
     // Composant QuestionBankSection - Gestion des questions
     function QuestionBankSection(){
-      const{categories,themes,subThemes,getThemesForCategory,getSubThemesForTheme,reload:reloadTaxonomy}=useTaxonomy();
+      const{categories,themes,subThemes,getThemesForCategory,getSubThemesForTheme,getCategoryName,getThemeName,getSubThemeName,reload:reloadTaxonomy}=useTaxonomy();
       const[questions,setQuestions]=useState([]);
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
@@ -6632,9 +6615,6 @@
       
       useEffect(()=>{load();},[load]);
       
-      const getCategoryName=(id)=>categories.find(c=>c.id===id)?.name||'';
-      const getThemeName=(id)=>themes.find(t=>t.id===id)?.name||'';
-      const getSubThemeName=(id)=>subThemes.find(st=>st.id===id)?.name||'';
       const getTypeName=(type)=>questionTypes.find(t=>t.value===type)?.label||type;
       const getTypeColor=(type)=>questionTypes.find(t=>t.value===type)?.color||'text-gray-400';
       
@@ -8135,17 +8115,6 @@
         });
       };
       
-      const buildVimeoEmbedUrl=(id,hash,opts={})=>{
-        let url=`https://player.vimeo.com/video/${id}`;
-        const params=[];
-        if(hash)params.push(`h=${hash}`);
-        if(opts.preview){
-          params.push('controls=1','fullscreen=0','pip=0','quality=360p','dnt=1');
-        }
-        if(params.length)url+='?'+params.join('&');
-        return url;
-      };
-      
       if(loading)return<div className="flex items-center justify-center py-20"><Icon name="Loader2" size={32} className="animate-spin text-indigo-400"/></div>;
       
       return<div>
@@ -8722,12 +8691,6 @@
       },[isSuperAdmin,center?.id]);
       
       useEffect(()=>{load();},[load]);
-
-      const generatePassword=()=>{
-        const chars='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
-        let pwd='';for(let i=0;i<12;i++)pwd+=chars.charAt(Math.floor(Math.random()*chars.length));
-        return pwd;
-      };
 
       // Suppression par lot
       const handleBulkDelete=async()=>{
@@ -13839,12 +13802,6 @@
         setNotes(notes.filter(n=>n.id!==id));
       };
 
-      const formatTime=(seconds)=>{
-        const m=Math.floor(seconds/60);
-        const s=seconds%60;
-        return `${m}:${s.toString().padStart(2,'0')}`;
-      };
-
       if(loading)return<Loading/>;
       
       // Vue du lecteur de cours
@@ -13885,7 +13842,7 @@
                   <div className="flex flex-wrap gap-2">
                     {chapters.map(c=>(
                       <button key={c.id} onClick={()=>goToChapter(c.timestamp_seconds)} className="flex items-center gap-2 px-3 py-2 bg-gray-700 hover:bg-indigo-600 rounded-lg transition text-sm">
-                        <span className="font-mono text-xs bg-gray-600 px-2 py-0.5 rounded">{formatTime(c.timestamp_seconds)}</span>
+                        <span className="font-mono text-xs bg-gray-600 px-2 py-0.5 rounded">{formatTimeCompact(c.timestamp_seconds)}</span>
                         <span>{c.title}</span>
                       </button>
                     ))}
@@ -13939,7 +13896,7 @@
                                 <div className="flex-1">
                                   {n.timestamp_seconds>0&&(
                                     <button onClick={()=>goToChapter(n.timestamp_seconds)} className="text-xs text-indigo-400 hover:underline mb-1">
-                                      📍 {formatTime(n.timestamp_seconds)}
+                                      📍 {formatTimeCompact(n.timestamp_seconds)}
                                     </button>
                                   )}
                                   <p className="text-sm">{n.content}</p>
