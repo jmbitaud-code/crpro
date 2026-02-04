@@ -696,43 +696,58 @@
         setLicenseLoading(true);
         try{
           const today=new Date().toISOString().split('T')[0];
-          const{data:licenses}=await supabase.from('center_licenses').select('*,content_packs(pack_type)').eq('center_id',center.id).eq('status','active').lte('start_date',today).gte('end_date',today);
-          const info={videos:[],scorm:[],quizzes:[],courses:[],paths:[],hasFullCatalog:false,hasAnyLicense:(licenses||[]).length>0};
+          // Load licenses - try with content_packs join, fallback without
+          let licenses=[];
+          const{data:licData,error:licErr}=await supabase.from('center_licenses').select('*,content_packs(pack_type)').eq('center_id',center.id).eq('status','active').lte('start_date',today).gte('end_date',today);
+          if(licErr){
+            console.warn('License query with join failed, trying without:',licErr);
+            const{data:licFallback}=await supabase.from('center_licenses').select('*').eq('center_id',center.id).eq('status','active').lte('start_date',today).gte('end_date',today);
+            licenses=licFallback||[];
+          }else{
+            licenses=licData||[];
+          }
           
-          // Check full catalog from any license type
-          info.hasFullCatalog=(licenses||[]).some(l=>
+          console.log('[LicenseInfo] Active licenses:',licenses.length,licenses.map(l=>({id:l.id?.slice(0,8),type:l.license_type,pack:l.pack_id?.slice(0,8)})));
+          
+          const info={videos:[],scorm:[],quizzes:[],courses:[],paths:[],hasFullCatalog:false,hasAnyLicense:licenses.length>0};
+          
+          // Check full catalog
+          info.hasFullCatalog=licenses.some(l=>
             l.license_type==='full_catalog'
             ||l.content_packs?.pack_type==='full_catalog'
             ||(l.license_type==='resource_volume'&&l.full_catalog===true)
           );
           
           if(!info.hasFullCatalog){
-            // 1. Load content_pack_items for pack-based licenses
-            const packIds=(licenses||[]).filter(l=>l.pack_id).map(l=>l.pack_id);
+            // 1. Load content_pack_items for ALL licenses with pack_id (bundle, content_pack, etc.)
+            const packIds=licenses.filter(l=>l.pack_id).map(l=>l.pack_id);
             if(packIds.length>0){
-              const{data:items}=await supabase.from('content_pack_items').select('content_type,content_id').in('pack_id',packIds);
+              const{data:items,error:itemsErr}=await supabase.from('content_pack_items').select('content_type,content_id').in('pack_id',packIds);
+              if(itemsErr)console.warn('Pack items load error:',itemsErr);
+              console.log('[LicenseInfo] Pack items loaded:',items?.length||0);
               (items||[]).forEach(i=>{
-                if(i.content_type==='video')info.videos.push(i.content_id);
-                else if(i.content_type==='scorm')info.scorm.push(i.content_id);
-                else if(i.content_type==='quiz')info.quizzes.push(i.content_id);
-                else if(i.content_type==='course')info.courses.push(i.content_id);
-                else if(i.content_type==='path')info.paths.push(i.content_id);
+                const key=i.content_type==='video'?'videos':i.content_type==='scorm'?'scorm':i.content_type==='quiz'?'quizzes':i.content_type==='course'?'courses':i.content_type==='path'?'paths':null;
+                if(key&&!info[key].includes(i.content_id))info[key].push(i.content_id);
               });
             }
             
             // 2. Load license_resources for resource_volume licenses
-            const volumeLicIds=(licenses||[]).filter(l=>l.license_type==='resource_volume').map(l=>l.id);
+            const volumeLicIds=licenses.filter(l=>l.license_type==='resource_volume').map(l=>l.id);
             if(volumeLicIds.length>0){
               try{
-                const{data:resources}=await supabase.from('license_resources').select('content_type,content_id').in('license_id',volumeLicIds);
-                (resources||[]).forEach(r=>{
-                  if(r.content_type==='video'&&!info.videos.includes(r.content_id))info.videos.push(r.content_id);
-                  else if(r.content_type==='scorm'&&!info.scorm.includes(r.content_id))info.scorm.push(r.content_id);
-                  else if(r.content_type==='quiz'&&!info.quizzes.includes(r.content_id))info.quizzes.push(r.content_id);
-                });
-              }catch(e){console.warn('license_resources not available yet:',e);}
+                const{data:resources,error:resErr}=await supabase.from('license_resources').select('content_type,content_id').in('license_id',volumeLicIds);
+                if(!resErr&&resources){
+                  console.log('[LicenseInfo] Volume resources:',resources.length);
+                  resources.forEach(r=>{
+                    const key=r.content_type==='video'?'videos':r.content_type==='scorm'?'scorm':r.content_type==='quiz'?'quizzes':null;
+                    if(key&&!info[key].includes(r.content_id))info[key].push(r.content_id);
+                  });
+                }
+              }catch(e){console.warn('license_resources table not available:',e);}
             }
           }
+          
+          console.log('[LicenseInfo] Result:',{v:info.videos.length,s:info.scorm.length,q:info.quizzes.length,c:info.courses.length,p:info.paths.length,full:info.hasFullCatalog});
           setLicensedIds(info);
         }catch(e){console.error('License load error:',e);}
         setLicenseLoading(false);
@@ -3497,12 +3512,14 @@
           }
         }
         
-        // Charger session_contents séparément
+        // Charger session_contents séparément (Phase 1 - table may not exist)
         const sessionIds=(sessionsData||[]).map(s=>s.id);
         let allSessionContents=[];
         if(sessionIds.length>0){
-          const{data:scData}=await supabase.from('session_contents').select('*').in('session_id',sessionIds);
-          allSessionContents=scData||[];
+          try{
+            const{data:scData,error:scErr}=await supabase.from('session_contents').select('*').in('session_id',sessionIds);
+            if(!scErr)allSessionContents=scData||[];
+          }catch(e){console.warn('session_contents table not available:',e);}
         }
         
         // Charger les licences liées
@@ -3818,50 +3835,68 @@
         
         setSaving(true);
         try{
-        const data={
+        // Build core data (columns that always exist)
+        const coreData={
           name:form.name,
           description:form.description||null,
+          start_date:form.start_date,
+          end_date:form.end_date||null,
+          status:form.status,
+          center_id:center?.id||null
+        };
+        
+        // Extended columns (Phase 1 migration) - try to include
+        const extData={
           code:form.code||null,
           content_type:form.content_type||null,
           content_id:form.content_id||null,
           license_id:form.license_id||null,
-          start_date:form.start_date,
-          end_date:form.end_date||null,
           start_time:form.start_time||null,
           end_time:form.end_time||null,
           location:form.location||null,
           location_type:form.location_type,
           max_participants:form.max_participants?parseInt(form.max_participants):null,
-          status:form.status,
           auto_enroll:form.auto_enroll,
-          certificate_enabled:form.certificate_enabled,
-          center_id:center?.id||null
+          certificate_enabled:form.certificate_enabled
         };
         
         let sessionId;
         if(selectedSession){
-          await supabase.from('training_sessions').update(data).eq('id',selectedSession.id);
+          // Try with all columns first
+          const{error:fullErr}=await supabase.from('training_sessions').update({...coreData,...extData}).eq('id',selectedSession.id);
+          if(fullErr){
+            console.warn('Full update failed, trying core only:',fullErr);
+            await supabase.from('training_sessions').update(coreData).eq('id',selectedSession.id);
+          }
           sessionId=selectedSession.id;
         }else{
-          data.created_by=profile?.id;
-          const{data:newSession}=await supabase.from('training_sessions').insert(data).select().single();
-          sessionId=newSession?.id;
+          const fullData={...coreData,...extData,created_by:profile?.id};
+          const{data:newSession,error:insErr}=await supabase.from('training_sessions').insert(fullData).select().single();
+          if(insErr){
+            console.warn('Full insert failed, trying core only:',insErr);
+            const{data:ns2}=await supabase.from('training_sessions').insert({...coreData,created_by:profile?.id}).select().single();
+            sessionId=ns2?.id;
+          }else{
+            sessionId=newSession?.id;
+          }
         }
         
         // Sauvegarder session_contents si multi-content mode
         if(sessionId&&sessionContents.length>0){
-          // Supprimer les anciens
-          await supabase.from('session_contents').delete().eq('session_id',sessionId);
-          // Insérer les nouveaux
-          const items=sessionContents.map((c,i)=>({
-            session_id:sessionId,
-            content_type:c.content_type,
-            content_id:c.content_id,
-            sort_order:i,
-            is_required:c.is_required!==false,
-            added_by:profile?.id
-          }));
-          await supabase.from('session_contents').insert(items);
+          try{
+            // Supprimer les anciens
+            await supabase.from('session_contents').delete().eq('session_id',sessionId);
+            // Insérer les nouveaux
+            const items=sessionContents.map((c,i)=>({
+              session_id:sessionId,
+              content_type:c.content_type,
+              content_id:c.content_id,
+              sort_order:i,
+              is_required:c.is_required!==false,
+              added_by:profile?.id
+            }));
+            await supabase.from('session_contents').insert(items);
+          }catch(e){console.warn('session_contents save failed:',e);}
         }
         
         setModal(null);
