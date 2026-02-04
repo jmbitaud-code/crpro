@@ -7872,7 +7872,7 @@
     // mode: undefined = tout (super admin/legacy), 'formations' = cours+parcours, 'ressources' = vidéos+scorm+quiz
     // ============================================================
     function ContentCataloguePage({mode}){
-      const{isSuperAdmin,center,realRole,effectiveRole}=useAuth();
+      const{isSuperAdmin,center,realRole,effectiveRole,can}=useAuth();
       const{categories}=useTaxonomy();
       const{isLicensed}=useLicenseInfo();
       
