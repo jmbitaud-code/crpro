@@ -3439,16 +3439,30 @@
       const[contentPickerSearch,setContentPickerSearch]=useState('');
       
       const load=useCallback(async()=>{
-        // Charger les sessions avec session_contents
+        // Charger les sessions (sans les nouvelles relations pour compatibilité PostgREST)
         let qs=supabase.from('training_sessions').select(`
           *,
           session_trainers(id,trainer_id,role,profiles:trainer_id(first_name,last_name,email)),
-          session_participants(id,learner_id,status,enrollment_id,profiles:learner_id(first_name,last_name,email)),
-          session_contents(id,content_type,content_id,sort_order,is_required),
-          center_licenses(id,pack_id,start_date,end_date,max_learners,status,content_packs(name,code))
+          session_participants(id,learner_id,status,enrollment_id,profiles:learner_id(first_name,last_name,email))
         `).order('start_date',{ascending:false});
         if(!isSuperAdmin&&center?.id)qs=qs.eq('center_id',center.id);
         const{data:sessionsData}=await qs;
+        
+        // Charger session_contents séparément
+        const sessionIds=(sessionsData||[]).map(s=>s.id);
+        let allSessionContents=[];
+        if(sessionIds.length>0){
+          const{data:scData}=await supabase.from('session_contents').select('*').in('session_id',sessionIds);
+          allSessionContents=scData||[];
+        }
+        
+        // Charger les licences liées
+        const licenseIds=[...new Set((sessionsData||[]).map(s=>s.license_id).filter(Boolean))];
+        let licensesMap={};
+        if(licenseIds.length>0){
+          const{data:licData}=await supabase.from('center_licenses').select('*,content_packs(name,code)').in('id',licenseIds);
+          (licData||[]).forEach(l=>{licensesMap[l.id]=l;});
+        }
         
         // Charger les cours
         let qc=supabase.from('playlists').select('id,title').eq('is_published',true);
@@ -3489,6 +3503,8 @@
         
         // Enrichir les sessions avec les noms de contenu
         const enrichedSessions=(sessionsData||[]).map(s=>{
+          const lic=s.license_id?licensesMap[s.license_id]:null;
+          const sContents=allSessionContents.filter(sc=>sc.session_id===s.id);
           // Compter les apprenants actifs dans toutes les sessions de la même licence
           let licenseLearnersCount=0;
           if(s.license_id){
@@ -3499,17 +3515,19 @@
           }
           return{
             ...s,
+            session_contents:sContents,
+            center_licenses:lic,
             content_title:s.content_type==='course'
               ?(coursesData||[]).find(c=>c.id===s.content_id)?.title
               :(pathsData||[]).find(p=>p.id===s.content_id)?.title,
             trainers_count:s.session_trainers?.length||0,
             participants_count:s.session_participants?.length||0,
-            contents_count:(s.session_contents||[]).length,
-            license_name:s.center_licenses?.content_packs?.name||null,
-            license_max:s.center_licenses?.max_learners||null,
+            contents_count:sContents.length,
+            license_name:lic?.content_packs?.name||null,
+            license_max:lic?.max_learners||null,
             license_learners:licenseLearnersCount,
-            license_end:s.center_licenses?.end_date||null,
-            license_status:s.center_licenses?.status||null
+            license_end:lic?.end_date||null,
+            license_status:lic?.status||null
           };
         });
         
@@ -7049,7 +7067,7 @@
     // SOUS-PAGE: Catalogue de contenu
     // ============================================================
     function ContentCataloguePage(){
-      const{isSuperAdmin,center,realRole}=useAuth();
+      const{isSuperAdmin,center,realRole,effectiveRole}=useAuth();
       const{categories}=useTaxonomy();
       const{isLicensed}=useLicenseInfo();
       const[activeTab,setActiveTab]=useState('videos');
@@ -7069,14 +7087,14 @@
       const[requestCartForm,setRequestCartForm]=useState({name:'',description:'',duration_months:12,max_learners:'',message:''});
       const[requestCartSaving,setRequestCartSaving]=useState(false);
       
-      const canRequestLicense=!isSuperAdmin&&center?.id&&realRole==='center_admin';
+      const canRequestLicense=!isSuperAdmin&&center?.id&&(realRole==='center_admin'||effectiveRole==='center_admin');
       
       const load=useCallback(async()=>{
         const[{data:vids},{data:scorm},{data:quiz},{data:cours},{data:path}]=await Promise.all([
           supabase.from('videos').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name)').eq('is_lms_content',true).order('sort_order').order('title'),
           supabase.from('scorm_modules').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name)').eq('is_lms_content',true).order('title'),
           supabase.from('quizzes').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name),quiz_questions(count)').eq('is_lms_content',true).order('title'),
-          supabase.from('playlists').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name),playlist_items(count)').eq('is_lms_content',true).order('title'),
+          supabase.from('playlists').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name),playlist_videos(count)').eq('is_lms_content',true).order('title'),
           supabase.from('learning_paths').select('*,content_categories(id,name,color),content_themes(id,name),content_sub_themes(id,name),learning_path_courses(count)').eq('is_lms_content',true).order('title')
         ]);
         setVideos(vids||[]);
@@ -7257,6 +7275,32 @@
       if(loading)return<div className="flex items-center justify-center py-20"><Icon name="Loader2" size={32} className="animate-spin text-indigo-400"/></div>;
       
       return<div>
+        {/* GUIDE ADMIN CENTRE - Bandeau explicatif */}
+        {canRequestLicense&&(
+          <Card className="p-4 mb-6 bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-amber-500/10 border-indigo-500/30">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 bg-indigo-500/20 rounded-full flex items-center justify-center shrink-0">
+                <Icon name="Info" size={20} className="text-indigo-400"/>
+              </div>
+              <div className="flex-1">
+                <h3 className="font-semibold mb-1">Comment demander une licence ?</h3>
+                <div className="flex items-center gap-2 text-sm text-gray-400">
+                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-indigo-500 rounded-full flex items-center justify-center text-xs font-bold text-white">1</span> Parcourez le catalogue</span>
+                  <Icon name="ChevronRight" size={14} className="text-gray-600"/>
+                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-purple-500 rounded-full flex items-center justify-center text-xs font-bold text-white">2</span> Cliquez <strong className="text-purple-400">+ Ajouter</strong> sur les contenus 🔒</span>
+                  <Icon name="ChevronRight" size={14} className="text-gray-600"/>
+                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center text-xs font-bold text-white">3</span> Ouvrez le <strong className="text-amber-400">🛒 Panier</strong> et envoyez la demande</span>
+                </div>
+              </div>
+              {getRequestCartCount()>0&&(
+                <Button icon="ShoppingCart" onClick={()=>setRequestCartModal(true)} className="shrink-0">
+                  Panier ({getRequestCartCount()})
+                </Button>
+              )}
+            </div>
+          </Card>
+        )}
+        
         {/* Barre d'outils */}
         <div className="flex flex-wrap items-center gap-3 mb-6">
           <Input icon="Search" placeholder="Rechercher dans le catalogue..." value={search} onChange={e=>setSearch(e.target.value)} className="w-72"/>
@@ -7264,10 +7308,24 @@
           <div className="flex-1"/>
           {canRequestLicense&&getRequestCartCount()>0&&(
             <Button icon="ShoppingCart" onClick={()=>setRequestCartModal(true)}>
-              Panier ({getRequestCartCount()})
+              🛒 Panier ({getRequestCartCount()})
             </Button>
           )}
         </div>
+        
+        {/* Panier flottant pour admin centre */}
+        {canRequestLicense&&getRequestCartCount()>0&&(
+          <div className="fixed bottom-6 right-6 z-40">
+            <button 
+              onClick={()=>setRequestCartModal(true)}
+              className="flex items-center gap-2 px-5 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-lg shadow-indigo-500/30 transition-all hover:scale-105"
+            >
+              <Icon name="ShoppingCart" size={20}/>
+              <span className="font-semibold">Panier ({getRequestCartCount()})</span>
+              <Icon name="ChevronUp" size={16}/>
+            </button>
+          </div>
+        )}
         
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
@@ -7325,12 +7383,13 @@
                     <div className="p-3">
                       <h3 className="font-semibold truncate text-sm">{v.title}</h3>
                       {v.content_categories?.name&&<span className="inline-block mt-1 px-2 py-0.5 rounded text-xs" style={{backgroundColor:(v.content_categories?.color||'#6366f1')+'30',color:v.content_categories?.color||'#6366f1'}}>{v.content_categories.name}</span>}
-                      <div className="flex gap-2 mt-3">
+                      <div className="flex flex-wrap gap-1 mt-3">
                         {licensed&&<Button variant="ghost" size="sm" icon="Play" onClick={()=>setPreviewModal({type:'video',item:v})}>Aperçu</Button>}
-                        {canRequestLicense&&!licensed&&(
-                          <Button variant={isInRequestCart('video',v.id)?'primary':'secondary'} size="sm" icon={isInRequestCart('video',v.id)?'Check':'Plus'} onClick={()=>toggleRequestCart('video',v.id,v)}>
-                            {isInRequestCart('video',v.id)?'Dans le panier':'Ajouter'}
-                          </Button>
+                        {canRequestLicense&&(
+                          <button onClick={()=>toggleRequestCart('video',v.id,v)} className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${isInRequestCart('video',v.id)?'bg-indigo-600 text-white':'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
+                            <Icon name={isInRequestCart('video',v.id)?'Check':'Plus'} size={12}/>
+                            {isInRequestCart('video',v.id)?'Panier ✓':'Panier'}
+                          </button>
                         )}
                       </div>
                     </div>
@@ -7356,12 +7415,13 @@
                         {!licensed&&<span className="inline-block ml-2 mt-1 px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs">🔒</span>}
                       </div>
                     </div>
-                    <div className="flex gap-2 mt-4">
+                    <div className="flex flex-wrap gap-1 mt-4">
                       {licensed&&<Button variant="ghost" size="sm" icon="Play" onClick={()=>setPreviewModal({type:'scorm',item:m})}>Aperçu</Button>}
-                      {canRequestLicense&&!licensed&&(
-                        <Button variant={isInRequestCart('scorm',m.id)?'primary':'secondary'} size="sm" icon={isInRequestCart('scorm',m.id)?'Check':'Plus'} onClick={()=>toggleRequestCart('scorm',m.id,m)}>
-                          {isInRequestCart('scorm',m.id)?'Dans le panier':'Ajouter'}
-                        </Button>
+                      {canRequestLicense&&(
+                        <button onClick={()=>toggleRequestCart('scorm',m.id,m)} className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${isInRequestCart('scorm',m.id)?'bg-indigo-600 text-white':'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
+                          <Icon name={isInRequestCart('scorm',m.id)?'Check':'Plus'} size={12}/>
+                          {isInRequestCart('scorm',m.id)?'Panier ✓':'Panier'}
+                        </button>
                       )}
                     </div>
                   </Card>;
@@ -7386,12 +7446,13 @@
                         {!licensed&&<span className="inline-block ml-2 mt-1 px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs">🔒</span>}
                       </div>
                     </div>
-                    <div className="flex gap-2 mt-4">
+                    <div className="flex flex-wrap gap-1 mt-4">
                       {licensed&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>setPreviewModal({type:'quiz',item:q})}>Voir</Button>}
-                      {canRequestLicense&&!licensed&&(
-                        <Button variant={isInRequestCart('quiz',q.id)?'primary':'secondary'} size="sm" icon={isInRequestCart('quiz',q.id)?'Check':'Plus'} onClick={()=>toggleRequestCart('quiz',q.id,q)}>
-                          {isInRequestCart('quiz',q.id)?'Dans le panier':'Ajouter'}
-                        </Button>
+                      {canRequestLicense&&(
+                        <button onClick={()=>toggleRequestCart('quiz',q.id,q)} className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${isInRequestCart('quiz',q.id)?'bg-indigo-600 text-white':'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
+                          <Icon name={isInRequestCart('quiz',q.id)?'Check':'Plus'} size={12}/>
+                          {isInRequestCart('quiz',q.id)?'Panier ✓':'Panier'}
+                        </button>
                       )}
                     </div>
                   </Card>;
@@ -7411,17 +7472,18 @@
                       <div className="w-12 h-12 bg-green-500/20 rounded-lg flex items-center justify-center shrink-0"><Icon name="BookOpen" size={24} className="text-green-400"/></div>
                       <div className="flex-1 min-w-0">
                         <h3 className="font-semibold truncate">{c.title}</h3>
-                        <p className="text-xs text-gray-400">{c.playlist_items?.[0]?.count||0} éléments</p>
+                        <p className="text-xs text-gray-400">{c.playlist_videos?.[0]?.count||0} éléments</p>
                         {c.content_categories?.name&&<span className="inline-block mt-1 px-2 py-0.5 rounded text-xs" style={{backgroundColor:(c.content_categories?.color||'#22c55e')+'30',color:c.content_categories?.color||'#22c55e'}}>{c.content_categories.name}</span>}
                         {!licensed&&<span className="inline-block ml-2 mt-1 px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs">🔒</span>}
                       </div>
                     </div>
-                    <div className="flex gap-2 mt-4">
+                    <div className="flex flex-wrap gap-1 mt-4">
                       {licensed&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>setPreviewModal({type:'course',item:c})}>Voir</Button>}
-                      {canRequestLicense&&!licensed&&(
-                        <Button variant={isInRequestCart('course',c.id)?'primary':'secondary'} size="sm" icon={isInRequestCart('course',c.id)?'Check':'Plus'} onClick={()=>toggleRequestCart('course',c.id,c)}>
-                          {isInRequestCart('course',c.id)?'Dans le panier':'Ajouter'}
-                        </Button>
+                      {canRequestLicense&&(
+                        <button onClick={()=>toggleRequestCart('course',c.id,c)} className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${isInRequestCart('course',c.id)?'bg-indigo-600 text-white':'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
+                          <Icon name={isInRequestCart('course',c.id)?'Check':'Plus'} size={12}/>
+                          {isInRequestCart('course',c.id)?'Panier ✓':'Panier'}
+                        </button>
                       )}
                     </div>
                   </Card>;
@@ -7446,12 +7508,13 @@
                         {!licensed&&<span className="inline-block ml-2 mt-1 px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs">🔒</span>}
                       </div>
                     </div>
-                    <div className="flex gap-2 mt-4">
+                    <div className="flex flex-wrap gap-1 mt-4">
                       {licensed&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>setPreviewModal({type:'path',item:p})}>Voir</Button>}
-                      {canRequestLicense&&!licensed&&(
-                        <Button variant={isInRequestCart('path',p.id)?'primary':'secondary'} size="sm" icon={isInRequestCart('path',p.id)?'Check':'Plus'} onClick={()=>toggleRequestCart('path',p.id,p)}>
-                          {isInRequestCart('path',p.id)?'Dans le panier':'Ajouter'}
-                        </Button>
+                      {canRequestLicense&&(
+                        <button onClick={()=>toggleRequestCart('path',p.id,p)} className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${isInRequestCart('path',p.id)?'bg-indigo-600 text-white':'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
+                          <Icon name={isInRequestCart('path',p.id)?'Check':'Plus'} size={12}/>
+                          {isInRequestCart('path',p.id)?'Panier ✓':'Panier'}
+                        </button>
                       )}
                     </div>
                   </Card>;
@@ -7482,7 +7545,7 @@
               {previewModal.item.description&&<p className="text-gray-400">{previewModal.item.description}</p>}
               <div className="mt-4 text-sm text-gray-500">
                 {previewModal.type==='quiz'&&<p>{previewModal.item.quiz_questions?.[0]?.count||0} questions • Score minimum: {previewModal.item.passing_score}%</p>}
-                {previewModal.type==='course'&&<p>{previewModal.item.playlist_items?.[0]?.count||0} éléments</p>}
+                {previewModal.type==='course'&&<p>{previewModal.item.playlist_videos?.[0]?.count||0} éléments</p>}
                 {previewModal.type==='path'&&<p>{previewModal.item.learning_path_courses?.[0]?.count||0} cours</p>}
               </div>
             </div>
@@ -9951,7 +10014,7 @@
 
     // ==================== LICENCES ====================
     function LicensesContent(){
-      const{isSuperAdmin,profile,center,realRole}=useAuth();
+      const{isSuperAdmin,profile,center,realRole,effectiveRole}=useAuth();
       const[loading,setLoading]=useState(true);
       const[licenses,setLicenses]=useState([]);
       const[requests,setRequests]=useState([]);
@@ -9970,7 +10033,7 @@
       const[licenseUsage,setLicenseUsage]=useState({}); // {licenseId: {sessions, learners}}
       
       // Seul le Center Admin peut demander des licences (pas le trainer)
-      const canRequestLicense=realRole==='center_admin'&&center?.id;
+      const canRequestLicense=(realRole==='center_admin'||effectiveRole==='center_admin')&&center?.id;
       
       // Ouvrir automatiquement le modal si on vient de la bibliothèque
       useEffect(()=>{
