@@ -4833,13 +4833,16 @@
     // PAGE: Contenus (ContenusPage) - Sous-onglets avec pages complètes
     // ============================================================
     function ContenusPage(){
-      const{isSuperAdmin,center,realRole}=useAuth();
-      const[mainTab,setMainTab]=useState(isSuperAdmin?'creation':'catalogue');
+      const{isSuperAdmin,center,realRole,effectiveRole}=useAuth();
+      const isCenterAdminView=!isSuperAdmin&&(realRole==='center_admin'||effectiveRole==='center_admin');
+      const[mainTab,setMainTab]=useState(isSuperAdmin?'creation':isCenterAdminView?'formations':'catalogue');
       
-      // Admin Centre ne voit que le Catalogue
       const tabs=isSuperAdmin?[
         {id:'creation',label:'Création',icon:'PlusCircle'},
         {id:'catalogue',label:'Catalogue',icon:'Library'}
+      ]:isCenterAdminView?[
+        {id:'formations',label:'Formations clé en main',icon:'BookOpen'},
+        {id:'ressources',label:'Ressources pédagogiques',icon:'Boxes'}
       ]:[
         {id:'catalogue',label:'Catalogue',icon:'Library'}
       ];
@@ -4850,7 +4853,7 @@
             <Icon name="Library" size={28}/>Contenus
           </h1>
           <p className="text-sm text-gray-400">
-            {isSuperAdmin?'Créez et gérez vos contenus de formation':'Parcourez le catalogue et demandez des licences'}
+            {isSuperAdmin?'Créez et gérez vos contenus de formation':isCenterAdminView?'Formations prêtes à l\'emploi et ressources pour créer les vôtres':'Parcourez le catalogue et demandez des licences'}
           </p>
         </div>
         
@@ -4859,6 +4862,8 @@
         <div className="mt-6">
           {mainTab==='creation'&&isSuperAdmin&&<ContentCreationPage/>}
           {mainTab==='catalogue'&&<ContentCataloguePage/>}
+          {mainTab==='formations'&&<ContentCataloguePage mode="formations"/>}
+          {mainTab==='ressources'&&<ContentCataloguePage mode="ressources"/>}
         </div>
       </div>;
     }
@@ -7065,12 +7070,19 @@
     
     // ============================================================
     // SOUS-PAGE: Catalogue de contenu
+    // mode: undefined = tout (super admin/legacy), 'formations' = cours+parcours, 'ressources' = vidéos+scorm+quiz
     // ============================================================
-    function ContentCataloguePage(){
+    function ContentCataloguePage({mode}){
       const{isSuperAdmin,center,realRole,effectiveRole}=useAuth();
       const{categories}=useTaxonomy();
       const{isLicensed}=useLicenseInfo();
-      const[activeTab,setActiveTab]=useState('videos');
+      
+      const isFormations=mode==='formations';
+      const isRessources=mode==='ressources';
+      const isAll=!mode;
+      
+      const defaultTab=isFormations?'courses':isRessources?'videos':'videos';
+      const[activeTab,setActiveTab]=useState(defaultTab);
       const[videos,setVideos]=useState([]);
       const[scormModules,setScormModules]=useState([]);
       const[quizzes,setQuizzes]=useState([]);
@@ -7087,14 +7099,7 @@
       const[requestCartForm,setRequestCartForm]=useState({name:'',description:'',duration_months:12,max_learners:'',message:''});
       const[requestCartSaving,setRequestCartSaving]=useState(false);
       
-      const canRequestLicense=(()=>{
-        // Debug: aide au diagnostic en mode "Vue comme"
-        const result=!isSuperAdmin&&!!center?.id&&(realRole==='center_admin'||effectiveRole==='center_admin');
-        if(!result&&!isSuperAdmin){
-          console.log('[Catalogue] canRequestLicense=false debug:',{isSuperAdmin,centerId:center?.id,realRole,effectiveRole});
-        }
-        return result;
-      })();
+      const canRequestLicense=!isSuperAdmin&&!!center?.id&&(realRole==='center_admin'||effectiveRole==='center_admin');
       
       const load=useCallback(async()=>{
         const[{data:vids},{data:scorm},{data:quiz},{data:cours},{data:path}]=await Promise.all([
@@ -7282,13 +7287,60 @@
       if(loading)return<div className="flex items-center justify-center py-20"><Icon name="Loader2" size={32} className="animate-spin text-indigo-400"/></div>;
       
       return<div>
-        {/* DEBUG - à supprimer après diagnostic */}
-        {!isSuperAdmin&&<div className="p-2 mb-4 bg-red-900/50 border border-red-500 rounded text-xs font-mono">
-          DEBUG: isSuperAdmin={String(isSuperAdmin)} | center.id={center?.id||'NULL'} | realRole={realRole} | effectiveRole={effectiveRole} | canRequestLicense={String(canRequestLicense)}
-        </div>}
+        {/* GUIDE ADMIN CENTRE - Bandeau adapté au mode */}
+        {canRequestLicense&&isFormations&&(
+          <Card className="p-4 mb-6 bg-gradient-to-r from-indigo-500/10 via-indigo-500/5 to-purple-500/10 border-indigo-500/30">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 bg-indigo-500/20 rounded-full flex items-center justify-center shrink-0">
+                <Icon name="BookOpen" size={20} className="text-indigo-400"/>
+              </div>
+              <div className="flex-1">
+                <h3 className="font-semibold mb-1">Formations clé en main</h3>
+                <p className="text-sm text-gray-400">Cours et parcours prêts à l'emploi, créés par l'équipe pédagogique. Sélectionnez, demandez une licence et assignez directement à vos apprenants.</p>
+                <div className="flex items-center gap-2 text-sm text-gray-400 mt-2">
+                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-indigo-500 rounded-full flex items-center justify-center text-xs font-bold text-white">1</span> Parcourez</span>
+                  <Icon name="ChevronRight" size={14} className="text-gray-600"/>
+                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-purple-500 rounded-full flex items-center justify-center text-xs font-bold text-white">2</span> <strong className="text-purple-400">+ Panier</strong></span>
+                  <Icon name="ChevronRight" size={14} className="text-gray-600"/>
+                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center text-xs font-bold text-white">3</span> <strong className="text-amber-400">Envoyez la demande</strong></span>
+                </div>
+              </div>
+              {getRequestCartCount()>0&&(
+                <Button icon="ShoppingCart" onClick={()=>setRequestCartModal(true)} className="shrink-0">
+                  Panier ({getRequestCartCount()})
+                </Button>
+              )}
+            </div>
+          </Card>
+        )}
         
-        {/* GUIDE ADMIN CENTRE - Bandeau explicatif */}
-        {canRequestLicense&&(
+        {canRequestLicense&&isRessources&&(
+          <Card className="p-4 mb-6 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-orange-500/10 border-amber-500/30">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 bg-amber-500/20 rounded-full flex items-center justify-center shrink-0">
+                <Icon name="Boxes" size={20} className="text-amber-400"/>
+              </div>
+              <div className="flex-1">
+                <h3 className="font-semibold mb-1">Ressources pédagogiques</h3>
+                <p className="text-sm text-gray-400">Vidéos, modules SCORM et quiz disponibles comme briques de construction. Demandez un accès puis créez vos propres cours et parcours personnalisés.</p>
+                <div className="flex items-center gap-2 text-sm text-gray-400 mt-2">
+                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center text-xs font-bold text-white">1</span> Consultez les supports</span>
+                  <Icon name="ChevronRight" size={14} className="text-gray-600"/>
+                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-orange-500 rounded-full flex items-center justify-center text-xs font-bold text-white">2</span> <strong className="text-orange-400">Demandez un accès volume</strong></span>
+                  <Icon name="ChevronRight" size={14} className="text-gray-600"/>
+                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center text-xs font-bold text-white">3</span> <strong className="text-green-400">Créez vos cours</strong> <span className="badge badge-sm bg-purple-500/20 text-purple-400 text-xs px-1.5 py-0.5 rounded ml-1">Bientôt</span></span>
+                </div>
+              </div>
+              {getRequestCartCount()>0&&(
+                <Button icon="ShoppingCart" onClick={()=>setRequestCartModal(true)} className="shrink-0">
+                  Panier ({getRequestCartCount()})
+                </Button>
+              )}
+            </div>
+          </Card>
+        )}
+        
+        {canRequestLicense&&isAll&&(
           <Card className="p-4 mb-6 bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-amber-500/10 border-indigo-500/30">
             <div className="flex items-start gap-4">
               <div className="w-10 h-10 bg-indigo-500/20 rounded-full flex items-center justify-center shrink-0">
@@ -7297,11 +7349,11 @@
               <div className="flex-1">
                 <h3 className="font-semibold mb-1">Comment demander une licence ?</h3>
                 <div className="flex items-center gap-2 text-sm text-gray-400">
-                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-indigo-500 rounded-full flex items-center justify-center text-xs font-bold text-white">1</span> Parcourez le catalogue</span>
+                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-indigo-500 rounded-full flex items-center justify-center text-xs font-bold text-white">1</span> Parcourez</span>
                   <Icon name="ChevronRight" size={14} className="text-gray-600"/>
-                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-purple-500 rounded-full flex items-center justify-center text-xs font-bold text-white">2</span> Cliquez <strong className="text-purple-400">+ Ajouter</strong> sur les contenus 🔒</span>
+                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-purple-500 rounded-full flex items-center justify-center text-xs font-bold text-white">2</span> <strong className="text-purple-400">+ Panier</strong></span>
                   <Icon name="ChevronRight" size={14} className="text-gray-600"/>
-                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center text-xs font-bold text-white">3</span> Ouvrez le <strong className="text-amber-400">🛒 Panier</strong> et envoyez la demande</span>
+                  <span className="flex items-center gap-1"><span className="w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center text-xs font-bold text-white">3</span> <strong className="text-amber-400">Envoyez</strong></span>
                 </div>
               </div>
               {getRequestCartCount()>0&&(
@@ -7315,7 +7367,7 @@
         
         {/* Barre d'outils */}
         <div className="flex flex-wrap items-center gap-3 mb-6">
-          <Input icon="Search" placeholder="Rechercher dans le catalogue..." value={search} onChange={e=>setSearch(e.target.value)} className="w-72"/>
+          <Input icon="Search" placeholder={isFormations?'Rechercher une formation...':isRessources?'Rechercher un support...':'Rechercher dans le catalogue...'} value={search} onChange={e=>setSearch(e.target.value)} className="w-72"/>
           <Select value={filterCategory} onChange={e=>setFilterCategory(e.target.value)} options={[{value:'',label:'Toutes catégories'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
           <div className="flex-1"/>
           {canRequestLicense&&getRequestCartCount()>0&&(
@@ -7330,7 +7382,7 @@
           <div className="fixed bottom-6 right-6 z-40">
             <button 
               onClick={()=>setRequestCartModal(true)}
-              className="flex items-center gap-2 px-5 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-lg shadow-indigo-500/30 transition-all hover:scale-105"
+              className={`flex items-center gap-2 px-5 py-3 ${isFormations?'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/30':isRessources?'bg-amber-600 hover:bg-amber-500 shadow-amber-500/30':'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/30'} text-white rounded-full shadow-lg transition-all hover:scale-105`}
             >
               <Icon name="ShoppingCart" size={20}/>
               <span className="font-semibold">Panier ({getRequestCartCount()})</span>
@@ -7339,8 +7391,8 @@
           </div>
         )}
         
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+        {/* Stats - adaptées au mode */}
+        {(isAll||isRessources)&&<div className={`grid ${isRessources?'grid-cols-3':'grid-cols-2 md:grid-cols-5'} gap-4 mb-6`}>
           <Card className="p-4 text-center cursor-pointer hover:border-indigo-500" onClick={()=>setActiveTab('videos')}>
             <Icon name="Film" size={24} className={`mx-auto mb-2 ${activeTab==='videos'?'text-indigo-400':'text-gray-400'}`}/>
             <p className="text-xl font-bold">{videos.length}</p>
@@ -7356,6 +7408,19 @@
             <p className="text-xl font-bold">{quizzes.length}</p>
             <p className="text-xs text-gray-400">Quiz</p>
           </Card>
+          {isAll&&<Card className="p-4 text-center cursor-pointer hover:border-green-500" onClick={()=>setActiveTab('courses')}>
+            <Icon name="BookOpen" size={24} className={`mx-auto mb-2 ${activeTab==='courses'?'text-green-400':'text-gray-400'}`}/>
+            <p className="text-xl font-bold">{courses.length}</p>
+            <p className="text-xs text-gray-400">Cours</p>
+          </Card>}
+          {isAll&&<Card className="p-4 text-center cursor-pointer hover:border-orange-500" onClick={()=>setActiveTab('paths')}>
+            <Icon name="Route" size={24} className={`mx-auto mb-2 ${activeTab==='paths'?'text-orange-400':'text-gray-400'}`}/>
+            <p className="text-xl font-bold">{paths.length}</p>
+            <p className="text-xs text-gray-400">Parcours</p>
+          </Card>}
+        </div>}
+        
+        {isFormations&&<div className="grid grid-cols-2 gap-4 mb-6">
           <Card className="p-4 text-center cursor-pointer hover:border-green-500" onClick={()=>setActiveTab('courses')}>
             <Icon name="BookOpen" size={24} className={`mx-auto mb-2 ${activeTab==='courses'?'text-green-400':'text-gray-400'}`}/>
             <p className="text-xl font-bold">{courses.length}</p>
@@ -7366,15 +7431,19 @@
             <p className="text-xl font-bold">{paths.length}</p>
             <p className="text-xs text-gray-400">Parcours</p>
           </Card>
-        </div>
+        </div>}
         
-        {/* Onglets */}
+        {/* Onglets filtrés par mode */}
         <Tabs tabs={[
-          {id:'videos',label:`Vidéos (${filter(videos).length})`,icon:'Film'},
-          {id:'scorm',label:`SCORM (${filter(scormModules).length})`,icon:'Package'},
-          {id:'quizzes',label:`Quiz (${filter(quizzes).length})`,icon:'HelpCircle'},
-          {id:'courses',label:`Cours (${filter(courses).length})`,icon:'BookOpen'},
-          {id:'paths',label:`Parcours (${filter(paths).length})`,icon:'Route'}
+          ...(isAll||isRessources?[
+            {id:'videos',label:`Vidéos (${filter(videos).length})`,icon:'Film'},
+            {id:'scorm',label:`SCORM (${filter(scormModules).length})`,icon:'Package'},
+            {id:'quizzes',label:`Quiz (${filter(quizzes).length})`,icon:'HelpCircle'}
+          ]:[]),
+          ...(isAll||isFormations?[
+            {id:'courses',label:`Cours (${filter(courses).length})`,icon:'BookOpen'},
+            {id:'paths',label:`Parcours (${filter(paths).length})`,icon:'Route'}
+          ]:[])
         ]} active={activeTab} onChange={setActiveTab}/>
         
         <div className="mt-6">
@@ -7384,7 +7453,7 @@
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {filter(videos).map(v=>{
                   const licensed=isLicensed('video',v.id);
-                  return<Card key={v.id} className={`overflow-hidden ${!licensed?'opacity-70':''}`}>
+                  return<Card key={v.id} className={`overflow-hidden ${!licensed&&!canRequestLicense?'opacity-70':''}`}>
                     <div className="aspect-video bg-gray-900 relative">
                       {v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:
                       <div className="w-full h-full flex items-center justify-center"><Icon name="Film" size={48} className="text-gray-600"/></div>}
@@ -7396,7 +7465,7 @@
                       <h3 className="font-semibold truncate text-sm">{v.title}</h3>
                       {v.content_categories?.name&&<span className="inline-block mt-1 px-2 py-0.5 rounded text-xs" style={{backgroundColor:(v.content_categories?.color||'#6366f1')+'30',color:v.content_categories?.color||'#6366f1'}}>{v.content_categories.name}</span>}
                       <div className="flex flex-wrap gap-1 mt-3">
-                        {licensed&&<Button variant="ghost" size="sm" icon="Play" onClick={()=>setPreviewModal({type:'video',item:v})}>Aperçu</Button>}
+                        {(licensed||canRequestLicense)&&<Button variant="ghost" size="sm" icon="Play" onClick={()=>setPreviewModal({type:'video',item:v})}>Aperçu</Button>}
                         {canRequestLicense&&(
                           <button onClick={()=>toggleRequestCart('video',v.id,v)} className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${isInRequestCart('video',v.id)?'bg-indigo-600 text-white':'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
                             <Icon name={isInRequestCart('video',v.id)?'Check':'Plus'} size={12}/>
@@ -7417,7 +7486,7 @@
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filter(scormModules).map(m=>{
                   const licensed=isLicensed('scorm',m.id);
-                  return<Card key={m.id} className={`p-4 ${!licensed?'opacity-70':''}`}>
+                  return<Card key={m.id} className={`p-4 ${!licensed&&!canRequestLicense?'opacity-70':''}`}>
                     <div className="flex items-start gap-3">
                       <div className="w-12 h-12 bg-purple-500/20 rounded-lg flex items-center justify-center shrink-0"><Icon name="Package" size={24} className="text-purple-400"/></div>
                       <div className="flex-1 min-w-0">
@@ -7428,7 +7497,7 @@
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-1 mt-4">
-                      {licensed&&<Button variant="ghost" size="sm" icon="Play" onClick={()=>setPreviewModal({type:'scorm',item:m})}>Aperçu</Button>}
+                      {(licensed||canRequestLicense)&&<Button variant="ghost" size="sm" icon="Play" onClick={()=>setPreviewModal({type:'scorm',item:m})}>Aperçu</Button>}
                       {canRequestLicense&&(
                         <button onClick={()=>toggleRequestCart('scorm',m.id,m)} className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${isInRequestCart('scorm',m.id)?'bg-indigo-600 text-white':'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
                           <Icon name={isInRequestCart('scorm',m.id)?'Check':'Plus'} size={12}/>
@@ -7448,7 +7517,7 @@
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filter(quizzes).map(q=>{
                   const licensed=isLicensed('quiz',q.id);
-                  return<Card key={q.id} className={`p-4 ${!licensed?'opacity-70':''}`}>
+                  return<Card key={q.id} className={`p-4 ${!licensed&&!canRequestLicense?'opacity-70':''}`}>
                     <div className="flex items-start gap-3">
                       <div className="w-12 h-12 bg-pink-500/20 rounded-lg flex items-center justify-center shrink-0"><Icon name="HelpCircle" size={24} className="text-pink-400"/></div>
                       <div className="flex-1 min-w-0">
@@ -7459,7 +7528,7 @@
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-1 mt-4">
-                      {licensed&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>setPreviewModal({type:'quiz',item:q})}>Voir</Button>}
+                      {(licensed||canRequestLicense)&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>setPreviewModal({type:'quiz',item:q})}>Voir</Button>}
                       {canRequestLicense&&(
                         <button onClick={()=>toggleRequestCart('quiz',q.id,q)} className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${isInRequestCart('quiz',q.id)?'bg-indigo-600 text-white':'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
                           <Icon name={isInRequestCart('quiz',q.id)?'Check':'Plus'} size={12}/>
@@ -7479,7 +7548,7 @@
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filter(courses).map(c=>{
                   const licensed=isLicensed('course',c.id);
-                  return<Card key={c.id} className={`p-4 ${!licensed?'opacity-70':''}`}>
+                  return<Card key={c.id} className={`p-4 ${!licensed&&!canRequestLicense?'opacity-70':''}`}>
                     <div className="flex items-start gap-3">
                       <div className="w-12 h-12 bg-green-500/20 rounded-lg flex items-center justify-center shrink-0"><Icon name="BookOpen" size={24} className="text-green-400"/></div>
                       <div className="flex-1 min-w-0">
@@ -7490,7 +7559,7 @@
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-1 mt-4">
-                      {licensed&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>setPreviewModal({type:'course',item:c})}>Voir</Button>}
+                      {(licensed||canRequestLicense)&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>setPreviewModal({type:'course',item:c})}>Voir</Button>}
                       {canRequestLicense&&(
                         <button onClick={()=>toggleRequestCart('course',c.id,c)} className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${isInRequestCart('course',c.id)?'bg-indigo-600 text-white':'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
                           <Icon name={isInRequestCart('course',c.id)?'Check':'Plus'} size={12}/>
@@ -7510,7 +7579,7 @@
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filter(paths).map(p=>{
                   const licensed=isLicensed('path',p.id);
-                  return<Card key={p.id} className={`p-4 ${!licensed?'opacity-70':''}`}>
+                  return<Card key={p.id} className={`p-4 ${!licensed&&!canRequestLicense?'opacity-70':''}`}>
                     <div className="flex items-start gap-3">
                       <div className="w-12 h-12 bg-orange-500/20 rounded-lg flex items-center justify-center shrink-0"><Icon name="Route" size={24} className="text-orange-400"/></div>
                       <div className="flex-1 min-w-0">
@@ -7521,7 +7590,7 @@
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-1 mt-4">
-                      {licensed&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>setPreviewModal({type:'path',item:p})}>Voir</Button>}
+                      {(licensed||canRequestLicense)&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>setPreviewModal({type:'path',item:p})}>Voir</Button>}
                       {canRequestLicense&&(
                         <button onClick={()=>toggleRequestCart('path',p.id,p)} className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${isInRequestCart('path',p.id)?'bg-indigo-600 text-white':'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
                           <Icon name={isInRequestCart('path',p.id)?'Check':'Plus'} size={12}/>
@@ -7568,7 +7637,7 @@
         {previewScormCatalog&&<ScormPlayer module={previewScormCatalog} previewMode={true} onClose={()=>setPreviewScormCatalog(null)}/>}
         
         {/* Modal panier de demande */}
-        <Modal isOpen={requestCartModal} onClose={()=>setRequestCartModal(false)} title="Demande de licence" size="lg">
+        <Modal isOpen={requestCartModal} onClose={()=>setRequestCartModal(false)} title={isFormations?'Demande de licence — Formations':isRessources?'Demande d\'accès — Ressources':'Demande de licence'} size="lg">
           <div className="space-y-4">
             <div className="bg-gray-700/50 rounded-lg p-4">
               <h4 className="font-semibold mb-2">Contenus sélectionnés ({getRequestCartCount()})</h4>
