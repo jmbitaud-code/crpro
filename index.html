@@ -8049,9 +8049,14 @@
         });
       };
       
-      const buildVimeoEmbedUrl=(id,hash)=>{
+      const buildVimeoEmbedUrl=(id,hash,opts={})=>{
         let url=`https://player.vimeo.com/video/${id}`;
-        if(hash)url+=`?h=${hash}`;
+        const params=[];
+        if(hash)params.push(`h=${hash}`);
+        if(opts.preview){
+          params.push('controls=1','fullscreen=0','pip=0','quality=360p','dnt=1');
+        }
+        if(params.length)url+='?'+params.join('&');
         return url;
       };
       
@@ -8225,9 +8230,12 @@
                 {filter(videos).map(v=>{
                   const licensed=isLicensed('video',v.id);
                   return<Card key={v.id} className={`overflow-hidden ${!licensed&&!canRequestLicense?'opacity-70':''}`}>
-                    <div className="aspect-video bg-gray-900 relative">
+                    <div className="aspect-video bg-gray-900 relative cursor-pointer group" onClick={()=>(licensed||canRequestLicense)?setPreviewModal({type:'video',item:v}):null}>
                       {v.thumbnail_url?<img src={v.thumbnail_url} className="w-full h-full object-cover"/>:
                       <div className="w-full h-full flex items-center justify-center"><Icon name="Film" size={48} className="text-gray-600"/></div>}
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition flex items-center justify-center">
+                        {(licensed||canRequestLicense)&&<div className="opacity-0 group-hover:opacity-100 transition w-14 h-14 bg-white/20 backdrop-blur rounded-full flex items-center justify-center"><Icon name="Play" size={28} className="text-white ml-1"/></div>}
+                      </div>
                       <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 rounded text-xs">{v.duration||'--:--'}</div>
                       {!licensed&&<div className="absolute top-2 right-2 px-2 py-1 bg-orange-500/90 rounded text-xs">🔒 Non licencié</div>}
                       {licensed&&!isSuperAdmin&&<div className="absolute top-2 right-2 px-2 py-1 bg-green-500/90 rounded text-xs">✓ Licencié</div>}
@@ -8379,7 +8387,16 @@
         {/* Modal aperçu */}
         <Modal isOpen={!!previewModal} onClose={()=>setPreviewModal(null)} title={`Aperçu - ${previewModal?.item?.title}`} size="xl">
           {previewModal?.type==='video'&&previewModal.item&&(
-            <div className="aspect-video"><iframe src={buildVimeoEmbedUrl(previewModal.item.vimeo_id,previewModal.item.vimeo_hash)} className="w-full h-full rounded-lg" allow="autoplay; fullscreen"/></div>
+            <div>
+              <div className="aspect-video bg-black rounded-lg overflow-hidden"><iframe src={buildVimeoEmbedUrl(previewModal.item.vimeo_id,previewModal.item.vimeo_hash,{preview:true})} className="w-full h-full" allow="autoplay" allowFullScreen={false}/></div>
+              <div className="mt-3 flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-400">{previewModal.item.duration||''}{previewModal.item.content_categories?.name?' • '+previewModal.item.content_categories.name:''}</p>
+                  {previewModal.item.description&&<p className="text-sm text-gray-500 mt-1 line-clamp-2">{previewModal.item.description}</p>}
+                </div>
+                <span className="px-2 py-1 bg-cyan-500/20 text-cyan-400 rounded text-xs shrink-0"><Icon name="Eye" size={12} className="inline mr-1"/>Aperçu</span>
+              </div>
+            </div>
           )}
           {previewModal?.type==='scorm'&&previewModal.item&&(
             <div className="p-6 text-center">
@@ -9193,7 +9210,7 @@
         if(!previewPlayerRef.current)return;
         const vid=previewCurrent.data?.vimeo_id||previewCurrent.data?.vimeo_url?.match(/\/(\d+)/)?.[1];
         if(!vid)return;
-        try{previewVimeoRef.current=new Vimeo.Player(previewPlayerRef.current,{id:vid,width:'100%',responsive:true,title:false,byline:false,portrait:false});}catch(e){}
+        try{previewVimeoRef.current=new Vimeo.Player(previewPlayerRef.current,{id:vid,width:'100%',responsive:true,title:false,byline:false,portrait:false,fullscreen:false,pip:false,quality:'360p'});}catch(e){}
         return()=>{if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}};
       },[previewCurrent?.id,previewCurrent?.type]);
       
@@ -10918,7 +10935,7 @@
         if(!previewPlayerRef.current)return;
         const vid=previewCurrent.data?.vimeo_id||previewCurrent.data?.vimeo_url?.match(/\/(\d+)/)?.[1];
         if(!vid)return;
-        try{previewVimeoRef.current=new Vimeo.Player(previewPlayerRef.current,{id:vid,width:'100%',responsive:true,title:false,byline:false,portrait:false});}catch(e){}
+        try{previewVimeoRef.current=new Vimeo.Player(previewPlayerRef.current,{id:vid,width:'100%',responsive:true,title:false,byline:false,portrait:false,fullscreen:false,pip:false,quality:'360p'});}catch(e){}
         return()=>{if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}};
       },[previewCurrent?.id,previewCurrent?.type]);
       
