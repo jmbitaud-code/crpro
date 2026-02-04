@@ -9185,6 +9185,17 @@
       const previewPlayerRef=useRef(null);
       const previewVimeoRef=useRef(null);
       
+      // Preview Vimeo player effect (must be before any conditional return)
+      useEffect(()=>{
+        if(!previewCurrent||previewCurrent.type!=='video')return;
+        if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}
+        if(!previewPlayerRef.current)return;
+        const vid=previewCurrent.data?.vimeo_id||previewCurrent.data?.vimeo_url?.match(/\/(\d+)/)?.[1];
+        if(!vid)return;
+        try{previewVimeoRef.current=new Vimeo.Player(previewPlayerRef.current,{id:vid,width:'100%',responsive:true,title:false,byline:false,portrait:false});}catch(e){}
+        return()=>{if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}};
+      },[previewCurrent?.id,previewCurrent?.type]);
+      
       // Helpers taxonomie
       
       // Vérifier si un contenu est licencié
@@ -9415,7 +9426,7 @@
 
       if(!can('manage_playlists')&&profile?.role!=='trainer')return<Empty icon="Lock" title="Accès refusé"/>;
       
-      // Preview course viewer
+      // Preview course functions
       const openPreview=async(course)=>{
         setPreviewCourse(course);
         const[{data:pvs},{data:ps}]=await Promise.all([
@@ -9436,16 +9447,6 @@
         if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}
         setPreviewCourse(null);setPreviewItems([]);setPreviewCurrent(null);
       };
-      // Vimeo player for preview
-      useEffect(()=>{
-        if(!previewCurrent||previewCurrent.type!=='video')return;
-        if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}
-        if(!previewPlayerRef.current)return;
-        const vid=previewCurrent.data?.vimeo_id||previewCurrent.data?.vimeo_url?.match(/\/(\d+)/)?.[1];
-        if(!vid)return;
-        try{previewVimeoRef.current=new Vimeo.Player(previewPlayerRef.current,{id:vid,width:'100%',responsive:true,title:false,byline:false,portrait:false});}catch(e){}
-        return()=>{if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}};
-      },[previewCurrent?.id,previewCurrent?.type]);
       
       if(loading)return<Loading/>;
       
@@ -10804,6 +10805,17 @@
       const previewPlayerRef=useRef(null);
       const previewVimeoRef=useRef(null);
       
+      // Preview Vimeo player effect (must be before any conditional return)
+      useEffect(()=>{
+        if(!previewCurrent||previewCurrent.type!=='video')return;
+        if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}
+        if(!previewPlayerRef.current)return;
+        const vid=previewCurrent.data?.vimeo_id||previewCurrent.data?.vimeo_url?.match(/\/(\d+)/)?.[1];
+        if(!vid)return;
+        try{previewVimeoRef.current=new Vimeo.Player(previewPlayerRef.current,{id:vid,width:'100%',responsive:true,title:false,byline:false,portrait:false});}catch(e){}
+        return()=>{if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}};
+      },[previewCurrent?.id,previewCurrent?.type]);
+      
       const load=useCallback(async()=>{
         // Charger les parcours
         let q=supabase.from('learning_paths').select('*,learning_path_courses(count)').order('created_at',{ascending:false});
@@ -10954,15 +10966,6 @@
         if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}
         setPreviewCourse(null);setPreviewItems([]);setPreviewCurrent(null);
       };
-      useEffect(()=>{
-        if(!previewCurrent||previewCurrent.type!=='video')return;
-        if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}
-        if(!previewPlayerRef.current)return;
-        const vid=previewCurrent.data?.vimeo_id||previewCurrent.data?.vimeo_url?.match(/\/(\d+)/)?.[1];
-        if(!vid)return;
-        try{previewVimeoRef.current=new Vimeo.Player(previewPlayerRef.current,{id:vid,width:'100%',responsive:true,title:false,byline:false,portrait:false});}catch(e){}
-        return()=>{if(previewVimeoRef.current){try{previewVimeoRef.current.destroy();}catch(e){}}};
-      },[previewCurrent?.id,previewCurrent?.type]);
       
       if(loading)return<Loading/>;
       
