@@ -7231,27 +7231,36 @@
           });
         }
         
+        // Payload avec les noms de colonnes corrects de la table license_requests
         const insertPayload={
           center_id:center.id,
           requested_by:user?.user?.id,
-          name:requestCartForm.name,
-          description:requestCartForm.description,
-          request_type:requestType,
+          requested_duration_months:requestCartForm.duration_months||12,
+          requested_max_learners:requestCartForm.max_learners?parseInt(requestCartForm.max_learners):null,
+          request_message:requestCartForm.message||requestCartForm.name,
           status:'pending'
         };
         
-        if(requestType==='content_pack'){
-          insertPayload.duration_months=requestCartForm.duration_months;
-          insertPayload.max_learners=requestCartForm.max_learners?parseInt(requestCartForm.max_learners):null;
-          insertPayload.message=requestCartForm.message;
-        }else{
-          insertPayload.duration_months=requestCartForm.duration_months;
-          insertPayload.requested_resources=resourceItems;
-          insertPayload.requested_max_resources=resourceItems.length;
-          insertPayload.message=requestCartForm.message||`Demande d'accès à ${resourceItems.length} supports pédagogiques`;
-        }
+        // Colonnes Phase 2 (ajoutées seulement si migration appliquée)
+        // On tente avec, et en cas d'erreur on retente sans
+        const phase2Cols={
+          request_type:requestType,
+          requested_resources:isRessources?resourceItems:null,
+          requested_max_resources:isRessources?resourceItems.length:null
+        };
         
-        const{data:req}=await supabase.from('license_requests').insert(insertPayload).select().single();
+        let req=null;
+        // Tentative 1 : avec les colonnes Phase 2
+        const{data:req1,error:err1}=await supabase.from('license_requests').insert({...insertPayload,...phase2Cols}).select().single();
+        if(err1){
+          console.warn('Insert avec colonnes Phase 2 échoué, tentative sans:',err1.message);
+          // Tentative 2 : sans les colonnes Phase 2
+          const{data:req2,error:err2}=await supabase.from('license_requests').insert(insertPayload).select().single();
+          if(err2)throw new Error(err2.message||'Erreur lors de la création de la demande');
+          req=req2;
+        }else{
+          req=req1;
+        }
         
         if(req){
           const items=[];
@@ -7259,7 +7268,10 @@
             const contentType=type.slice(0,-1);
             list.forEach(item=>{items.push({request_id:req.id,content_type:contentType==='quizze'?'quiz':contentType,content_id:item.id});});
           });
-          if(items.length)await supabase.from('license_request_items').insert(items);
+          if(items.length){
+            const{error:itemErr}=await supabase.from('license_request_items').insert(items);
+            if(itemErr)console.warn('Erreur insertion items:',itemErr.message);
+          }
           
           // Générer le PDF
           const requestData={
