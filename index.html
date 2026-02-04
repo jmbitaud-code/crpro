@@ -3434,6 +3434,8 @@
       const[sessionContents,setSessionContents]=useState([]);
       const[licensePack,setLicensePack]=useState(null); // pack items for selected license
       const[saving,setSaving]=useState(false);
+      const[contentPickerTab,setContentPickerTab]=useState('video');
+      const[contentPickerSearch,setContentPickerSearch]=useState('');
       
       const load=useCallback(async()=>{
         // Charger les sessions avec session_contents
@@ -4361,16 +4363,14 @@
               {key:'course',label:'Cours',icon:'📚',items:courses},
               {key:'path',label:'Parcours',icon:'🛤️',items:paths}
             ];
-            const[contentTab,setContentTab]=useState('video');
-            const[contentSearch,setContentSearch]=useState('');
             return<div className="space-y-4">
-              <Input placeholder="Rechercher un contenu..." value={contentSearch} onChange={e=>setContentSearch(e.target.value)} icon="Search"/>
+              <Input placeholder="Rechercher un contenu..." value={contentPickerSearch} onChange={e=>setContentPickerSearch(e.target.value)} icon="Search"/>
               
               <div className="flex gap-1 flex-wrap">
                 {contentTypes.map(ct=>{
                   const availCount=ct.items.filter(i=>isInLicensePack(ct.key,i.id)).length;
                   const selCount=sessionContents.filter(sc=>sc.content_type===ct.key).length;
-                  return<button key={ct.key} onClick={()=>setContentTab(ct.key)} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${contentTab===ct.key?'bg-indigo-500 text-white':'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                  return<button key={ct.key} onClick={()=>setContentPickerTab(ct.key)} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${contentPickerTab===ct.key?'bg-indigo-500 text-white':'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
                     {ct.icon} {ct.label} ({selCount}/{availCount})
                   </button>;
                 })}
@@ -4378,11 +4378,11 @@
               
               <div className="max-h-80 overflow-y-auto space-y-1">
                 {(()=>{
-                  const ct=contentTypes.find(c=>c.key===contentTab);
+                  const ct=contentTypes.find(c=>c.key===contentPickerTab);
                   if(!ct)return null;
                   const filtered=ct.items.filter(i=>{
                     if(!isInLicensePack(ct.key,i.id))return false;
-                    if(contentSearch&&!i.title?.toLowerCase().includes(contentSearch.toLowerCase()))return false;
+                    if(contentPickerSearch&&!i.title?.toLowerCase().includes(contentPickerSearch.toLowerCase()))return false;
                     return true;
                   });
                   if(filtered.length===0)return<div className="text-center py-8 text-gray-500">Aucun contenu disponible dans cette catégorie</div>;
