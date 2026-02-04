@@ -6,7 +6,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <!-- VERSION 7.7.4 -->
+  <!-- VERSION 7.8.0 -->
   <title>Course Builder Pro</title>
   <meta name="description" content="Plateforme de création et diffusion de cours vidéo multi-centres">
   <meta name="theme-color" content="#1f2937">
@@ -65,7 +65,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '7.7.4';
+    const APP_VERSION = '7.8.0';
     const APP_URL = window.location.origin;
     // =======================================
 
@@ -3414,24 +3414,35 @@
       const[paths,setPaths]=useState([]);
       const[learners,setLearners]=useState([]);
       const[trainers,setTrainers]=useState([]);
+      const[centerLicenses,setCenterLicenses]=useState([]);
+      const[allVideos,setAllVideos]=useState([]);
+      const[allScorm,setAllScorm]=useState([]);
+      const[allQuizzes,setAllQuizzes]=useState([]);
       const[filter,setFilter]=useState({status:'all',search:''});
-      const[modal,setModal]=useState(null); // 'create', 'edit', 'participants', 'trainers', 'import'
+      const[modal,setModal]=useState(null); // 'create', 'edit', 'participants', 'trainers', 'import', 'contents'
       const[selectedSession,setSelectedSession]=useState(null);
       const[importData,setImportData]=useState({sessionId:'',file:null,results:null,processing:false});
       const[form,setForm]=useState({
         name:'',description:'',code:'',
+        license_id:'',
         content_type:'course',content_id:'',
         start_date:'',end_date:'',start_time:'',end_time:'',
         location:'',location_type:'online',max_participants:'',
         status:'planned',auto_enroll:true,certificate_enabled:true
       });
+      // Multi-content for session_contents
+      const[sessionContents,setSessionContents]=useState([]);
+      const[licensePack,setLicensePack]=useState(null); // pack items for selected license
+      const[saving,setSaving]=useState(false);
       
       const load=useCallback(async()=>{
-        // Charger les sessions
+        // Charger les sessions avec session_contents
         let qs=supabase.from('training_sessions').select(`
           *,
           session_trainers(id,trainer_id,role,profiles:trainer_id(first_name,last_name,email)),
-          session_participants(id,learner_id,status,enrollment_id,profiles:learner_id(first_name,last_name,email))
+          session_participants(id,learner_id,status,enrollment_id,profiles:learner_id(first_name,last_name,email)),
+          session_contents(id,content_type,content_id,sort_order,is_required),
+          center_licenses(id,pack_id,start_date,end_date,max_learners,status,content_packs(name,code))
         `).order('start_date',{ascending:false});
         if(!isSuperAdmin&&center?.id)qs=qs.eq('center_id',center.id);
         const{data:sessionsData}=await qs;
@@ -3456,15 +3467,48 @@
         if(!isSuperAdmin&&center?.id)qt=qt.eq('center_id',center.id);
         const{data:trainersData}=await qt;
         
+        // Charger les licences actives du centre
+        const today=new Date().toISOString().split('T')[0];
+        let qlc=supabase.from('center_licenses').select('*,content_packs(id,name,code,pack_type)').eq('status','active').lte('start_date',today).gte('end_date',today);
+        if(!isSuperAdmin&&center?.id)qlc=qlc.eq('center_id',center.id);
+        const{data:licData}=await qlc;
+        setCenterLicenses(licData||[]);
+        
+        // Charger vidéos, SCORM, quiz pour multi-content
+        const[{data:vids},{data:scorms},{data:qzs}]=await Promise.all([
+          supabase.from('videos').select('id,title').eq('is_lms_content',true).order('title'),
+          supabase.from('scorm_modules').select('id,title').eq('is_lms_content',true).order('title'),
+          supabase.from('quizzes').select('id,title').eq('is_lms_content',true).order('title')
+        ]);
+        setAllVideos(vids||[]);
+        setAllScorm(scorms||[]);
+        setAllQuizzes(qzs||[]);
+        
         // Enrichir les sessions avec les noms de contenu
-        const enrichedSessions=(sessionsData||[]).map(s=>({
-          ...s,
-          content_title:s.content_type==='course'
-            ?(coursesData||[]).find(c=>c.id===s.content_id)?.title
-            :(pathsData||[]).find(p=>p.id===s.content_id)?.title,
-          trainers_count:s.session_trainers?.length||0,
-          participants_count:s.session_participants?.length||0
-        }));
+        const enrichedSessions=(sessionsData||[]).map(s=>{
+          // Compter les apprenants actifs dans toutes les sessions de la même licence
+          let licenseLearnersCount=0;
+          if(s.license_id){
+            const sameLicSessions=(sessionsData||[]).filter(ss=>ss.license_id===s.license_id);
+            const uniqueLearners=new Set();
+            sameLicSessions.forEach(ss=>(ss.session_participants||[]).forEach(p=>{if(p.status==='enrolled')uniqueLearners.add(p.learner_id);}));
+            licenseLearnersCount=uniqueLearners.size;
+          }
+          return{
+            ...s,
+            content_title:s.content_type==='course'
+              ?(coursesData||[]).find(c=>c.id===s.content_id)?.title
+              :(pathsData||[]).find(p=>p.id===s.content_id)?.title,
+            trainers_count:s.session_trainers?.length||0,
+            participants_count:s.session_participants?.length||0,
+            contents_count:(s.session_contents||[]).length,
+            license_name:s.center_licenses?.content_packs?.name||null,
+            license_max:s.center_licenses?.max_learners||null,
+            license_learners:licenseLearnersCount,
+            license_end:s.center_licenses?.end_date||null,
+            license_status:s.center_licenses?.status||null
+          };
+        });
         
         setSessions(enrichedSessions);
         setCourses(coursesData||[]);
@@ -3660,18 +3704,57 @@
         return true;
       });
       
+      // Charger les items du pack d'une licence
+      const loadPackItems=useCallback(async(licenseId)=>{
+        if(!licenseId){setLicensePack(null);return;}
+        const lic=centerLicenses.find(l=>l.id===licenseId);
+        if(!lic)return;
+        if(lic.content_packs?.pack_type==='full_catalog'||!lic.pack_id){
+          // Full catalog = all LMS content
+          setLicensePack({type:'full_catalog',items:[]});
+          return;
+        }
+        const{data:items}=await supabase.from('content_pack_items').select('content_type,content_id').eq('pack_id',lic.pack_id);
+        setLicensePack({type:'bundle',items:items||[],packName:lic.content_packs?.name});
+      },[centerLicenses]);
+      
+      // Vérifier si un contenu est dans le pack de la licence sélectionnée
+      const isInLicensePack=(type,id)=>{
+        if(!licensePack)return true; // no license = no filter
+        if(licensePack.type==='full_catalog')return true;
+        return licensePack.items.some(i=>i.content_type===type&&i.content_id===id);
+      };
+      
+      // Toggle contenu dans sessionContents
+      const toggleSessionContent=(type,id,title)=>{
+        setSessionContents(prev=>{
+          const idx=prev.findIndex(c=>c.content_type===type&&c.content_id===id);
+          if(idx>=0)return prev.filter((_,i)=>i!==idx);
+          return[...prev,{content_type:type,content_id:id,title,sort_order:prev.length,is_required:true}];
+        });
+      };
+      
+      const isContentSelected=(type,id)=>sessionContents.some(c=>c.content_type===type&&c.content_id===id);
+      
       // Créer/Modifier une session
       const saveSession=async()=>{
-        if(!form.name||!form.content_id||!form.start_date){
-          alert('Veuillez remplir les champs obligatoires');return;
+        if(!form.name||!form.start_date){
+          alert('Veuillez remplir le nom et la date de début');return;
+        }
+        // Vérifier qu'il y a au moins un contenu (ancien ou nouveau mode)
+        if(!form.content_id&&sessionContents.length===0){
+          alert('Veuillez sélectionner au moins un contenu');return;
         }
         
+        setSaving(true);
+        try{
         const data={
           name:form.name,
           description:form.description||null,
           code:form.code||null,
-          content_type:form.content_type,
-          content_id:form.content_id,
+          content_type:form.content_type||null,
+          content_id:form.content_id||null,
+          license_id:form.license_id||null,
           start_date:form.start_date,
           end_date:form.end_date||null,
           start_time:form.start_time||null,
@@ -3685,27 +3768,51 @@
           center_id:center?.id||null
         };
         
+        let sessionId;
         if(selectedSession){
           await supabase.from('training_sessions').update(data).eq('id',selectedSession.id);
+          sessionId=selectedSession.id;
         }else{
           data.created_by=profile?.id;
-          await supabase.from('training_sessions').insert(data);
+          const{data:newSession}=await supabase.from('training_sessions').insert(data).select().single();
+          sessionId=newSession?.id;
+        }
+        
+        // Sauvegarder session_contents si multi-content mode
+        if(sessionId&&sessionContents.length>0){
+          // Supprimer les anciens
+          await supabase.from('session_contents').delete().eq('session_id',sessionId);
+          // Insérer les nouveaux
+          const items=sessionContents.map((c,i)=>({
+            session_id:sessionId,
+            content_type:c.content_type,
+            content_id:c.content_id,
+            sort_order:i,
+            is_required:c.is_required!==false,
+            added_by:profile?.id
+          }));
+          await supabase.from('session_contents').insert(items);
         }
         
         setModal(null);
         setSelectedSession(null);
         resetForm();
         load();
+        }catch(e){console.error(e);alert('Erreur: '+e.message);}
+        setSaving(false);
       };
       
       const resetForm=()=>{
         setForm({
           name:'',description:'',code:'',
+          license_id:'',
           content_type:'course',content_id:'',
           start_date:'',end_date:'',start_time:'',end_time:'',
           location:'',location_type:'online',max_participants:'',
           status:'planned',auto_enroll:true,certificate_enabled:true
         });
+        setSessionContents([]);
+        setLicensePack(null);
       };
       
       const openEdit=(session)=>{
@@ -3714,6 +3821,7 @@
           name:session.name||'',
           description:session.description||'',
           code:session.code||'',
+          license_id:session.license_id||'',
           content_type:session.content_type||'course',
           content_id:session.content_id||'',
           start_date:session.start_date||'',
@@ -3727,6 +3835,18 @@
           auto_enroll:session.auto_enroll!==false,
           certificate_enabled:session.certificate_enabled!==false
         });
+        // Load existing session_contents
+        const existingContents=(session.session_contents||[]).map(sc=>{
+          let title='';
+          if(sc.content_type==='course')title=(courses.find(c=>c.id===sc.content_id)||{}).title||'Cours';
+          else if(sc.content_type==='path')title=(paths.find(p=>p.id===sc.content_id)||{}).title||'Parcours';
+          else if(sc.content_type==='video')title=(allVideos.find(v=>v.id===sc.content_id)||{}).title||'Vidéo';
+          else if(sc.content_type==='scorm')title=(allScorm.find(s=>s.id===sc.content_id)||{}).title||'SCORM';
+          else if(sc.content_type==='quiz')title=(allQuizzes.find(q=>q.id===sc.content_id)||{}).title||'Quiz';
+          return{...sc,title};
+        });
+        setSessionContents(existingContents);
+        if(session.license_id)loadPackItems(session.license_id);
         setModal('edit');
       };
       
@@ -3900,12 +4020,12 @@
                 <div className="flex items-start gap-4">
                   {/* Icône type */}
                   <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
-                    session.content_type==='course'?'bg-indigo-500/20':'bg-purple-500/20'
+                    session.license_id?'bg-amber-500/20':session.content_type==='course'?'bg-indigo-500/20':'bg-purple-500/20'
                   }`}>
                     <Icon 
-                      name={session.content_type==='course'?'BookOpen':'Route'} 
+                      name={session.license_id?'Key':session.content_type==='course'?'BookOpen':'Route'} 
                       size={24} 
-                      className={session.content_type==='course'?'text-indigo-400':'text-purple-400'}
+                      className={session.license_id?'text-amber-400':session.content_type==='course'?'text-indigo-400':'text-purple-400'}
                     />
                   </div>
                   
@@ -3927,9 +4047,31 @@
                       </span>
                     </div>
                     
-                    <p className="text-sm text-gray-400 mt-1">
-                      {session.content_type==='course'?'📚 Cours':'🛤️ Parcours'}: {session.content_title||'Non défini'}
-                    </p>
+                    {/* License info */}
+                    {session.license_name&&(
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded flex items-center gap-1">
+                          <Icon name="Key" size={10}/>Licence: {session.license_name}
+                        </span>
+                        {session.contents_count>0&&(
+                          <span className="text-xs px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded">
+                            {session.contents_count} contenu{session.contents_count>1?'s':''}
+                          </span>
+                        )}
+                        {session.license_end&&(()=>{
+                          const days=Math.ceil((new Date(session.license_end)-new Date())/(1000*60*60*24));
+                          if(days<=0)return<span className="text-xs px-2 py-0.5 bg-red-500/20 text-red-400 rounded">Licence expirée</span>;
+                          if(days<=30)return<span className="text-xs px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded">Expire dans {days}j</span>;
+                          return null;
+                        })()}
+                      </div>
+                    )}
+                    
+                    {!session.license_name&&session.content_title&&(
+                      <p className="text-sm text-gray-400 mt-1">
+                        {session.content_type==='course'?'📚 Cours':'🛤️ Parcours'}: {session.content_title}
+                      </p>
+                    )}
                     
                     <div className="flex flex-wrap gap-4 mt-2 text-sm">
                       <span className="flex items-center gap-1 text-gray-400">
@@ -3949,6 +4091,24 @@
                         {session.location&&` • ${session.location}`}
                       </span>
                     </div>
+                    
+                    {/* Barre de consommation licence */}
+                    {session.license_max&&session.license_id&&(
+                      <div className="mt-2">
+                        <div className="flex items-center gap-2 text-xs text-gray-400 mb-1">
+                          <span>Places licence: {session.license_learners}/{session.license_max}</span>
+                          <span className={session.license_learners>=session.license_max?'text-red-400':session.license_learners>=session.license_max*0.8?'text-orange-400':'text-green-400'}>
+                            ({Math.round(session.license_learners/session.license_max*100)}%)
+                          </span>
+                        </div>
+                        <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full transition-all ${
+                            session.license_learners>=session.license_max?'bg-red-500':
+                            session.license_learners>=session.license_max*0.8?'bg-orange-500':'bg-green-500'
+                          }`} style={{width:Math.min(100,session.license_learners/session.license_max*100)+'%'}}/>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   
                   {/* Stats */}
@@ -3969,6 +4129,16 @@
                       <p className="text-xl font-bold text-green-400">{session.participants_count}</p>
                       <p className="text-xs text-gray-500">Participant{session.participants_count>1?'s':''}</p>
                     </div>
+                    {session.contents_count>0&&(
+                      <div 
+                        className="text-center cursor-pointer hover:bg-gray-700/50 p-2 rounded-lg transition"
+                        onClick={()=>{setSelectedSession(session);setModal('view-contents');}}
+                        title="Voir les contenus"
+                      >
+                        <p className="text-xl font-bold text-amber-400">{session.contents_count}</p>
+                        <p className="text-xs text-gray-500">Contenu{session.contents_count>1?'s':''}</p>
+                      </div>
+                    )}
                   </div>
                   
                   {/* Actions */}
@@ -4000,7 +4170,7 @@
         )}
         
         {/* Modal Créer/Modifier */}
-        <Modal isOpen={modal==='create'||modal==='edit'} onClose={()=>{setModal(null);setSelectedSession(null);}} title={selectedSession?'Modifier la session':'Nouvelle session'} size="lg">
+        <Modal isOpen={modal==='create'||modal==='edit'} onClose={()=>{setModal(null);setSelectedSession(null);}} title={selectedSession?'Modifier la session':'Nouvelle session'} size="xl">
           <div className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Input label="Nom de la session *" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Ex: Formation Permis C - Mars 2026"/>
@@ -4032,24 +4202,101 @@
               </div>
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Type de contenu *</label>
-                <select className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg" value={form.content_type} onChange={e=>setForm({...form,content_type:e.target.value,content_id:''})}>
-                  <option value="course">📚 Cours</option>
-                  <option value="path">🛤️ Parcours</option>
+            {/* LICENCE */}
+            {centerLicenses.length>0&&(
+              <div className="p-4 bg-amber-500/5 border border-amber-500/20 rounded-lg">
+                <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                  <Icon name="Key" size={16} className="text-amber-400"/>Lier à une licence (optionnel)
+                </label>
+                <select className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg" value={form.license_id} onChange={e=>{
+                  const licId=e.target.value;
+                  setForm({...form,license_id:licId});
+                  loadPackItems(licId);
+                  if(licId){
+                    const lic=centerLicenses.find(l=>l.id===licId);
+                    if(lic){
+                      // Auto-fill dates from license if empty
+                      if(!form.start_date)setForm(f=>({...f,license_id:licId,start_date:lic.start_date,end_date:lic.end_date}));
+                      if(lic.max_learners&&!form.max_participants)setForm(f=>({...f,max_participants:String(lic.max_learners)}));
+                    }
+                  }
+                }}>
+                  <option value="">Aucune licence (contenu libre)</option>
+                  {centerLicenses.map(l=>{
+                    const days=Math.ceil((new Date(l.end_date)-new Date())/(1000*60*60*24));
+                    return<option key={l.id} value={l.id}>
+                      {l.content_packs?.name||'Catalogue complet'} — {new Date(l.start_date).toLocaleDateString()} → {new Date(l.end_date).toLocaleDateString()} ({days}j) {l.max_learners?`• Max ${l.max_learners}`:''}
+                    </option>;
+                  })}
                 </select>
+                {form.license_id&&(()=>{
+                  const lic=centerLicenses.find(l=>l.id===form.license_id);
+                  if(!lic)return null;
+                  return<div className="mt-2 flex items-center gap-3 text-xs text-gray-400">
+                    <span>📅 {new Date(lic.start_date).toLocaleDateString()} → {new Date(lic.end_date).toLocaleDateString()}</span>
+                    <span>👥 {lic.max_learners?`Max ${lic.max_learners} apprenants`:'Illimité'}</span>
+                    <span className="text-amber-400">{lic.content_packs?.name||'Catalogue complet'}</span>
+                  </div>;
+                })()}
               </div>
+            )}
+            
+            {/* CONTENU: Mode classique (sans licence) OU multi-contenu (avec licence) */}
+            {!form.license_id?(
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Type de contenu *</label>
+                  <select className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg" value={form.content_type} onChange={e=>setForm({...form,content_type:e.target.value,content_id:''})}>
+                    <option value="course">📚 Cours</option>
+                    <option value="path">🛤️ Parcours</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">{form.content_type==='course'?'Cours':'Parcours'} *</label>
+                  <select className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg" value={form.content_id} onChange={e=>setForm({...form,content_id:e.target.value})}>
+                    <option value="">Sélectionner...</option>
+                    {(form.content_type==='course'?courses:paths).map(c=>(
+                      <option key={c.id} value={c.id}>{c.title}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            ):(
               <div>
-                <label className="block text-sm font-medium mb-1">{form.content_type==='course'?'Cours':'Parcours'} *</label>
-                <select className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg" value={form.content_id} onChange={e=>setForm({...form,content_id:e.target.value})}>
-                  <option value="">Sélectionner...</option>
-                  {(form.content_type==='course'?courses:paths).map(c=>(
-                    <option key={c.id} value={c.id}>{c.title}</option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium flex items-center gap-2">
+                    <Icon name="Package" size={16} className="text-indigo-400"/>Contenus de la session ({sessionContents.length} sélectionné{sessionContents.length>1?'s':''})
+                  </label>
+                  <Button size="sm" variant="secondary" icon="Plus" onClick={()=>setModal('contents')}>Ajouter des contenus</Button>
+                </div>
+                {sessionContents.length===0?(
+                  <div className="p-4 border border-dashed border-gray-600 rounded-lg text-center text-gray-500 text-sm cursor-pointer hover:border-indigo-500 hover:text-indigo-400 transition" onClick={()=>setModal('contents')}>
+                    <Icon name="Plus" size={24} className="mx-auto mb-2"/>
+                    Cliquez pour ajouter des contenus depuis votre licence
+                  </div>
+                ):(
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {sessionContents.map((sc,idx)=>{
+                      const icons={video:'📹',scorm:'📦',quiz:'❓',course:'📚',path:'🛤️'};
+                      return<div key={idx} className="flex items-center gap-2 p-2 bg-gray-700/50 rounded-lg">
+                        <span>{icons[sc.content_type]||'📄'}</span>
+                        <span className="flex-1 text-sm truncate">{sc.title}</span>
+                        <span className="text-xs text-gray-500">{sc.content_type}</span>
+                        <label className="flex items-center gap-1 text-xs cursor-pointer">
+                          <input type="checkbox" checked={sc.is_required!==false} onChange={e=>{
+                            setSessionContents(prev=>prev.map((c,i)=>i===idx?{...c,is_required:e.target.checked}:c));
+                          }} className="w-3 h-3"/>
+                          Obligatoire
+                        </label>
+                        <button onClick={()=>setSessionContents(prev=>prev.filter((_,i)=>i!==idx))} className="text-red-400 hover:text-red-300 p-1">
+                          <Icon name="X" size={14}/>
+                        </button>
+                      </div>;
+                    })}
+                  </div>
+                )}
               </div>
-            </div>
+            )}
             
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <Input label="Date début *" type="date" value={form.start_date} onChange={e=>setForm({...form,start_date:e.target.value})}/>
@@ -4100,7 +4347,91 @@
           
           <div className="flex justify-end gap-2 mt-6">
             <Button variant="secondary" onClick={()=>{setModal(null);setSelectedSession(null);}}>Annuler</Button>
-            <Button icon="Save" onClick={saveSession}>{selectedSession?'Enregistrer':'Créer la session'}</Button>
+            <Button icon="Save" onClick={saveSession} loading={saving}>{selectedSession?'Enregistrer':'Créer la session'}</Button>
+          </div>
+        </Modal>
+        
+        {/* Modal Multi-Content Picker */}
+        <Modal isOpen={modal==='contents'} onClose={()=>setModal(selectedSession?'edit':'create')} title="Sélectionner les contenus" size="xl">
+          {(()=>{
+            const contentTypes=[
+              {key:'video',label:'Vidéos',icon:'📹',items:allVideos},
+              {key:'scorm',label:'SCORM',icon:'📦',items:allScorm},
+              {key:'quiz',label:'Quiz',icon:'❓',items:allQuizzes},
+              {key:'course',label:'Cours',icon:'📚',items:courses},
+              {key:'path',label:'Parcours',icon:'🛤️',items:paths}
+            ];
+            const[contentTab,setContentTab]=useState('video');
+            const[contentSearch,setContentSearch]=useState('');
+            return<div className="space-y-4">
+              <Input placeholder="Rechercher un contenu..." value={contentSearch} onChange={e=>setContentSearch(e.target.value)} icon="Search"/>
+              
+              <div className="flex gap-1 flex-wrap">
+                {contentTypes.map(ct=>{
+                  const availCount=ct.items.filter(i=>isInLicensePack(ct.key,i.id)).length;
+                  const selCount=sessionContents.filter(sc=>sc.content_type===ct.key).length;
+                  return<button key={ct.key} onClick={()=>setContentTab(ct.key)} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${contentTab===ct.key?'bg-indigo-500 text-white':'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                    {ct.icon} {ct.label} ({selCount}/{availCount})
+                  </button>;
+                })}
+              </div>
+              
+              <div className="max-h-80 overflow-y-auto space-y-1">
+                {(()=>{
+                  const ct=contentTypes.find(c=>c.key===contentTab);
+                  if(!ct)return null;
+                  const filtered=ct.items.filter(i=>{
+                    if(!isInLicensePack(ct.key,i.id))return false;
+                    if(contentSearch&&!i.title?.toLowerCase().includes(contentSearch.toLowerCase()))return false;
+                    return true;
+                  });
+                  if(filtered.length===0)return<div className="text-center py-8 text-gray-500">Aucun contenu disponible dans cette catégorie</div>;
+                  return filtered.map(item=>{
+                    const selected=isContentSelected(ct.key,item.id);
+                    return<label key={item.id} className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition ${selected?'bg-indigo-500/20 border border-indigo-500/50':'bg-gray-700/50 hover:bg-gray-700'}`}>
+                      <input type="checkbox" checked={selected} onChange={()=>toggleSessionContent(ct.key,item.id,item.title)} className="w-4 h-4 rounded"/>
+                      <span className="text-lg">{ct.icon}</span>
+                      <span className="flex-1 text-sm">{item.title}</span>
+                      {selected&&<Icon name="Check" size={16} className="text-indigo-400"/>}
+                    </label>;
+                  });
+                })()}
+              </div>
+              
+              <div className="flex items-center justify-between pt-2 border-t border-gray-700">
+                <span className="text-sm text-gray-400">{sessionContents.length} contenu{sessionContents.length>1?'s':''} sélectionné{sessionContents.length>1?'s':''}</span>
+                <Button onClick={()=>setModal(selectedSession?'edit':'create')}>Valider</Button>
+              </div>
+            </div>;
+          })()}
+        </Modal>
+        
+        {/* Modal View Contents (read-only) */}
+        <Modal isOpen={modal==='view-contents'} onClose={()=>setModal(null)} title={`Contenus — ${selectedSession?.name}`} size="md">
+          <div className="space-y-2">
+            {(selectedSession?.session_contents||[]).length===0?(
+              <p className="text-gray-500 text-center py-4">Aucun contenu assigné via session_contents</p>
+            ):(
+              (selectedSession?.session_contents||[]).map((sc,i)=>{
+                const icons={video:'📹',scorm:'📦',quiz:'❓',course:'📚',path:'🛤️'};
+                let title=sc.content_id;
+                if(sc.content_type==='video')title=(allVideos.find(v=>v.id===sc.content_id)||{}).title||sc.content_id;
+                else if(sc.content_type==='scorm')title=(allScorm.find(s=>s.id===sc.content_id)||{}).title||sc.content_id;
+                else if(sc.content_type==='quiz')title=(allQuizzes.find(q=>q.id===sc.content_id)||{}).title||sc.content_id;
+                else if(sc.content_type==='course')title=(courses.find(c=>c.id===sc.content_id)||{}).title||sc.content_id;
+                else if(sc.content_type==='path')title=(paths.find(p=>p.id===sc.content_id)||{}).title||sc.content_id;
+                return<div key={i} className="flex items-center gap-3 p-3 bg-gray-700/50 rounded-lg">
+                  <span className="text-lg">{icons[sc.content_type]||'📄'}</span>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">{title}</p>
+                    <p className="text-xs text-gray-500">{sc.content_type} {sc.is_required?'• Obligatoire':'• Optionnel'}</p>
+                  </div>
+                </div>;
+              })
+            )}
+          </div>
+          <div className="flex justify-end mt-4">
+            <Button variant="secondary" onClick={()=>setModal(null)}>Fermer</Button>
           </div>
         </Modal>
         
@@ -9635,6 +9966,7 @@
       const[history,setHistory]=useState([]);
       const[alertsSent,setAlertsSent]=useState([]);
       const[loadError,setLoadError]=useState(null);
+      const[licenseUsage,setLicenseUsage]=useState({}); // {licenseId: {sessions, learners}}
       
       // Seul le Center Admin peut demander des licences (pas le trainer)
       const canRequestLicense=realRole==='center_admin'&&center?.id;
@@ -9674,6 +10006,33 @@
             const{data:req,error:reqErr}=await supabase.from('license_requests').select('*,content_packs(name)').eq('center_id',center.id);
             if(reqErr)console.warn('Erreur requêtes:',reqErr);
             setRequests(req||[]);
+            
+            // Charger l'usage des licences (sessions + apprenants)
+            try{
+              const licIds=(lic||[]).map(l=>l.id);
+              if(licIds.length>0){
+                const{data:sessData}=await supabase.from('training_sessions').select('id,license_id,session_participants(learner_id,status)').in('license_id',licIds);
+                const usage={};
+                licIds.forEach(lid=>{usage[lid]={sessions:0,learners:0};});
+                (sessData||[]).forEach(s=>{
+                  if(s.license_id&&usage[s.license_id]){
+                    usage[s.license_id].sessions++;
+                    const enrolled=(s.session_participants||[]).filter(p=>p.status==='enrolled');
+                    enrolled.forEach(p=>{
+                      // Use set-like counting via object
+                      if(!usage[s.license_id]._learnerSet)usage[s.license_id]._learnerSet={};
+                      usage[s.license_id]._learnerSet[p.learner_id]=true;
+                    });
+                  }
+                });
+                // Convert sets to counts
+                Object.keys(usage).forEach(lid=>{
+                  if(usage[lid]._learnerSet)usage[lid].learners=Object.keys(usage[lid]._learnerSet).length;
+                  delete usage[lid]._learnerSet;
+                });
+                setLicenseUsage(usage);
+              }
+            }catch(e){console.warn('Usage load error:',e);}
           }else{
             setLoadError('Aucun centre associé à votre compte');
           }
@@ -9958,7 +10317,7 @@
           {/* DEMANDES */}
           {activeTab==='requests'&&<Card>{requests.filter(r=>r.status==='pending').length===0?<Empty icon="Inbox" title="Aucune demande"/>:<div className="divide-y divide-gray-700">{requests.filter(r=>r.status==='pending').map(r=><div key={r.id} className="p-4 flex items-center gap-4"><div className="flex-1"><p className="font-medium">{r.centers?.name}</p><p className="text-sm text-gray-400">{r.content_packs?.name} • {r.requested_duration_months}m • {r.requested_max_learners||'∞'} apprenants</p><p className="text-xs text-gray-500 mt-1">Par {r.profiles?.first_name} {r.profiles?.last_name} le {new Date(r.created_at).toLocaleDateString()}</p></div><Button size="sm" variant="secondary" onClick={()=>processRequest(r,false)}>Refuser</Button><Button size="sm" onClick={()=>processRequest(r,true)}>Approuver</Button></div>)}</div>}</Card>}
         </>:<>
-          <Tabs tabs={[{id:'my-licenses',label:`Mes licences (${licenses.length})`,icon:'Key'},{id:'my-requests',label:`Demandes (${requests.length})`,icon:'Send'}]} active={activeTab} onChange={setActiveTab}/>
+          <Tabs tabs={[{id:'my-licenses',label:`Mes licences (${licenses.length})`,icon:'Key'},{id:'my-sessions',label:'Mes sessions',icon:'Calendar'},{id:'my-requests',label:`Demandes (${requests.length})`,icon:'Send'}]} active={activeTab} onChange={setActiveTab}/>
           
           {/* Mes licences */}
           {activeTab==='my-licenses'&&<div className="space-y-4">
@@ -9970,8 +10329,100 @@
                 {canRequestLicense&&<Button icon="Send" onClick={()=>{setActiveTab('my-requests');setRequestModal(true);}}>Demander une licence</Button>}
               </Card>
             ):(
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{licenses.map(l=>{const st=getStatus(l);return<Card key={l.id} className="p-4"><div className="flex justify-between mb-2"><h3 className="font-semibold">{l.content_packs?.name||'Catalogue complet'}</h3><span className={`px-2 py-1 rounded text-xs bg-${st.color}-500/20 text-${st.color}-400`}><Icon name={st.icon} size={12} className="inline mr-1"/>{st.label}</span></div><p className="text-sm text-gray-500">📅 {new Date(l.start_date).toLocaleDateString()} → {new Date(l.end_date).toLocaleDateString()}</p><p className="text-sm text-gray-500">👥 {l.max_learners?`Max ${l.max_learners} apprenants`:'Apprenants illimités'}</p>{l.notes&&<p className="text-xs text-gray-400 mt-2 italic">{l.notes}</p>}</Card>;})}</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{licenses.map(l=>{
+                const st=getStatus(l);
+                const usage=licenseUsage[l.id]||{sessions:0,learners:0};
+                const days=Math.ceil((new Date(l.end_date)-new Date())/(1000*60*60*24));
+                const usagePercent=l.max_learners?Math.round(usage.learners/l.max_learners*100):0;
+                return<Card key={l.id} className="p-4">
+                  <div className="flex justify-between mb-3">
+                    <h3 className="font-semibold">{l.content_packs?.name||'Catalogue complet'}</h3>
+                    <span className={`px-2 py-1 rounded text-xs bg-${st.color}-500/20 text-${st.color}-400`}>
+                      <Icon name={st.icon} size={12} className="inline mr-1"/>{st.label}
+                    </span>
+                  </div>
+                  
+                  <div className="grid grid-cols-3 gap-3 mb-3">
+                    <div className="text-center p-2 bg-gray-800 rounded-lg">
+                      <p className="text-lg font-bold text-blue-400">{usage.sessions}</p>
+                      <p className="text-xs text-gray-500">Session{usage.sessions>1?'s':''}</p>
+                    </div>
+                    <div className="text-center p-2 bg-gray-800 rounded-lg">
+                      <p className={`text-lg font-bold ${usagePercent>=90?'text-red-400':usagePercent>=70?'text-orange-400':'text-green-400'}`}>
+                        {usage.learners}{l.max_learners?`/${l.max_learners}`:''}
+                      </p>
+                      <p className="text-xs text-gray-500">Apprenants</p>
+                    </div>
+                    <div className="text-center p-2 bg-gray-800 rounded-lg">
+                      <p className={`text-lg font-bold ${days<=7?'text-red-400':days<=30?'text-orange-400':'text-green-400'}`}>{days>0?days:0}j</p>
+                      <p className="text-xs text-gray-500">Restants</p>
+                    </div>
+                  </div>
+                  
+                  {l.max_learners&&(
+                    <div className="mb-2">
+                      <div className="flex justify-between text-xs text-gray-500 mb-1">
+                        <span>Utilisation places</span>
+                        <span className={usagePercent>=90?'text-red-400':usagePercent>=70?'text-orange-400':'text-green-400'}>{usagePercent}%</span>
+                      </div>
+                      <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${usagePercent>=90?'bg-red-500':usagePercent>=70?'bg-orange-500':'bg-green-500'}`} style={{width:Math.min(100,usagePercent)+'%'}}/>
+                      </div>
+                    </div>
+                  )}
+                  
+                  <p className="text-sm text-gray-500">📅 {new Date(l.start_date).toLocaleDateString()} → {new Date(l.end_date).toLocaleDateString()}</p>
+                  {l.notes&&<p className="text-xs text-gray-400 mt-1 italic">{l.notes}</p>}
+                  
+                  {usagePercent>=80&&l.max_learners&&(
+                    <div className="mt-2 p-2 bg-orange-500/10 border border-orange-500/30 rounded text-xs text-orange-400 flex items-center gap-1">
+                      <Icon name="AlertTriangle" size={12}/>
+                      {usagePercent>=100?'Quota atteint ! Demandez une extension.':'Quota bientôt atteint.'}
+                    </div>
+                  )}
+                </Card>;
+              })}</div>
             )}
+          </div>}
+          
+          {/* Mes sessions (raccourci) */}
+          {activeTab==='my-sessions'&&<div className="space-y-4">
+            <Card className="p-4 bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border-indigo-500/30">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold">Gérer vos sessions de formation</h3>
+                  <p className="text-sm text-gray-400">Accédez à la page complète de gestion des sessions</p>
+                </div>
+                <Button icon="Calendar" onClick={()=>{
+                  // Navigate to sessions page
+                  if(window.__setPage)window.__setPage('sessions');
+                }}>Aller aux sessions</Button>
+              </div>
+            </Card>
+            
+            {/* Quick view: sessions linked to active licenses */}
+            {(()=>{
+              const activeLicIds=licenses.filter(l=>getStatus(l).color!=='red').map(l=>l.id);
+              return<div>
+                <h3 className="text-sm font-medium text-gray-400 mb-2">Sessions liées à vos licences actives</h3>
+                <p className="text-xs text-gray-500 mb-3">Consultez la page Sessions pour créer et gérer vos sessions</p>
+                {Object.entries(licenseUsage).filter(([lid])=>activeLicIds.includes(lid)).map(([lid,u])=>{
+                  const lic=licenses.find(l=>l.id===lid);
+                  if(!lic)return null;
+                  return<Card key={lid} className="p-3 mb-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-sm">{lic.content_packs?.name||'Catalogue complet'}</p>
+                        <p className="text-xs text-gray-500">{u.sessions} session{u.sessions>1?'s':''} • {u.learners} apprenant{u.learners>1?'s':''}</p>
+                      </div>
+                      <span className={`px-2 py-1 rounded text-xs ${u.sessions>0?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>
+                        {u.sessions>0?'En cours':'Pas de session'}
+                      </span>
+                    </div>
+                  </Card>;
+                })}
+              </div>;
+            })()}
           </div>}
           
           {/* Mes demandes */}
