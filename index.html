@@ -3476,16 +3476,20 @@
         // Charger les formateurs de ces sessions séparément
         let allTrainers=[];
         try{
-          const{data,error}=await supabase.from('session_trainers').select('id,session_id,trainer_id,role,profiles(first_name,last_name)').in('session_id',sessionIds);
+          const{data,error}=await supabase.from('session_trainers').select('id,session_id,trainer_id,role,profiles:trainer_id(first_name,last_name)').in('session_id',sessionIds);
           if(!error)allTrainers=data||[];
-        }catch(e){}
+          else console.warn('[TrainerSessions] trainers query error:',error.message);
+        }catch(e){console.warn('[TrainerSessions] trainers catch:',e);}
         
         // Charger les participants séparément
         let allParticipants=[];
         try{
-          const{data,error}=await supabase.from('session_participants').select('id,session_id,learner_id,status,profiles(first_name,last_name,email)').in('session_id',sessionIds);
+          const{data,error}=await supabase.from('session_participants').select('id,session_id,learner_id,status,profiles:learner_id(first_name,last_name,email)').in('session_id',sessionIds);
           if(!error)allParticipants=data||[];
-        }catch(e){}
+          else console.warn('[TrainerSessions] participants query error:',error.message);
+        }catch(e){console.warn('[TrainerSessions] participants catch:',e);}
+        
+        console.log('[TrainerSessions] loaded:',{sessions:sessData.length,trainers:allTrainers.length,participants:allParticipants.length});
         
         // Load session_contents
         let allContents=[];
