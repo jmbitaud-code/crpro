@@ -6,7 +6,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <!-- VERSION 6.6.14-fix3 -->
+  <!-- VERSION 7.7.4 -->
   <title>Course Builder Pro</title>
   <meta name="description" content="Plateforme de création et diffusion de cours vidéo multi-centres">
   <meta name="theme-color" content="#1f2937">
@@ -65,7 +65,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '7.7.3';
+    const APP_VERSION = '7.7.4';
     const APP_URL = window.location.origin;
     // =======================================
 
@@ -746,6 +746,25 @@
     const Checkbox=({label,checked,onChange,className=''})=>(<label className={`flex items-center gap-3 cursor-pointer ${className}`}><input type="checkbox" checked={checked} onChange={e=>onChange(e.target.checked)} className="w-5 h-5 rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500"/><span className="text-gray-300">{label}</span></label>);
     const Modal=({isOpen,onClose,title,children,size='md'})=>{if(!isOpen)return null;const s={sm:'max-w-md',md:'max-w-lg',lg:'max-w-2xl',xl:'max-w-4xl',full:'max-w-6xl'};return(<div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"><div className="absolute inset-0 bg-black/70" onClick={onClose}/><div className={`relative bg-gray-800 rounded-xl w-full ${s[size]} max-h-[90vh] overflow-auto`}><div className="sticky top-0 bg-gray-800 p-4 border-b border-gray-700 flex items-center justify-between z-10"><h2 className="text-lg font-semibold">{title}</h2><button onClick={onClose} className="p-2 hover:bg-gray-700 rounded-lg"><Icon name="X" size={20}/></button></div><div className="p-4">{children}</div></div></div>);};
     const Card=({children,className='',...props})=><div className={`bg-gray-800 rounded-xl border border-gray-700 ${className}`} {...props}>{children}</div>;
+    
+    // Speech-to-Text Button
+    const SpeechButton=({onResult,className=''})=>{
+      const[listening,setListening]=useState(false);
+      const recRef=useRef(null);
+      const supported=typeof window!=='undefined'&&('webkitSpeechRecognition' in window||'SpeechRecognition' in window);
+      if(!supported)return null;
+      const toggle=()=>{
+        if(listening){recRef.current?.stop();setListening(false);return;}
+        const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+        const rec=new SR();
+        rec.lang='fr-FR';rec.continuous=true;rec.interimResults=false;
+        rec.onresult=(e)=>{let t='';for(let i=e.resultIndex;i<e.results.length;i++){if(e.results[i].isFinal)t+=e.results[i][0].transcript;}if(t&&onResult)onResult(t);};
+        rec.onerror=()=>setListening(false);
+        rec.onend=()=>setListening(false);
+        recRef.current=rec;rec.start();setListening(true);
+      };
+      return<button type="button" onClick={toggle} title={listening?'Arrêter la dictée':'Dicter (micro)'} className={`p-2 rounded-lg transition ${listening?'bg-red-500/30 text-red-400 animate-pulse':'hover:bg-gray-600 text-gray-400 hover:text-gray-200'} ${className}`}><Icon name={listening?'MicOff':'Mic'} size={16}/></button>;
+    };
     const RoleBadge=({role})=><span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${ROLE_COLORS[role]||'bg-gray-500'} text-white`}>{ROLE_LABELS[role]||role}</span>;
     
     // Score Badge pour SCORM
@@ -5415,6 +5434,7 @@
       const correctionMediaRef=useRef(null);
       const answerImageRef=useRef(null);
       const[answerImageIdx,setAnswerImageIdx]=useState(null);
+      const[showPreview,setShowPreview]=useState(false);
       
       const questionTypes=[
         {value:'single',label:'Choix unique',icon:'CheckCircle',color:'text-blue-400'},
@@ -5745,6 +5765,7 @@
           tags:q.tags||[]
         });
         setModal(true);
+        setShowPreview(false);
       };
       
       const addAnswer=()=>setForm({...form,answers:[...form.answers,{text:'',is_correct:false,image_url:''}]});
@@ -5780,7 +5801,7 @@
       
       return<div>
         <div className="flex flex-wrap items-center gap-3 mb-6">
-          <Button icon="Plus" onClick={()=>{setEditing(null);setForm({...defaultForm});setModal(true);}}>Ajouter une question</Button>
+          <Button icon="Plus" onClick={()=>{setEditing(null);setForm({...defaultForm});setShowPreview(false);setModal(true);}}>Ajouter une question</Button>
           <Button variant="secondary" icon="Download" onClick={downloadTemplate}>Template</Button>
           <label className="cursor-pointer">
             <span className="inline-flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium"><Icon name="Upload" size={16}/>Importer</span>
@@ -5858,8 +5879,135 @@
         )}
         
         {/* ===== MODAL QUESTION ===== */}
-        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier la question':'Créer une question'} size="xl">
-          <div className="space-y-4 max-h-[80vh] overflow-y-auto pr-2">
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);setShowPreview(false);}} title={editing?'Modifier la question':'Créer une question'} size="xl">
+          
+          {/* Onglets Édition / Aperçu */}
+          <div className="flex gap-1 mb-4 bg-gray-900/50 p-1 rounded-lg">
+            <button onClick={()=>setShowPreview(false)} className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${!showPreview?'bg-indigo-600 text-white':'text-gray-400 hover:text-white hover:bg-gray-700'}`}><Icon name="Edit3" size={16}/>Édition</button>
+            <button onClick={()=>setShowPreview(true)} className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${showPreview?'bg-indigo-600 text-white':'text-gray-400 hover:text-white hover:bg-gray-700'}`}><Icon name="Eye" size={16}/>Aperçu apprenant</button>
+          </div>
+          
+          {showPreview ? (
+            /* ========== PREVIEW APPRENANT ========== */
+            <div className="space-y-6">
+              <div className="bg-gray-900 rounded-xl p-6 border border-gray-700">
+                {/* Badges */}
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${form.difficulty==='easy'?'bg-green-500/20 text-green-400':form.difficulty==='hard'?'bg-red-500/20 text-red-400':'bg-yellow-500/20 text-yellow-400'}`}>{form.difficulty==='easy'?'🟢 Facile':form.difficulty==='hard'?'🔴 Difficile':'🟡 Moyen'}</span>
+                  <span className="px-2 py-1 rounded text-xs bg-indigo-500/20 text-indigo-400">{form.points} pt{form.points>1?'s':''}</span>
+                  {form.time_limit>0&&<span className="px-2 py-1 rounded text-xs bg-orange-500/20 text-orange-400">⏱ {form.time_limit}s</span>}
+                  <span className={`px-2 py-1 rounded text-xs ${questionTypes.find(t=>t.value===form.question_type)?.color||'text-gray-400'} bg-gray-800`}>{getTypeName(form.question_type)}</span>
+                </div>
+                
+                {/* Médias de la question */}
+                {form.media.length>0&&(
+                  <div className="flex flex-wrap gap-3 mb-4">
+                    {form.media.map((m,i)=><div key={i}>{renderMediaPreview(m,'md')}</div>)}
+                  </div>
+                )}
+                
+                {/* Texte de la question */}
+                <h3 className="text-lg font-semibold text-white mb-6 leading-relaxed">
+                  {form.question_text||<span className="text-gray-500 italic">Aucun texte de question saisi...</span>}
+                </h3>
+                
+                {/* Réponses selon le type */}
+                {['single','multiple','true_false'].includes(form.question_type)&&(
+                  <div className="space-y-3">
+                    {form.answers.filter(a=>a.text.trim()).map((a,i)=>(
+                      <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-gray-700 bg-gray-800/60 hover:border-gray-500 cursor-pointer transition">
+                        <div className={`w-5 h-5 rounded-${form.question_type==='multiple'?'md':'full'} border-2 border-gray-500 flex items-center justify-center shrink-0`}>
+                          {a.is_correct&&<div className={`w-2.5 h-2.5 rounded-${form.question_type==='multiple'?'sm':'full'} bg-indigo-500`}/>}
+                        </div>
+                        <div className="flex items-center gap-3 flex-1">
+                          {a.image_url&&<img src={a.image_url} alt="" className="w-10 h-10 rounded object-cover"/>}
+                          <span className="text-gray-200">{a.text}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {form.answers.filter(a=>a.text.trim()).length===0&&<p className="text-gray-500 italic text-sm">Aucune réponse saisie...</p>}
+                  </div>
+                )}
+                
+                {form.question_type==='fill_blank'&&(
+                  <div className="space-y-3">
+                    <p className="text-sm text-gray-400 mb-2">Complétez les trous :</p>
+                    {form.blank_answers.filter(a=>a.trim()).map((a,i)=>(
+                      <div key={i} className="flex items-center gap-3">
+                        <span className="text-xs text-gray-500 w-8">#{i+1}</span>
+                        <div className="flex-1 px-4 py-2 bg-gray-800 border-b-2 border-dashed border-gray-500 rounded text-gray-500 text-sm">Réponse attendue : <span className="text-green-400 font-medium">{a}</span></div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {form.question_type==='ordering'&&(
+                  <div className="space-y-2">
+                    <p className="text-sm text-gray-400 mb-2">Remettez dans l'ordre :</p>
+                    {form.order_items.filter(a=>a.trim()).sort(()=>Math.random()-0.5).map((item,i)=>(
+                      <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-gray-700 bg-gray-800/60 cursor-grab">
+                        <Icon name="GripVertical" size={16} className="text-gray-500"/>
+                        <span className="text-gray-200">{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {form.question_type==='matching'&&(
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Éléments</p>
+                      {form.match_pairs.filter(p=>p.left.trim()).map((p,i)=>(
+                        <div key={i} className="p-3 rounded-lg border border-pink-500/30 bg-pink-500/5 text-gray-200">{p.left}</div>
+                      ))}
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Correspondances</p>
+                      {form.match_pairs.filter(p=>p.right.trim()).sort(()=>Math.random()-0.5).map((p,i)=>(
+                        <div key={i} className="p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5 text-gray-200">{p.right}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {form.question_type==='short_answer'&&(
+                  <div>
+                    <input disabled className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-gray-400 cursor-not-allowed" placeholder="Saisissez votre réponse..."/>
+                    <p className="text-xs text-gray-500 mt-2">Réponses acceptées : {form.accepted_answers.filter(a=>a.trim()).join(', ')||'—'}</p>
+                  </div>
+                )}
+                
+                {form.question_type==='essay'&&(
+                  <div>
+                    <textarea disabled rows={4} className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-gray-400 resize-none cursor-not-allowed" placeholder="Rédigez votre réponse..."/>
+                    {form.word_limit>0&&<p className="text-xs text-gray-500 mt-1">Limite : {form.word_limit} mots</p>}
+                  </div>
+                )}
+              </div>
+              
+              {/* Feedback preview */}
+              {(form.feedback_correct||form.feedback_incorrect||form.explanation)&&(
+                <div className="bg-gray-900 rounded-xl p-6 border border-gray-700">
+                  <h4 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2"><Icon name="MessageCircle" size={16}/>Feedback (affiché après réponse)</h4>
+                  {form.feedback_correct&&<div className="flex items-start gap-2 mb-2 p-3 rounded-lg bg-green-500/10 border border-green-500/20"><Icon name="Check" size={16} className="text-green-400 mt-0.5 shrink-0"/><span className="text-green-300 text-sm">{form.feedback_correct}</span></div>}
+                  {form.feedback_incorrect&&<div className="flex items-start gap-2 mb-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20"><Icon name="X" size={16} className="text-red-400 mt-0.5 shrink-0"/><span className="text-red-300 text-sm">{form.feedback_incorrect}</span></div>}
+                  {form.explanation&&<div className="mt-3 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20"><p className="text-xs text-blue-400 font-medium mb-1">Explication</p><p className="text-sm text-blue-200">{form.explanation}</p></div>}
+                  {form.correction_media.length>0&&<div className="flex flex-wrap gap-3 mt-3">{form.correction_media.map((m,i)=><div key={i}>{renderMediaPreview(m)}</div>)}</div>}
+                </div>
+              )}
+              
+              {/* Boutons preview */}
+              <div className="flex justify-between border-t border-gray-700 pt-4">
+                <Button variant="secondary" icon="Edit3" onClick={()=>setShowPreview(false)}>Retour à l'édition</Button>
+                <div className="flex gap-3">
+                  <Button variant="secondary" onClick={()=>{setModal(false);setEditing(null);setShowPreview(false);}}>Annuler</Button>
+                  <Button onClick={handleSave} loading={saving}>Enregistrer</Button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* ========== FORMULAIRE ÉDITION ========== */
+            <div className="space-y-4">
             
             {/* 1. ZONE MÉDIAS QUESTION (en haut) */}
             <MediaZone target="question" mediaList={form.media} label="Médias de la question (images, vidéos, audio)" fileRef={mediaFileRef}/>
@@ -5867,7 +6015,10 @@
             {/* 2. TEXTE DE LA QUESTION */}
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-1">Question *</label>
-              <textarea value={form.question_text} onChange={e=>setForm({...form,question_text:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white" placeholder={form.question_type==='fill_blank'?'La capitale de la France est [___] et sa monnaie est l\'[___].':'Entrez votre question ici...'}/>
+              <div className="relative">
+                <textarea value={form.question_text} onChange={e=>setForm({...form,question_text:e.target.value})} rows={3} className="w-full px-4 py-2 pr-12 bg-gray-700 border border-gray-600 rounded-lg text-white" placeholder={form.question_type==='fill_blank'?'La capitale de la France est [___] et sa monnaie est l\'[___].':'Entrez votre question ici...'}/>
+                <div className="absolute top-2 right-2"><SpeechButton onResult={t=>setForm(f=>({...f,question_text:f.question_text+(f.question_text?' ':'')+t}))}/></div>
+              </div>
             </div>
             
             {/* 3. PARAMÈTRES */}
@@ -5914,7 +6065,10 @@
                     <div key={i} className="flex items-start gap-2 bg-gray-800/50 rounded-lg p-3">
                       <input type={form.question_type==='multiple'?'checkbox':'radio'} checked={a.is_correct} onChange={e=>updateAnswer(i,'is_correct',e.target.checked)} className="w-4 h-4 mt-2.5"/>
                       <div className="flex-1 space-y-2">
-                        <Input value={a.text} onChange={e=>updateAnswer(i,'text',e.target.value)} placeholder={form.question_type==='true_false'?(i===0?'Vrai':'Faux'):`Réponse ${i+1}`}/>
+                        <div className="flex gap-1 items-start">
+                          <Input className="flex-1" value={a.text} onChange={e=>updateAnswer(i,'text',e.target.value)} placeholder={form.question_type==='true_false'?(i===0?'Vrai':'Faux'):`Réponse ${i+1}`}/>
+                          <SpeechButton onResult={t=>{const arr=[...form.answers];arr[i]={...arr[i],text:arr[i].text+(arr[i].text?' ':'')+t};setForm({...form,answers:arr});}}/>
+                        </div>
                         {/* Image de la réponse */}
                         <div className="flex items-center gap-2">
                           {a.image_url&&<img src={a.image_url} alt="" className="w-10 h-10 rounded object-cover"/>}
@@ -5941,6 +6095,7 @@
                     <div key={i} className="flex gap-2 items-center">
                       <span className="text-xs text-gray-500 w-8">#{i+1}</span>
                       <Input className="flex-1" value={a} onChange={e=>{const arr=[...form.blank_answers];arr[i]=e.target.value;setForm({...form,blank_answers:arr});}} placeholder={`Réponse trou ${i+1}`}/>
+                      <SpeechButton onResult={t=>{const arr=[...form.blank_answers];arr[i]=arr[i]+(arr[i]?' ':'')+t;setForm({...form,blank_answers:arr});}}/>
                       {form.blank_answers.length>1&&<button onClick={()=>setForm({...form,blank_answers:form.blank_answers.filter((_,j)=>j!==i)})} className="p-2 hover:bg-red-500/20 rounded text-red-400"><Icon name="X" size={16}/></button>}
                     </div>
                   ))}
@@ -5958,6 +6113,7 @@
                     <div key={i} className="flex gap-2 items-center">
                       <span className="w-8 h-8 bg-purple-500/20 rounded flex items-center justify-center text-xs font-bold text-purple-400">{i+1}</span>
                       <Input className="flex-1" value={item} onChange={e=>{const arr=[...form.order_items];arr[i]=e.target.value;setForm({...form,order_items:arr});}} placeholder={`Élément ${i+1}`}/>
+                      <SpeechButton onResult={t=>{const arr=[...form.order_items];arr[i]=arr[i]+(arr[i]?' ':'')+t;setForm({...form,order_items:arr});}}/>
                       {form.order_items.length>2&&<button onClick={()=>setForm({...form,order_items:form.order_items.filter((_,j)=>j!==i)})} className="p-2 hover:bg-red-500/20 rounded text-red-400"><Icon name="X" size={16}/></button>}
                     </div>
                   ))}
@@ -5973,9 +6129,15 @@
                   </div>
                   {form.match_pairs.map((pair,i)=>(
                     <div key={i} className="flex gap-2 items-center">
-                      <Input className="flex-1" value={pair.left} onChange={e=>{const arr=[...form.match_pairs];arr[i]={...arr[i],left:e.target.value};setForm({...form,match_pairs:arr});}} placeholder="Élément gauche"/>
+                      <div className="flex gap-1 items-center flex-1">
+                        <Input className="flex-1" value={pair.left} onChange={e=>{const arr=[...form.match_pairs];arr[i]={...arr[i],left:e.target.value};setForm({...form,match_pairs:arr});}} placeholder="Élément gauche"/>
+                        <SpeechButton onResult={t=>{const arr=[...form.match_pairs];arr[i]={...arr[i],left:arr[i].left+(arr[i].left?' ':'')+t};setForm({...form,match_pairs:arr});}}/>
+                      </div>
                       <Icon name="ArrowRight" size={16} className="text-gray-500 shrink-0"/>
-                      <Input className="flex-1" value={pair.right} onChange={e=>{const arr=[...form.match_pairs];arr[i]={...arr[i],right:e.target.value};setForm({...form,match_pairs:arr});}} placeholder="Élément droit"/>
+                      <div className="flex gap-1 items-center flex-1">
+                        <Input className="flex-1" value={pair.right} onChange={e=>{const arr=[...form.match_pairs];arr[i]={...arr[i],right:e.target.value};setForm({...form,match_pairs:arr});}} placeholder="Élément droit"/>
+                        <SpeechButton onResult={t=>{const arr=[...form.match_pairs];arr[i]={...arr[i],right:arr[i].right+(arr[i].right?' ':'')+t};setForm({...form,match_pairs:arr});}}/>
+                      </div>
                       {form.match_pairs.length>1&&<button onClick={()=>setForm({...form,match_pairs:form.match_pairs.filter((_,j)=>j!==i)})} className="p-2 hover:bg-red-500/20 rounded text-red-400"><Icon name="X" size={16}/></button>}
                     </div>
                   ))}
@@ -5993,6 +6155,7 @@
                   {form.accepted_answers.map((a,i)=>(
                     <div key={i} className="flex gap-2 items-center">
                       <Input className="flex-1" value={a} onChange={e=>{const arr=[...form.accepted_answers];arr[i]=e.target.value;setForm({...form,accepted_answers:arr});}} placeholder={`Réponse acceptée ${i+1}`}/>
+                      <SpeechButton onResult={t=>{const arr=[...form.accepted_answers];arr[i]=arr[i]+(arr[i]?' ':'')+t;setForm({...form,accepted_answers:arr});}}/>
                       {form.accepted_answers.length>1&&<button onClick={()=>setForm({...form,accepted_answers:form.accepted_answers.filter((_,j)=>j!==i)})} className="p-2 hover:bg-red-500/20 rounded text-red-400"><Icon name="X" size={16}/></button>}
                     </div>
                   ))}
@@ -6012,7 +6175,10 @@
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-300 mb-1">Barème / Critères d'évaluation</label>
-                    <textarea value={form.rubric} onChange={e=>setForm({...form,rubric:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Ex: 3 pts pour l'argumentation, 2 pts pour les exemples, 1 pt pour la conclusion..."/>
+                    <div className="relative">
+                      <textarea value={form.rubric} onChange={e=>setForm({...form,rubric:e.target.value})} rows={3} className="w-full px-4 py-2 pr-12 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Ex: 3 pts pour l'argumentation, 2 pts pour les exemples, 1 pt pour la conclusion..."/>
+                      <div className="absolute top-2 right-2"><SpeechButton onResult={t=>setForm(f=>({...f,rubric:f.rubric+(f.rubric?' ':'')+t}))}/></div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -6026,13 +6192,22 @@
               </h4>
               
               <div className="grid grid-cols-2 gap-3 mb-3">
-                <Input label="Feedback correct" value={form.feedback_correct} onChange={e=>setForm({...form,feedback_correct:e.target.value})} placeholder="Bravo ! Bonne réponse." icon="Check"/>
-                <Input label="Feedback incorrect" value={form.feedback_incorrect} onChange={e=>setForm({...form,feedback_incorrect:e.target.value})} placeholder="Ce n'est pas la bonne réponse." icon="X"/>
+                <div className="flex gap-1 items-end">
+                  <Input className="flex-1" label="Feedback correct" value={form.feedback_correct} onChange={e=>setForm({...form,feedback_correct:e.target.value})} placeholder="Bravo ! Bonne réponse." icon="Check"/>
+                  <SpeechButton onResult={t=>setForm(f=>({...f,feedback_correct:f.feedback_correct+(f.feedback_correct?' ':'')+t}))}/>
+                </div>
+                <div className="flex gap-1 items-end">
+                  <Input className="flex-1" label="Feedback incorrect" value={form.feedback_incorrect} onChange={e=>setForm({...form,feedback_incorrect:e.target.value})} placeholder="Ce n'est pas la bonne réponse." icon="X"/>
+                  <SpeechButton onResult={t=>setForm(f=>({...f,feedback_incorrect:f.feedback_incorrect+(f.feedback_incorrect?' ':'')+t}))}/>
+                </div>
               </div>
               
               <div className="mb-3">
                 <label className="block text-sm font-medium text-gray-300 mb-1">Explication détaillée (affichée après réponse)</label>
-                <textarea value={form.explanation} onChange={e=>setForm({...form,explanation:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Explication complète de la bonne réponse avec contexte, références, etc."/>
+                <div className="relative">
+                  <textarea value={form.explanation} onChange={e=>setForm({...form,explanation:e.target.value})} rows={3} className="w-full px-4 py-2 pr-12 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="Explication complète de la bonne réponse avec contexte, références, etc."/>
+                  <div className="absolute top-2 right-2"><SpeechButton onResult={t=>setForm(f=>({...f,explanation:f.explanation+(f.explanation?' ':'')+t}))}/></div>
+                </div>
               </div>
               
               {/* Zone médias correction */}
@@ -6041,10 +6216,12 @@
             
             {/* 7. BOUTONS */}
             <div className="flex justify-end gap-3 border-t border-gray-700 pt-4">
-              <Button variant="secondary" onClick={()=>{setModal(false);setEditing(null);}}>Annuler</Button>
+              <Button variant="secondary" onClick={()=>{setModal(false);setEditing(null);setShowPreview(false);}}>Annuler</Button>
+              <Button variant="ghost" icon="Eye" onClick={()=>setShowPreview(true)}>Aperçu</Button>
               <Button onClick={handleSave} loading={saving}>Enregistrer</Button>
             </div>
           </div>
+          )}
         </Modal>
         
         {/* Modal Import */}
