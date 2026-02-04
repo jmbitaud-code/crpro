@@ -154,7 +154,7 @@
         }
       },
       content:{
-        label:'📚 Contenus',
+        label:'📚 Contenus & Ressources',
         permissions:{
           manage_videos:'Créer/modifier vidéos',
           view_videos:'Voir la bibliothèque vidéos',
@@ -162,11 +162,13 @@
           view_scorm:'Voir les modules SCORM',
           manage_playlists:'Créer/modifier cours',
           view_playlists:'Voir les cours',
-          assign_content:'Attribuer contenu à un cours'
+          assign_content:'Attribuer contenu à un cours',
+          manage_course_options:'Options avancées (prérequis, certificats, tags)',
+          preview_content:'Prévisualiser les contenus'
         }
       },
       quizzes:{
-        label:'❓ Quiz',
+        label:'❓ Quiz & Questions',
         permissions:{
           manage_quizzes:'Créer/modifier quiz',
           view_quizzes:'Voir les quiz',
@@ -175,11 +177,43 @@
           assign_quizzes:'Attribuer quiz à un cours'
         }
       },
+      paths:{
+        label:'🛤️ Parcours',
+        permissions:{
+          manage_paths:'Créer/modifier les parcours',
+          view_paths:'Voir les parcours',
+          manage_path_options:'Options avancées (séquentiel, prérequis, niveau, langue)'
+        }
+      },
+      sessions:{
+        label:'📅 Sessions de formation',
+        permissions:{
+          manage_sessions:'Créer/modifier des sessions',
+          view_sessions:'Voir les sessions (lecture seule)',
+          assign_trainers:'Affecter des formateurs aux sessions',
+          manage_session_participants:'Inscrire/désinscrire des participants'
+        }
+      },
+      catalog:{
+        label:'🛒 Catalogue & Licences',
+        permissions:{
+          view_catalog_formations:'Accéder au catalogue formations',
+          view_catalog_ressources:'Accéder au catalogue ressources',
+          manage_licenses:'Gérer les licences (créer, attribuer)',
+          request_licenses:'Demander des licences (panier)',
+          view_license_usage:'Voir l\'utilisation des licences'
+        }
+      },
+      taxonomy:{
+        label:'🏷️ Taxonomie',
+        permissions:{
+          manage_taxonomy:'Gérer catégories, thèmes et sous-thèmes'
+        }
+      },
       enrollments:{
-        label:'📝 Inscriptions',
+        label:'📝 Inscriptions & Badges',
         permissions:{
           manage_enrollments:'Gérer les inscriptions',
-          manage_paths:'Gérer les parcours',
           manage_badges:'Gérer les badges'
         }
       },
@@ -192,7 +226,7 @@
         }
       },
       evaluation:{
-        label:'🎓 Évaluation',
+        label:'🎓 Évaluation & Suivi',
         permissions:{
           view_learner_progress:'Voir progression apprenants',
           grade_quizzes:'Noter les quiz texte libre',
@@ -224,20 +258,50 @@
     const DEFAULT_PERMISSIONS={
       super_admin:Object.keys(PERMISSION_LABELS).reduce((a,k)=>({...a,[k]:true}),{}),
       center_admin:{
+        // Utilisateurs
         create_users:true,edit_users:true,delete_users:true,import_users:true,assign_roles:true,
+        // Contenus - création propre + vue
         manage_videos:true,view_videos:true,manage_scorm:true,view_scorm:true,
         manage_playlists:true,view_playlists:true,assign_content:true,
+        manage_course_options:true,preview_content:true,
+        // Quiz
         manage_quizzes:true,view_quizzes:true,manage_questions:true,view_questions:true,assign_quizzes:true,
-        manage_enrollments:true,manage_paths:true,manage_badges:true,
+        // Parcours
+        manage_paths:true,view_paths:true,manage_path_options:true,
+        // Sessions
+        manage_sessions:true,view_sessions:true,assign_trainers:true,manage_session_participants:true,
+        // Catalogue & Licences
+        view_catalog_formations:true,view_catalog_ressources:true,
+        request_licenses:true,view_license_usage:true,
+        // Taxonomie
+        manage_taxonomy:true,
+        // Inscriptions & Badges
+        manage_enrollments:true,manage_badges:true,
+        // Stats
         view_analytics:true,export_reports:true,
+        // Évaluation
         view_learner_progress:true,grade_quizzes:true,reset_progress:true,issue_certificates:true,
+        // Communication
         send_emails:true,send_notifications:true,manage_email_templates:true,
+        // Admin
         view_audit_log:true
       },
       trainer:{
-        view_videos:true,view_scorm:true,view_playlists:true,assign_content:true,
+        // Contenus - vue et prévisualisation seulement
+        view_videos:true,view_scorm:true,view_playlists:true,preview_content:true,
+        // Quiz - vue seulement
         view_quizzes:true,view_questions:true,
-        manage_enrollments:true,view_analytics:true,view_learner_progress:true,grade_quizzes:true,
+        // Parcours - vue seulement
+        view_paths:true,
+        // Sessions - vue lecture seule
+        view_sessions:true,
+        // Inscriptions
+        manage_enrollments:true,
+        // Stats
+        view_analytics:true,
+        // Évaluation
+        view_learner_progress:true,grade_quizzes:true,
+        // Communication
         send_notifications:true
       },
       learner:{}
@@ -2289,7 +2353,7 @@
         setSelectedLearner(learner);
       };
 
-      if(!can('view_analytics')&&!can('manage_enrollments'))return<Empty icon="Lock" title="Accès refusé"/>;
+      if(!can('view_analytics')&&!can('manage_enrollments')&&!can('view_learner_progress'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
       
       // Calculer les alertes (calcul direct, pas de hook)
@@ -2851,7 +2915,7 @@
                         <span className={`px-2 py-1 rounded text-xs ${e.status==='completed'?'bg-green-500/20 text-green-400':e.status==='in_progress'?'bg-yellow-500/20 text-yellow-400':'bg-gray-500/20 text-gray-400'}`}>
                           {e.status==='completed'?'Terminé':e.status==='in_progress'?'En cours':'Non commencé'}
                         </span>
-                        {isSuperAdmin&&(e.progress_percent>0||e.status!=='not_started')&&<button onClick={()=>resetCourseProgress(e,selectedLearner)} disabled={resetting} className="p-1 hover:bg-orange-500/20 rounded text-orange-400" title="Réinitialiser ce cours"><Icon name="RotateCcw" size={14}/></button>}
+                        {can('reset_progress')&&(e.progress_percent>0||e.status!=='not_started')&&<button onClick={()=>resetCourseProgress(e,selectedLearner)} disabled={resetting} className="p-1 hover:bg-orange-500/20 rounded text-orange-400" title="Réinitialiser ce cours"><Icon name="RotateCcw" size={14}/></button>}
                       </div>
                     </div>
                   ))}
@@ -2863,7 +2927,7 @@
                 <div>
                   <div className="flex items-center justify-between mb-3">
                     <h4 className="font-semibold">Parcours ({selectedLearner.pathEnrollments.length})</h4>
-                    {isSuperAdmin&&<span className="text-xs text-gray-500">Cliquez sur 🔄 pour réinitialiser</span>}
+                    {can('reset_progress')&&<span className="text-xs text-gray-500">Cliquez sur 🔄 pour réinitialiser</span>}
                   </div>
                   <div className="space-y-2 max-h-40 overflow-y-auto">
                     {selectedLearner.pathEnrollments.map(pe=>(
@@ -2875,7 +2939,7 @@
                           <span className={`px-2 py-1 rounded text-xs ${pe.status==='completed'||pe.progress_percent===100?'bg-green-500/20 text-green-400':pe.progress_percent>0?'bg-yellow-500/20 text-yellow-400':'bg-gray-500/20 text-gray-400'}`}>
                             {pe.status==='completed'||pe.progress_percent===100?'Terminé':pe.progress_percent>0?'En cours':'Non commencé'}
                           </span>
-                          {isSuperAdmin&&(pe.progress_percent>0||pe.status!=='not_started')&&<button onClick={()=>resetPathProgress(pe,selectedLearner)} disabled={resetting} className="p-1 hover:bg-orange-500/20 rounded text-orange-400" title="Réinitialiser ce parcours"><Icon name="RotateCcw" size={14}/></button>}
+                          {can('reset_progress')&&(pe.progress_percent>0||pe.status!=='not_started')&&<button onClick={()=>resetPathProgress(pe,selectedLearner)} disabled={resetting} className="p-1 hover:bg-orange-500/20 rounded text-orange-400" title="Réinitialiser ce parcours"><Icon name="RotateCcw" size={14}/></button>}
                         </div>
                       </div>
                     ))}
@@ -2915,6 +2979,7 @@
                         <div className="flex items-center gap-3">
                           <span className={`font-semibold ${q.score_percent>=70?'text-green-400':'text-red-400'}`}>{q.score_percent}%</span>
                           {q.passed?<span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">Réussi</span>:<span className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs">Échoué</span>}
+                          {can('grade_quizzes')&&!q.passed&&<button className="p-1 hover:bg-indigo-500/20 rounded text-indigo-400" title="Noter manuellement (bientôt disponible)" disabled><Icon name="Pencil" size={14}/></button>}
                         </div>
                       </div>
                     ))}
@@ -2922,8 +2987,18 @@
                 </div>
               )}
               
-              {/* Actions Super Admin */}
-              {isSuperAdmin&&(selectedLearner.enrollments.length>0||selectedLearner.pathEnrollments.length>0)&&(
+              {/* Certificats - issue_certificates */}
+              {can('issue_certificates')&&selectedLearner.enrollments.some(e=>e.status==='completed')&&(
+                <div className="p-3 bg-gray-700/30 rounded-lg">
+                  <div className="flex items-center gap-2 text-sm text-gray-400">
+                    <Icon name="Award" size={16} className="text-amber-400"/>
+                    <span>{selectedLearner.enrollments.filter(e=>e.status==='completed').length} cours terminé(s) — certificats auto-générés</span>
+                  </div>
+                </div>
+              )}
+              
+              {/* Actions Reset */}
+              {can('reset_progress')&&(selectedLearner.enrollments.length>0||selectedLearner.pathEnrollments.length>0)&&(
                 <div className="pt-4 border-t border-gray-700">
                   <div className="flex items-center justify-between">
                     <div>
@@ -2967,9 +3042,10 @@
       };
 
       const load=useCallback(async()=>{
+        const seeAllCenters=isSuperAdmin||can('view_all_analytics');
         // D'abord charger les apprenants du centre pour filtrer correctement
         let learnerQuery=supabase.from('profiles').select('id').eq('role','learner');
-        if(!isSuperAdmin&&center?.id)learnerQuery=learnerQuery.eq('center_id',center.id);
+        if(!seeAllCenters&&center?.id)learnerQuery=learnerQuery.eq('center_id',center.id);
         const{data:learnerProfiles}=await learnerQuery;
         const centerLearnerIds=(learnerProfiles||[]).map(l=>l.id);
         
@@ -4704,7 +4780,12 @@
         hybrid:{label:'Hybride',icon:'Layers'}
       };
       
+      if(!can('manage_sessions')&&!can('view_sessions'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading text="Chargement des sessions..."/>;
+      
+      const canManageSess=can('manage_sessions');
+      const canAssignTrainersP=can('assign_trainers');
+      const canManageParticipants=can('manage_session_participants');
       
       return<div>
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
@@ -4716,11 +4797,11 @@
           </div>
           <div className="flex gap-2">
             <Button variant="ghost" icon="RefreshCw" onClick={load}>Actualiser</Button>
-            <Button variant="secondary" icon="Download" onClick={downloadTemplate}>Template Excel</Button>
-            <Button variant="secondary" icon="Upload" onClick={()=>setModal('import')}>Importer</Button>
-            <Button icon="Plus" onClick={()=>{resetForm();setSelectedSession(null);setModal('create');}}>
+            {canManageSess&&<Button variant="secondary" icon="Download" onClick={downloadTemplate}>Template Excel</Button>}
+            {canManageSess&&<Button variant="secondary" icon="Upload" onClick={()=>setModal('import')}>Importer</Button>}
+            {canManageSess&&<Button icon="Plus" onClick={()=>{resetForm();setSelectedSession(null);setModal('create');}}>
               Nouvelle session
-            </Button>
+            </Button>}
           </div>
         </div>
         
@@ -4886,10 +4967,10 @@
                   
                   {/* Actions */}
                   <div className="flex gap-1 shrink-0">
-                    <Button variant="ghost" size="sm" icon="Users" onClick={()=>openParticipants(session)} title="Participants"/>
-                    <Button variant="ghost" size="sm" icon="UserCheck" onClick={()=>openTrainers(session)} title="Formateurs"/>
-                    <Button variant="ghost" size="sm" icon="Edit" onClick={()=>openEdit(session)} title="Modifier"/>
-                    <Button variant="ghost" size="sm" icon="Trash2" onClick={()=>deleteSession(session)} className="text-red-400 hover:text-red-300" title="Supprimer"/>
+                    {canManageParticipants&&<Button variant="ghost" size="sm" icon="Users" onClick={()=>openParticipants(session)} title="Participants"/>}
+                    {canAssignTrainersP&&<Button variant="ghost" size="sm" icon="UserCheck" onClick={()=>openTrainers(session)} title="Formateurs"/>}
+                    {canManageSess&&<Button variant="ghost" size="sm" icon="Edit" onClick={()=>openEdit(session)} title="Modifier"/>}
+                    {canManageSess&&<Button variant="ghost" size="sm" icon="Trash2" onClick={()=>deleteSession(session)} className="text-red-400 hover:text-red-300" title="Supprimer"/>}
                   </div>
                 </div>
                 
@@ -5562,21 +5643,23 @@
     // PAGE: Contenus (ContenusPage) - Sous-onglets avec pages complètes
     // ============================================================
     function ContenusPage(){
-      const{isSuperAdmin,center,realRole,effectiveRole}=useAuth();
+      const{isSuperAdmin,center,realRole,effectiveRole,can}=useAuth();
       const isCenterAdminView=!isSuperAdmin&&(realRole==='center_admin'||effectiveRole==='center_admin');
-      const[mainTab,setMainTab]=useState(isSuperAdmin?'creation':isCenterAdminView?'mes-cours':'catalogue');
       
-      const tabs=isSuperAdmin?[
-        {id:'creation',label:'Création',icon:'PlusCircle'},
-        {id:'catalogue',label:'Catalogue',icon:'Library'}
-      ]:isCenterAdminView?[
-        {id:'mes-cours',label:'Mes cours',icon:'BookOpen'},
-        {id:'mes-parcours',label:'Mes parcours',icon:'Route'},
-        {id:'formations',label:'Catalogue formations',icon:'Library'},
-        {id:'ressources',label:'Catalogue ressources',icon:'Boxes'}
-      ]:[
-        {id:'catalogue',label:'Catalogue',icon:'Library'}
-      ];
+      const tabs=[];
+      if(isSuperAdmin){
+        tabs.push({id:'creation',label:'Création',icon:'PlusCircle'});
+        tabs.push({id:'catalogue',label:'Catalogue',icon:'Library'});
+      }else if(isCenterAdminView){
+        if(can('manage_playlists')||can('view_playlists'))tabs.push({id:'mes-cours',label:'Mes cours',icon:'BookOpen'});
+        if(can('manage_paths')||can('view_paths'))tabs.push({id:'mes-parcours',label:'Mes parcours',icon:'Route'});
+        if(can('view_catalog_formations'))tabs.push({id:'formations',label:'Catalogue formations',icon:'Library'});
+        if(can('view_catalog_ressources'))tabs.push({id:'ressources',label:'Catalogue ressources',icon:'Boxes'});
+      }else{
+        tabs.push({id:'catalogue',label:'Catalogue',icon:'Library'});
+      }
+      
+      const[mainTab,setMainTab]=useState(tabs[0]?.id||'catalogue');
       
       return<div>
         <div className="mb-6">
@@ -5605,18 +5688,21 @@
     // SOUS-PAGE: Création de contenu (Super Admin uniquement)
     // ============================================================
     function ContentCreationPage(){
+      const{can}=useAuth();
       const[activeTab,setActiveTab]=useState('videos');
       
+      const tabs=[
+        (can('manage_videos')||can('view_videos'))&&{id:'videos',label:'Vidéos',icon:'Film'},
+        (can('manage_scorm')||can('view_scorm'))&&{id:'scorm',label:'SCORM',icon:'Package'},
+        (can('manage_questions')||can('view_questions'))&&{id:'questions',label:'Questions',icon:'Database'},
+        (can('manage_quizzes')||can('view_quizzes'))&&{id:'quiz',label:'Quiz',icon:'HelpCircle'},
+        can('manage_playlists')&&{id:'courses',label:'Cours',icon:'BookOpen'},
+        (can('manage_paths')||can('view_paths'))&&{id:'paths',label:'Parcours',icon:'Route'},
+        can('manage_playlists')&&{id:'packs',label:'Packs',icon:'Boxes'}
+      ].filter(Boolean);
+      
       return<div>
-        <Tabs tabs={[
-          {id:'videos',label:'Vidéos',icon:'Film'},
-          {id:'scorm',label:'SCORM',icon:'Package'},
-          {id:'questions',label:'Questions',icon:'Database'},
-          {id:'quiz',label:'Quiz',icon:'HelpCircle'},
-          {id:'courses',label:'Cours',icon:'BookOpen'},
-          {id:'paths',label:'Parcours',icon:'Route'},
-          {id:'packs',label:'Packs',icon:'Boxes'}
-        ]} active={activeTab} onChange={setActiveTab}/>
+        <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab}/>
         
         <div className="mt-6">
           {activeTab==='videos'&&<VideoCreationSection/>}
@@ -7814,6 +7900,9 @@
       const isRessources=mode==='ressources';
       const isAll=!mode;
       
+      const canPreview=can('preview_content')||isSuperAdmin;
+      const canRequestLicense=can('request_licenses')&&!isSuperAdmin&&!!center?.id;
+      
       const defaultTab=isFormations?'courses':isRessources?'videos':'videos';
       const[activeTab,setActiveTab]=useState(defaultTab);
       const[videos,setVideos]=useState([]);
@@ -7826,13 +7915,10 @@
       const[filterCategory,setFilterCategory]=useState('');
       const[previewModal,setPreviewModal]=useState(null);
       const[previewScormCatalog,setPreviewScormCatalog]=useState(null);
-      // Panier de demande
       const[requestCart,setRequestCart]=useState({videos:[],scorm:[],quizzes:[],courses:[],paths:[]});
       const[requestCartModal,setRequestCartModal]=useState(false);
       const[requestCartForm,setRequestCartForm]=useState({name:'',description:'',duration_months:12,max_learners:'',message:''});
       const[requestCartSaving,setRequestCartSaving]=useState(false);
-      
-      const canRequestLicense=!isSuperAdmin&&!!center?.id&&(realRole==='center_admin'||effectiveRole==='center_admin');
       
       const load=useCallback(async()=>{
         const[{data:vids},{data:scorm},{data:quiz},{data:cours},{data:path}]=await Promise.all([
@@ -8505,8 +8591,16 @@
     // PAGE: Paramètres (ParametresPage) - Catégories + Badges + Emails + Permissions
     // ============================================================
     function ParametresPage(){
-      const{isSuperAdmin}=useAuth();
+      const{isSuperAdmin,can}=useAuth();
       const[activeTab,setActiveTab]=useState('categories');
+      
+      const tabs=[
+        {id:'categories',label:'Catégories',icon:'FolderTree'},
+        {id:'badges',label:'Badges',icon:'Award'},
+        {id:'emails',label:'Emails',icon:'Mail'},
+        ...(can('view_audit_log')||isSuperAdmin?[{id:'audit',label:'Journal d\'audit',icon:'FileText'}]:[]),
+        ...(isSuperAdmin?[{id:'permissions',label:'Permissions',icon:'Shield'}]:[])
+      ];
       
       return<div>
         <div className="mb-6">
@@ -8516,17 +8610,13 @@
           <p className="text-sm text-gray-400">Configuration de la plateforme</p>
         </div>
         
-        <Tabs tabs={[
-          {id:'categories',label:'Catégories',icon:'FolderTree'},
-          {id:'badges',label:'Badges',icon:'Award'},
-          {id:'emails',label:'Emails',icon:'Mail'},
-          ...(isSuperAdmin?[{id:'permissions',label:'Permissions',icon:'Shield'}]:[])
-        ]} active={activeTab} onChange={setActiveTab}/>
+        <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab}/>
         
         <div className="mt-6">
           {activeTab==='categories'&&<CategoriesPage/>}
           {activeTab==='badges'&&<BadgesPage/>}
           {activeTab==='emails'&&<EmailsPage/>}
+          {activeTab==='audit'&&<Card className="p-8 text-center"><Icon name="FileText" size={48} className="mx-auto text-gray-600 mb-4"/><h3 className="text-lg font-semibold mb-2">Journal d'audit</h3><p className="text-gray-400">L'historique des actions sera bientôt disponible ici.</p></Card>}
           {activeTab==='permissions'&&<PermissionsPage/>}
         </div>
       </div>;
@@ -8919,7 +9009,7 @@
               </Button>
             )}
             <Button icon="UserPlus" onClick={()=>{resetCreateForm();setCreateModal(true);}}>Ajouter</Button>
-            <Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button>
+            {can('import_users')&&<Button variant="secondary" icon="Upload" onClick={()=>setImportModal(true)}>Importer</Button>}
           </div>
         </div>
         
@@ -9625,7 +9715,7 @@
           {p.is_lms_content&&!isSuperAdmin&&<div className="mb-3"><span className={`text-xs px-2 py-1 rounded ${licensed?'bg-green-500/20 text-green-400':'bg-red-500/20 text-red-400'}`}>{licensed?'✓ Sous licence':(isLocked?'Consultation seule':'Non licencié')}</span>{isLocked&&licensed&&<span className="text-xs text-gray-500 ml-2">• Non modifiable</span>}</div>}
           <div className="flex flex-wrap gap-2">
             <Button variant="ghost" size="sm" icon="Eye" onClick={()=>openPreview(p)} title="Prévisualiser le cours">Prévisualiser</Button>
-            {licensed&&(can('manage_playlists')||can('assign_content'))&&!isLocked&&<Button variant="ghost" size="sm" icon="Layers" onClick={()=>openEditContent(p)}>Contenu</Button>}
+            {licensed&&(can('manage_playlists')||can('assign_content')||can('assign_quizzes'))&&!isLocked&&<Button variant="ghost" size="sm" icon="Layers" onClick={()=>openEditContent(p)}>Contenu</Button>}
             {licensed&&isLocked&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>openEditContent(p)}>Voir contenu</Button>}
             {canModify&&<>
               <Button variant="ghost" size="sm" icon="Edit2" onClick={async()=>{setEditing(p);setForm({title:p.title,description:p.description||'',category_id:p.category_id||'',theme_id:p.theme_id||'',sub_theme_id:p.sub_theme_id||'',thumbnail_url:p.thumbnail_url||'',estimated_duration:p.estimated_duration||'',learning_objectives:p.learning_objectives||'',tags:(p.tags||[]).join(', '),passing_score:p.passing_score||70,certificate_enabled:!!p.certificate_enabled});try{const{data:pr}=await supabase.from('course_prerequisites').select('prerequisite_id').eq('course_id',p.id);setCoursePrereqs((pr||[]).map(x=>x.prerequisite_id));}catch(e){setCoursePrereqs([]);}setModal(true);}}>Modifier</Button>
@@ -9675,10 +9765,11 @@
             </div>
             
             <div className="grid grid-cols-2 gap-4">
-              <Input label="Image de couverture (URL)" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})} placeholder="https://..."/>
-              <Input label="Durée estimée (minutes)" type="number" value={form.estimated_duration} onChange={e=>setForm({...form,estimated_duration:e.target.value})} placeholder="Auto-calculée si vide"/>
+              <Input label="Image de couverture (URL)" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})} placeholder="https://..." disabled={!can('manage_course_options')}/>
+              <Input label="Durée estimée (minutes)" type="number" value={form.estimated_duration} onChange={e=>setForm({...form,estimated_duration:e.target.value})} placeholder="Auto-calculée si vide" disabled={!can('manage_course_options')}/>
             </div>
             
+            {can('manage_course_options')&&<>
             <div><label className="block text-sm font-medium text-gray-300 mb-1">Objectifs pédagogiques</label>
               <textarea value={form.learning_objectives} onChange={e=>setForm({...form,learning_objectives:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="À l'issue de ce cours, l'apprenant sera capable de..."/>
             </div>
@@ -9712,6 +9803,7 @@
               </div>
               {coursePrereqs.length>0&&<p className="text-xs text-indigo-400 mt-1">{coursePrereqs.length} prérequis sélectionné{coursePrereqs.length>1?'s':''}</p>}
             </div>
+            </>}
             
             {form.thumbnail_url&&<div><label className="block text-sm font-medium text-gray-300 mb-1">Aperçu image</label><img src={form.thumbnail_url} className="h-24 rounded-lg object-cover" onError={e=>{e.target.style.display='none'}}/></div>}
           </div>
@@ -9900,8 +9992,8 @@
       const[loading,setLoading]=useState(true);
       const[saving,setSaving]=useState(false);
       
-      // Mode lecture seule pour non-super-admins
-      const isReadOnly=!isSuperAdmin;
+      // Mode lecture seule si pas manage_taxonomy
+      const isReadOnly=!can('manage_taxonomy')&&!isSuperAdmin;
       
       // Données taxonomie
       const[categories,setCategories]=useState([]);
@@ -10470,7 +10562,7 @@
       };
       
       // ============ RENDER ============
-      if(!can('manage_videos')&&!isSuperAdmin)return<Empty icon="Lock" title="Accès refusé"/>;
+      if(!can('manage_taxonomy')&&!can('manage_videos')&&!isSuperAdmin)return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
       
       const totalContents=Object.values(contentStats.videos||{}).reduce((a,b)=>a+b,0)+
@@ -11087,7 +11179,7 @@
         setContentModal(null);
       };
       
-      if(!can('manage_playlists')&&!can('view_playlists'))return<Empty icon="Lock" title="Accès refusé"/>;
+      if(!can('manage_paths')&&!can('view_paths')&&!can('manage_playlists')&&!can('view_playlists'))return<Empty icon="Lock" title="Accès refusé"/>;
       
       // Path preview functions
       const openPathPreview=async(path)=>{
@@ -11254,10 +11346,11 @@
             <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div>
             
             <div className="grid grid-cols-2 gap-4">
-              <Input label="Image URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})} placeholder="https://..."/>
-              <Input label="Durée estimée (minutes)" type="number" value={form.estimated_duration} onChange={e=>setForm({...form,estimated_duration:e.target.value})}/>
+              <Input label="Image URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})} placeholder="https://..." disabled={!can('manage_path_options')}/>
+              <Input label="Durée estimée (minutes)" type="number" value={form.estimated_duration} onChange={e=>setForm({...form,estimated_duration:e.target.value})} disabled={!can('manage_path_options')}/>
             </div>
             
+            {can('manage_path_options')&&<>
             <div><label className="block text-sm font-medium text-gray-300 mb-1">Objectifs pédagogiques</label>
               <textarea value={form.learning_objectives} onChange={e=>setForm({...form,learning_objectives:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="À l'issue de ce parcours, l'apprenant sera capable de..."/>
             </div>
@@ -11299,6 +11392,7 @@
               </div>
               {pathPrereqs.length>0&&<p className="text-xs text-indigo-400 mt-1">{pathPrereqs.length} prérequis sélectionné{pathPrereqs.length>1?'s':''}</p>}
             </div>
+            </>}
             
             {form.thumbnail_url&&<div><label className="block text-sm font-medium text-gray-300 mb-1">Aperçu image</label><img src={form.thumbnail_url} className="h-24 rounded-lg object-cover" onError={e=>{e.target.style.display='none'}}/></div>}
           </div>
@@ -11366,7 +11460,9 @@
 
     // ==================== LICENCES ====================
     function LicensesContent(){
-      const{isSuperAdmin,profile,center,realRole,effectiveRole}=useAuth();
+      const{isSuperAdmin,profile,center,realRole,effectiveRole,can}=useAuth();
+      const canManageLicenses=can('manage_licenses')||isSuperAdmin;
+      const canViewUsage=can('view_license_usage');
       const[loading,setLoading]=useState(true);
       const[licenses,setLicenses]=useState([]);
       const[requests,setRequests]=useState([]);
@@ -12122,109 +12218,157 @@
           title:'Super Administrateur',
           icon:'Shield',
           color:'bg-red-500',
-          summary:'Accès total et illimité à toutes les fonctionnalités de la plateforme.',
+          summary:'Accès total à la plateforme. Crée les contenus LMS, gère les licences et tous les centres.',
           details:[
             'Gère tous les centres de formation',
-            'Crée et supprime des administrateurs de centre',
+            'Crée et gère tous les contenus : vidéos, SCORM, quiz, cours, parcours',
+            'Définit les options avancées des cours (prérequis, certificats, score minimum, tags)',
+            'Définit les options des parcours (mode séquentiel, niveau, langue, prérequis)',
+            'Gère la taxonomie (catégories, thèmes, sous-thèmes)',
+            'Crée et attribue les licences et packs de contenus LMS',
+            'Crée et gère les sessions de formation',
+            'Affecte les formateurs aux sessions et cours',
             'Accède aux statistiques globales de tous les centres',
-            'Configure les licences et packs de contenus',
-            'Gère les templates d\'emails système',
+            'Gère les templates d\'emails système et les permissions',
             'Accède aux logs d\'audit complets',
             'Peut se faire passer pour n\'importe quel rôle (mode "Vue comme")'
           ],
           scope:'🌐 Tous les centres',
-          scopeDetail:'Accès global à l\'ensemble du LMS, tous centres confondus',
+          scopeDetail:'Accès global à l\'ensemble du LMS, tous centres confondus. Seul rôle pouvant créer du contenu LMS verrouillé.',
           modifiable:false
         },
         center_admin:{
           title:'Administrateur Centre',
           icon:'Building2',
           color:'bg-purple-500',
-          summary:'Gère son centre de formation et tous ses utilisateurs.',
+          summary:'Gère son centre, ses utilisateurs, sessions et contenus propres. Accède au catalogue LMS.',
           details:[
             'Crée et gère les formateurs et apprenants de son centre',
-            'Crée et organise les cours (playlists)',
-            'Importe des vidéos et modules SCORM',
+            'Crée ses propres cours et parcours (non-LMS)',
+            'Configure les options avancées : prérequis, certificats, score minimum, tags',
+            'Configure les parcours : mode séquentiel, niveau, langue, prérequis',
+            'Gère la taxonomie (catégories, thèmes, sous-thèmes)',
+            'Crée et gère les sessions de formation',
+            'Affecte les formateurs aux sessions et aux cours',
+            'Accède au catalogue formations et ressources LMS',
+            'Demande des licences via le panier (formations et ressources)',
+            'Suit l\'utilisation des licences actives',
+            'Prévisualise les contenus (mode restreint : pas de plein écran)',
             'Inscrit les apprenants aux formations',
             'Consulte les statistiques de son centre',
-            'Envoie des emails et notifications',
-            'Délivre les certificats'
+            'Délivre les certificats et gère les badges'
           ],
           scope:'🏢 Son centre',
-          scopeDetail:'Limité aux utilisateurs et contenus de son propre centre uniquement',
+          scopeDetail:'Limité aux utilisateurs et contenus de son propre centre. Peut demander des licences LMS mais ne peut pas modifier les contenus LMS verrouillés.',
           modifiable:true
         },
         trainer:{
           title:'Formateur',
           icon:'GraduationCap',
           color:'bg-green-500',
-          summary:'Accompagne les apprenants et suit leur progression.',
+          summary:'Consulte ses sessions et contenus assignés. Suit la progression des apprenants.',
           details:[
-            'Consulte la bibliothèque de contenus (lecture seule)',
-            'Voit les cours assignés à son centre',
-            'Inscrit des apprenants aux formations',
+            'Consulte ses sessions de formation (lecture seule)',
+            'Voit la liste des participants de ses sessions',
+            'Prévisualise les cours et parcours assignés (mode restreint)',
+            'Navigue dans les cours : vidéos, SCORM, quiz',
+            'Navigue dans les parcours : liste ordonnée des cours',
             'Suit la progression des apprenants',
             'Note les quiz à réponse libre',
-            'Envoie des emails aux apprenants',
-            'Ne peut pas créer de contenu (sauf si autorisé)'
+            'Envoie des notifications aux apprenants',
+            'Consulte les statistiques de son centre',
+            'Ne peut pas créer ni modifier de contenu',
+            'Ne peut pas gérer les utilisateurs',
+            'Ne peut pas créer ni modifier de sessions'
           ],
           scope:'🏢 Son centre',
-          scopeDetail:'Limité aux apprenants et cours de son propre centre uniquement',
+          scopeDetail:'Accès en lecture seule aux contenus et sessions de son centre. Voit uniquement les sessions et cours qui lui sont assignés.',
           modifiable:true
         },
         learner:{
           title:'Apprenant',
           icon:'User',
           color:'bg-blue-500',
-          summary:'Suit les formations et passe les évaluations.',
+          summary:'Suit les formations assignées, passe les évaluations et consulte sa progression.',
           details:[
-            'Accède à ses formations assignées',
-            'Regarde les vidéos et suit les modules SCORM',
+            'Accède à ses formations et parcours assignés',
+            'Regarde les vidéos (player complet avec plein écran)',
+            'Suit les modules SCORM interactifs',
             'Passe les quiz et évaluations',
+            'Respecte l\'ordre des cours dans les parcours séquentiels',
+            'Doit satisfaire les prérequis avant d\'accéder aux contenus suivants',
             'Consulte sa progression et ses résultats',
-            'Télécharge ses certificats obtenus',
+            'Obtient les certificats en atteignant le score minimum',
+            'Télécharge ses certificats et badges obtenus',
             'Ne peut pas voir les contenus des autres apprenants'
           ],
-          scope:'📚 Ses cours',
-          scopeDetail:'Accès uniquement à ses propres formations et sa progression personnelle',
+          scope:'📚 Ses formations',
+          scopeDetail:'Accès uniquement à ses propres formations, sa progression personnelle et ses certificats.',
           modifiable:true
         }
       };
 
       // Descriptions détaillées des permissions
       const PERMISSION_DESCRIPTIONS={
+        // Centres
         manage_centers:'Créer, modifier et supprimer des centres de formation. Réservé au Super Admin.',
+        // Utilisateurs
         create_users:'Créer de nouveaux comptes utilisateurs (apprenants, formateurs, admins selon le rôle).',
         edit_users:'Modifier les informations des utilisateurs existants (nom, email, rôle, etc.).',
         delete_users:'Supprimer définitivement des comptes utilisateurs. Action irréversible.',
         import_users:'Importer plusieurs utilisateurs en masse via un fichier Excel ou CSV.',
         assign_roles:'Changer le rôle d\'un utilisateur (ex: promouvoir un apprenant en formateur).',
-        manage_videos:'Ajouter, modifier et supprimer des vidéos dans la bibliothèque.',
+        // Contenus
+        manage_videos:'Ajouter, modifier et supprimer des vidéos dans la bibliothèque. Inclut l\'intégration Vimeo.',
         view_videos:'Consulter la liste des vidéos disponibles dans la bibliothèque.',
-        manage_scorm:'Importer, modifier et supprimer des modules SCORM (e-learning).',
+        manage_scorm:'Importer, modifier et supprimer des modules SCORM (Articulate Storyline, Codes Rousseau).',
         view_scorm:'Consulter la liste des modules SCORM disponibles.',
-        manage_playlists:'Créer et organiser des cours (playlists) avec différents contenus.',
+        manage_playlists:'Créer et organiser des cours avec vidéos, SCORM et quiz dans une liste ordonnée.',
         view_playlists:'Consulter la liste des cours disponibles.',
-        assign_content:'Ajouter des vidéos, SCORM ou quiz à un cours existant.',
-        manage_quizzes:'Créer et modifier des quiz et évaluations.',
+        assign_content:'Ajouter des vidéos, SCORM ou quiz à un cours existant via l\'éditeur de contenu.',
+        manage_course_options:'Configurer les options avancées des cours : image de couverture, durée estimée, objectifs pédagogiques, tags, score minimum de réussite, certificat, et prérequis.',
+        preview_content:'Prévisualiser les contenus (vidéos, SCORM, cours, parcours) en mode restreint sans plein écran.',
+        // Quiz
+        manage_quizzes:'Créer et modifier des quiz et évaluations avec différents types de questions.',
         view_quizzes:'Consulter la liste des quiz disponibles.',
-        manage_questions:'Gérer la banque de questions pour créer des quiz.',
+        manage_questions:'Gérer la banque de questions : QCM, vrai/faux, texte libre, association, zones cliquables.',
         view_questions:'Consulter la banque de questions existante.',
-        assign_quizzes:'Ajouter des quiz à un cours.',
-        manage_enrollments:'Inscrire ou désinscrire des apprenants aux formations.',
-        manage_paths:'Créer et gérer des parcours de formation (séquences de cours).',
-        manage_badges:'Créer et attribuer des badges de récompense.',
-        view_analytics:'Consulter les statistiques et tableaux de bord.',
+        assign_quizzes:'Ajouter des quiz à un cours existant.',
+        // Parcours
+        manage_paths:'Créer et gérer des parcours de formation (séquences ordonnées de cours).',
+        view_paths:'Consulter la liste des parcours disponibles.',
+        manage_path_options:'Configurer les options avancées des parcours : mode séquentiel, niveau de difficulté, langue, objectifs, tags, certificat de parcours, et prérequis.',
+        // Sessions
+        manage_sessions:'Créer, modifier et supprimer des sessions de formation. Associer un cours ou une licence.',
+        view_sessions:'Consulter les sessions de formation en lecture seule (dates, lieu, participants).',
+        assign_trainers:'Affecter des formateurs aux sessions de formation et aux cours.',
+        manage_session_participants:'Inscrire ou retirer des apprenants des sessions de formation.',
+        // Catalogue & Licences
+        view_catalog_formations:'Accéder au catalogue des formations LMS (cours et parcours publiés).',
+        view_catalog_ressources:'Accéder au catalogue des ressources LMS (vidéos, SCORM, quiz).',
+        manage_licenses:'Créer, attribuer et gérer les licences et packs de contenus. Réservé au Super Admin.',
+        request_licenses:'Demander des licences via le panier pour les formations ou les ressources.',
+        view_license_usage:'Consulter les statistiques d\'utilisation des licences actives.',
+        // Taxonomie
+        manage_taxonomy:'Gérer les catégories, thèmes et sous-thèmes pour organiser les contenus.',
+        // Inscriptions & Badges
+        manage_enrollments:'Inscrire ou désinscrire des apprenants aux formations et parcours.',
+        manage_badges:'Créer et attribuer des badges de récompense aux apprenants.',
+        // Stats
+        view_analytics:'Consulter les statistiques et tableaux de bord de son centre.',
         view_all_analytics:'Voir les statistiques de TOUS les centres (Super Admin uniquement).',
         export_reports:'Exporter les rapports et données en Excel ou PDF.',
-        view_learner_progress:'Consulter la progression détaillée des apprenants.',
-        grade_quizzes:'Noter les réponses aux questions ouvertes des quiz.',
-        reset_progress:'Réinitialiser la progression d\'un apprenant sur un cours.',
-        issue_certificates:'Générer et délivrer des certificats de réussite.',
-        send_emails:'Envoyer des emails aux utilisateurs.',
+        // Évaluation
+        view_learner_progress:'Consulter la progression détaillée des apprenants (scores, temps, SCORM).',
+        grade_quizzes:'Noter les réponses aux questions ouvertes et texte libre des quiz.',
+        reset_progress:'Réinitialiser la progression d\'un apprenant sur un cours. Action irréversible.',
+        issue_certificates:'Générer et délivrer des certificats de réussite aux apprenants.',
+        // Communication
+        send_emails:'Envoyer des emails aux utilisateurs du centre.',
         send_notifications:'Envoyer des notifications dans l\'application.',
         manage_email_templates:'Modifier les modèles d\'emails automatiques.',
-        manage_permissions:'Modifier cette page de gestion des permissions.',
+        // Admin
+        manage_permissions:'Modifier la page de gestion des rôles et permissions.',
         view_audit_log:'Consulter l\'historique des actions (logs d\'audit).'
       };
 
@@ -14109,7 +14253,7 @@
       const colorClasses={gold:'bg-yellow-500',silver:'bg-gray-400',bronze:'bg-orange-600',purple:'bg-purple-500',blue:'bg-blue-500'};
       const icons=['Award','Star','Trophy','Medal','Flag','Zap','Target','Crown','Gem','Heart'];
 
-      if(!can('manage_playlists'))return<Empty icon="Lock" title="Accès refusé"/>;
+      if(!can('manage_badges')&&!can('manage_playlists'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
 
       return<div>
@@ -14228,7 +14372,7 @@
       const statusColors={pending:'bg-yellow-500/20 text-yellow-400',sent:'bg-green-500/20 text-green-400',failed:'bg-red-500/20 text-red-400'};
       const statusLabels={pending:'En attente',sent:'Envoyé',failed:'Échec'};
 
-      if(!can('send_emails')&&!can('manage_email_templates'))return<Empty icon="Lock" title="Accès refusé"/>;
+      if(!can('send_emails')&&!can('manage_email_templates')&&!can('send_notifications'))return<Empty icon="Lock" title="Accès refusé"/>;
       if(loading)return<Loading/>;
 
       // Stats
