@@ -3465,15 +3465,27 @@
         if(!trainerSessions||trainerSessions.length===0){setSessions([]);setLoading(false);return;}
         
         const sessionIds=trainerSessions.map(ts=>ts.session_id);
+        
+        // Charger les sessions (données de base)
         let sessData=[];
         try{
-          const{data,error}=await supabase.from('training_sessions').select('*,session_trainers(id,trainer_id,role,profiles(first_name,last_name)),session_participants(id,learner_id,status,profiles(first_name,last_name,email))').in('id',sessionIds).order('start_date',{ascending:false});
-          if(error)throw error;
-          sessData=data||[];
-        }catch(e){
           const{data}=await supabase.from('training_sessions').select('*').in('id',sessionIds).order('start_date',{ascending:false});
-          sessData=(data||[]).map(s=>({...s,session_trainers:[],session_participants:[]}));
-        }
+          sessData=data||[];
+        }catch(e){sessData=[];}
+        
+        // Charger les formateurs de ces sessions séparément
+        let allTrainers=[];
+        try{
+          const{data,error}=await supabase.from('session_trainers').select('id,session_id,trainer_id,role,profiles(first_name,last_name)').in('session_id',sessionIds);
+          if(!error)allTrainers=data||[];
+        }catch(e){}
+        
+        // Charger les participants séparément
+        let allParticipants=[];
+        try{
+          const{data,error}=await supabase.from('session_participants').select('id,session_id,learner_id,status,profiles(first_name,last_name,email)').in('session_id',sessionIds);
+          if(!error)allParticipants=data||[];
+        }catch(e){}
         
         // Load session_contents
         let allContents=[];
@@ -3489,14 +3501,22 @@
         ]);
         
         const enriched=sessData.map(s=>{
+          const sTrainers=allTrainers.filter(t=>t.session_id===s.id);
+          const sParticipants=allParticipants.filter(p=>p.session_id===s.id);
           const sContents=allContents.filter(c=>c.session_id===s.id);
           const contentTitle=s.content_type==='course'
             ?(coursesD||[]).find(c=>c.id===s.content_id)?.title
             :(pathsD||[]).find(p=>p.id===s.content_id)?.title;
           const myRole=trainerSessions.find(ts=>ts.session_id===s.id)?.role||'trainer';
-          return{...s,session_contents:sContents,content_title:contentTitle,myRole,
-            trainers_count:s.session_trainers?.length||0,
-            participants_count:s.session_participants?.length||0};
+          return{...s,
+            session_trainers:sTrainers,
+            session_participants:sParticipants,
+            session_contents:sContents,
+            content_title:contentTitle,
+            myRole,
+            trainers_count:sTrainers.length,
+            participants_count:sParticipants.length
+          };
         });
         
         setSessions(enriched);
@@ -3655,10 +3675,21 @@
     // ============================================================
     function TrainerContenusPage(){
       const{profile}=useAuth();
+      const user=supabase.auth.getUser?null:null;
       const[loading,setLoading]=useState(true);
       const[courses,setCourses]=useState([]);
       const[paths,setPaths]=useState([]);
       const[activeTab,setActiveTab]=useState('courses');
+      // Course viewer state
+      const[viewingCourse,setViewingCourse]=useState(null);
+      const[courseItems,setCourseItems]=useState([]); // unified: {type,data,position}
+      const[currentItem,setCurrentItem]=useState(null);
+      const[viewerTab,setViewerTab]=useState('content'); // content, list
+      const playerRef=useRef(null);
+      const vimeoPlayerRef=useRef(null);
+      // Path viewer state
+      const[viewingPath,setViewingPath]=useState(null);
+      const[pathCourses,setPathCourses]=useState([]);
       
       const load=useCallback(async()=>{
         if(!profile?.id){setLoading(false);return;}
@@ -3719,14 +3750,228 @@
       
       useEffect(()=>{load();},[load]);
       
+      // Open course viewer
+      const openCourseViewer=async(course)=>{
+        setViewingCourse(course);
+        setViewerTab('content');
+        
+        // Load all content types
+        const[{data:pvs},{data:ps}]=await Promise.all([
+          supabase.from('playlist_videos').select('*,videos(*)').eq('playlist_id',course.id).order('position'),
+          supabase.from('playlist_scorm').select('*,scorm_modules(*)').eq('playlist_id',course.id).order('position')
+        ]);
+        let pq=[];
+        try{
+          const{data}=await supabase.from('playlist_quizzes').select('*,quizzes(*)').eq('playlist_id',course.id).order('position');
+          pq=data||[];
+        }catch(e){}
+        
+        const items=[
+          ...(pvs||[]).map(pv=>({type:'video',id:pv.id,position:pv.position,data:pv.videos,raw:pv})),
+          ...(ps||[]).map(s=>({type:'scorm',id:s.id,position:s.position,data:s.scorm_modules,raw:s})),
+          ...pq.map(q=>({type:'quiz',id:q.id,position:q.position,data:q.quizzes,raw:q}))
+        ].sort((a,b)=>(a.position||0)-(b.position||0));
+        
+        setCourseItems(items);
+        if(items.length>0)setCurrentItem(items[0]);
+        else setCurrentItem(null);
+      };
+      
+      // Load Vimeo player when a video is selected
+      useEffect(()=>{
+        if(!currentItem||currentItem.type!=='video'||!currentItem.data?.vimeo_id)return;
+        if(vimeoPlayerRef.current){try{vimeoPlayerRef.current.destroy();}catch(e){}}
+        if(!playerRef.current)return;
+        
+        const vimeoId=currentItem.data.vimeo_id||currentItem.data.vimeo_url?.match(/\/(\d+)/)?.[1];
+        if(!vimeoId)return;
+        
+        try{
+          vimeoPlayerRef.current=new Vimeo.Player(playerRef.current,{
+            id:vimeoId,width:'100%',responsive:true,title:false,byline:false,portrait:false
+          });
+        }catch(e){console.warn('Vimeo player error:',e);}
+        
+        return()=>{if(vimeoPlayerRef.current){try{vimeoPlayerRef.current.destroy();}catch(e){}}};
+      },[currentItem?.id,currentItem?.type]);
+      
+      const closeCourseViewer=()=>{
+        if(vimeoPlayerRef.current){try{vimeoPlayerRef.current.destroy();}catch(e){}}
+        setViewingCourse(null);setCourseItems([]);setCurrentItem(null);
+      };
+      
+      // Open path viewer
+      const openPathViewer=async(path)=>{
+        setViewingPath(path);
+        const{data}=await supabase.from('learning_path_courses').select('*,playlists(id,title,description,playlist_videos(count))').eq('path_id',path.id).order('position');
+        setPathCourses(data||[]);
+      };
+      
       if(loading)return<Loading/>;
       
+      // ===== COURSE VIEWER MODE =====
+      if(viewingCourse){
+        const itemIcon=t=>t==='video'?'Film':t==='scorm'?'Package':'HelpCircle';
+        const itemColor=t=>t==='video'?'blue':t==='scorm'?'orange':'purple';
+        const itemLabel=t=>t==='video'?'Vidéo':t==='scorm'?'SCORM':'Quiz';
+        
+        return<div>
+          <div className="flex items-center gap-4 mb-6">
+            <Button variant="ghost" icon="ArrowLeft" onClick={closeCourseViewer}>Retour</Button>
+            <div className="flex-1">
+              <h1 className="text-xl font-bold">{viewingCourse.title}</h1>
+              <p className="text-sm text-gray-400">{courseItems.length} élément{courseItems.length>1?'s':''} — Prévisualisation formateur</p>
+            </div>
+            <span className="px-3 py-1 bg-cyan-500/20 text-cyan-400 rounded-lg text-xs font-medium">
+              <Icon name="Eye" size={14} className="inline mr-1"/>Mode prévisualisation
+            </span>
+          </div>
+          
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Main content area */}
+            <div className="lg:col-span-2 space-y-4">
+              {!currentItem?(
+                <Card className="p-12 text-center">
+                  <Icon name="Layers" size={48} className="mx-auto text-gray-600 mb-4"/>
+                  <p className="text-gray-400">Ce cours ne contient aucun élément</p>
+                </Card>
+              ):currentItem.type==='video'?(
+                <Card className="overflow-hidden">
+                  <div className="aspect-video bg-black relative">
+                    <div ref={playerRef} className="absolute inset-0"/>
+                  </div>
+                  <div className="p-4">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">Vidéo</span>
+                      <h2 className="text-lg font-semibold">{currentItem.data?.title}</h2>
+                    </div>
+                    {currentItem.data?.description&&<p className="text-gray-400 mt-2 text-sm">{currentItem.data.description}</p>}
+                    {currentItem.data?.duration&&<p className="text-xs text-gray-500 mt-2">Durée: {currentItem.data.duration}</p>}
+                  </div>
+                </Card>
+              ):currentItem.type==='scorm'?(
+                <Card className="overflow-hidden">
+                  <div className="p-6 text-center">
+                    <Icon name="Package" size={48} className="mx-auto text-orange-400 mb-4"/>
+                    <h2 className="text-lg font-semibold mb-2">{currentItem.data?.title}</h2>
+                    <p className="text-sm text-gray-400 mb-1">Module {currentItem.data?.module_type?.toUpperCase()}</p>
+                    {currentItem.data?.description&&<p className="text-sm text-gray-500 mb-4">{currentItem.data.description}</p>}
+                    {currentItem.data?.package_url?(
+                      <Button icon="ExternalLink" onClick={()=>{
+                        const url=currentItem.data.entry_point
+                          ?currentItem.data.package_url.replace(/\/[^/]*$/,'/')+currentItem.data.entry_point
+                          :currentItem.data.package_url;
+                        window.open(url,'_blank','width=1024,height=768');
+                      }}>Lancer le module SCORM</Button>
+                    ):(
+                      <p className="text-gray-500 text-sm italic">URL du module non configurée</p>
+                    )}
+                  </div>
+                </Card>
+              ):currentItem.type==='quiz'?(
+                <Card className="p-6">
+                  <div className="text-center mb-4">
+                    <Icon name="HelpCircle" size={48} className="mx-auto text-purple-400 mb-4"/>
+                    <h2 className="text-lg font-semibold mb-2">{currentItem.data?.title}</h2>
+                    {currentItem.data?.description&&<p className="text-sm text-gray-400 mb-2">{currentItem.data.description}</p>}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 max-w-md mx-auto">
+                    <div className="p-3 bg-gray-700/50 rounded-lg text-center">
+                      <p className="text-2xl font-bold text-purple-400">{currentItem.data?.passing_score||70}%</p>
+                      <p className="text-xs text-gray-500">Score requis</p>
+                    </div>
+                    <div className="p-3 bg-gray-700/50 rounded-lg text-center">
+                      <p className="text-2xl font-bold text-purple-400">{currentItem.data?.max_attempts||'∞'}</p>
+                      <p className="text-xs text-gray-500">Tentatives max</p>
+                    </div>
+                    {currentItem.data?.time_limit&&<div className="p-3 bg-gray-700/50 rounded-lg text-center col-span-2">
+                      <p className="text-lg font-bold text-purple-400">{currentItem.data.time_limit} min</p>
+                      <p className="text-xs text-gray-500">Durée limite</p>
+                    </div>}
+                  </div>
+                  <p className="text-xs text-gray-500 text-center mt-4 italic">Le quiz sera présenté aux apprenants lors de la session</p>
+                </Card>
+              ):null}
+            </div>
+            
+            {/* Sidebar: content list */}
+            <div>
+              <Card className="p-4">
+                <h3 className="font-semibold mb-3 flex items-center gap-2">
+                  <Icon name="List" size={18}/>Contenu du cours
+                </h3>
+                <div className="space-y-1 max-h-[60vh] overflow-y-auto">
+                  {courseItems.map((item,i)=>{
+                    const isActive=currentItem?.id===item.id;
+                    return<button key={item.id} onClick={()=>setCurrentItem(item)} className={`w-full flex items-center gap-3 p-3 rounded-lg text-left transition ${isActive?'bg-indigo-600':'hover:bg-gray-700'}`}>
+                      <span className="w-6 h-6 bg-gray-600 rounded-full flex items-center justify-center text-xs font-bold shrink-0">{i+1}</span>
+                      <Icon name={itemIcon(item.type)} size={16} className={`text-${itemColor(item.type)}-400 shrink-0`}/>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{item.data?.title||'Sans titre'}</p>
+                        <p className={`text-xs ${isActive?'text-indigo-200':'text-gray-500'}`}>{itemLabel(item.type)}{item.data?.duration?` • ${item.data.duration}`:''}</p>
+                      </div>
+                    </button>;
+                  })}
+                  {courseItems.length===0&&<p className="text-gray-500 text-sm text-center py-4">Aucun contenu dans ce cours</p>}
+                </div>
+              </Card>
+              
+              {viewingCourse.description&&<Card className="p-4 mt-4">
+                <h4 className="text-sm font-medium mb-2">Description</h4>
+                <p className="text-sm text-gray-400">{viewingCourse.description}</p>
+              </Card>}
+            </div>
+          </div>
+        </div>;
+      }
+      
+      // ===== PATH VIEWER MODE =====
+      if(viewingPath){
+        return<div>
+          <div className="flex items-center gap-4 mb-6">
+            <Button variant="ghost" icon="ArrowLeft" onClick={()=>{setViewingPath(null);setPathCourses([]);}}>Retour</Button>
+            <div className="flex-1">
+              <h1 className="text-xl font-bold">{viewingPath.title}</h1>
+              <p className="text-sm text-gray-400">{pathCourses.length} cours dans ce parcours</p>
+            </div>
+            <span className="px-3 py-1 bg-cyan-500/20 text-cyan-400 rounded-lg text-xs font-medium">
+              <Icon name="Eye" size={14} className="inline mr-1"/>Mode prévisualisation
+            </span>
+          </div>
+          
+          {viewingPath.description&&<Card className="p-4 mb-6">
+            <p className="text-sm text-gray-400">{viewingPath.description}</p>
+          </Card>}
+          
+          <div className="space-y-3">
+            {pathCourses.map((pc,i)=>(
+              <Card key={pc.id} className="p-4 flex items-center gap-4">
+                <span className="w-10 h-10 bg-indigo-500/20 rounded-full flex items-center justify-center text-lg font-bold text-indigo-400 shrink-0">{i+1}</span>
+                <div className="flex-1">
+                  <h3 className="font-semibold">{pc.playlists?.title||'Cours supprimé'}</h3>
+                  {pc.playlists?.description&&<p className="text-sm text-gray-400 mt-1 line-clamp-1">{pc.playlists.description}</p>}
+                  <p className="text-xs text-gray-500 mt-1">
+                    <Icon name="Film" size={12} className="inline mr-1"/>{pc.playlists?.playlist_videos?.[0]?.count||0} éléments
+                    {pc.is_required&&<span className="ml-2 text-amber-400">• Obligatoire</span>}
+                  </p>
+                </div>
+                {pc.playlists&&<Button size="sm" icon="Play" onClick={()=>openCourseViewer(pc.playlists)}>
+                  Prévisualiser
+                </Button>}
+              </Card>
+            ))}
+            {pathCourses.length===0&&<Empty icon="Route" title="Parcours vide" desc="Aucun cours dans ce parcours"/>}
+          </div>
+        </div>;
+      }
+      
+      // ===== MAIN LIST MODE =====
       return<div>
         <div className="mb-6">
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Icon name="BookOpen" size={28}/>Mes contenus
           </h1>
-          <p className="text-sm text-gray-400">Cours et parcours de vos sessions pour diffusion en collectif</p>
+          <p className="text-sm text-gray-400">Cours et parcours de vos sessions — cliquez pour prévisualiser et diffuser en collectif</p>
         </div>
         
         <Tabs tabs={[
@@ -3739,24 +3984,22 @@
             courses.length===0?<Empty icon="BookOpen" title="Aucun cours" desc="Vos cours apparaîtront ici lorsqu'un administrateur vous assignera à des sessions"/>:(
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {courses.map(c=>(
-                  <Card key={c.id} className="p-4">
+                  <Card key={c.id} className="p-4 hover:border-indigo-500 transition cursor-pointer" onClick={()=>openCourseViewer(c)}>
                     <div className="flex items-start justify-between mb-2">
                       <h3 className="font-semibold">{c.title}</h3>
-                      {c.is_lms_content&&<span className="px-2 py-0.5 rounded text-xs bg-indigo-600">📦 LMS</span>}
+                      {c.is_lms_content&&<span className="px-2 py-0.5 rounded text-xs bg-indigo-600 shrink-0">📦 LMS</span>}
                     </div>
                     {c.description&&<p className="text-sm text-gray-400 mb-3 line-clamp-2">{c.description}</p>}
                     <div className="flex items-center gap-3 text-xs text-gray-500 mb-3">
                       <span><Icon name="Film" size={12} className="inline mr-1"/>{c.playlist_videos?.[0]?.count||0} éléments</span>
                       {c.is_published&&<span className="text-green-400">Publié</span>}
                     </div>
-                    {c.sessions?.length>0&&<div className="pt-2 border-t border-gray-700">
-                      <p className="text-xs text-gray-500 mb-1">Sessions associées :</p>
-                      {c.sessions.map(s=>(
-                        <div key={s.id} className="text-xs text-gray-400 flex items-center gap-1">
-                          <Icon name="Calendar" size={10}/>{s.name} — {new Date(s.start_date).toLocaleDateString('fr-FR')}
-                        </div>
-                      ))}
-                    </div>}
+                    <div className="flex items-center justify-between pt-2 border-t border-gray-700">
+                      <div>
+                        {c.sessions?.length>0&&<p className="text-xs text-gray-500">{c.sessions.length} session{c.sessions.length>1?'s':''}</p>}
+                      </div>
+                      <Button size="sm" variant="secondary" icon="Play" onClick={e=>{e.stopPropagation();openCourseViewer(c);}}>Prévisualiser</Button>
+                    </div>
                   </Card>
                 ))}
               </div>
@@ -3767,23 +4010,21 @@
             paths.length===0?<Empty icon="Route" title="Aucun parcours" desc="Vos parcours apparaîtront ici lorsqu'un administrateur vous assignera à des sessions"/>:(
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {paths.map(p=>(
-                  <Card key={p.id} className="p-4">
+                  <Card key={p.id} className="p-4 hover:border-indigo-500 transition cursor-pointer" onClick={()=>openPathViewer(p)}>
                     <div className="flex items-start justify-between mb-2">
                       <h3 className="font-semibold">{p.title}</h3>
-                      {p.is_lms_content&&<span className="px-2 py-0.5 rounded text-xs bg-indigo-600">📦 LMS</span>}
+                      {p.is_lms_content&&<span className="px-2 py-0.5 rounded text-xs bg-indigo-600 shrink-0">📦 LMS</span>}
                     </div>
                     {p.description&&<p className="text-sm text-gray-400 mb-3 line-clamp-2">{p.description}</p>}
                     <div className="flex items-center gap-3 text-xs text-gray-500 mb-3">
                       <span><Icon name="Layers" size={12} className="inline mr-1"/>{p.learning_path_courses?.[0]?.count||0} cours</span>
                     </div>
-                    {p.sessions?.length>0&&<div className="pt-2 border-t border-gray-700">
-                      <p className="text-xs text-gray-500 mb-1">Sessions associées :</p>
-                      {p.sessions.map(s=>(
-                        <div key={s.id} className="text-xs text-gray-400 flex items-center gap-1">
-                          <Icon name="Calendar" size={10}/>{s.name} — {new Date(s.start_date).toLocaleDateString('fr-FR')}
-                        </div>
-                      ))}
-                    </div>}
+                    <div className="flex items-center justify-between pt-2 border-t border-gray-700">
+                      <div>
+                        {p.sessions?.length>0&&<p className="text-xs text-gray-500">{p.sessions.length} session{p.sessions.length>1?'s':''}</p>}
+                      </div>
+                      <Button size="sm" variant="secondary" icon="Play" onClick={e=>{e.stopPropagation();openPathViewer(p);}}>Prévisualiser</Button>
+                    </div>
                   </Card>
                 ))}
               </div>
