@@ -3460,14 +3460,42 @@
       const[contentPickerSearch,setContentPickerSearch]=useState('');
       
       const load=useCallback(async()=>{
-        // Charger les sessions (sans les nouvelles relations pour compatibilité PostgREST)
-        let qs=supabase.from('training_sessions').select(`
-          *,
-          session_trainers(id,trainer_id,role,profiles:trainer_id(first_name,last_name,email)),
-          session_participants(id,learner_id,status,enrollment_id,profiles:learner_id(first_name,last_name,email))
-        `).order('start_date',{ascending:false});
-        if(!isSuperAdmin&&center?.id)qs=qs.eq('center_id',center.id);
-        const{data:sessionsData}=await qs;
+        // Charger les sessions avec fallback si les relations échouent
+        let sessionsData=null;
+        try{
+          let qs=supabase.from('training_sessions').select(`
+            *,
+            session_trainers(id,trainer_id,role,profiles:trainer_id(first_name,last_name,email)),
+            session_participants(id,learner_id,status,enrollment_id,profiles:learner_id(first_name,last_name,email))
+          `).order('start_date',{ascending:false});
+          if(!isSuperAdmin&&center?.id)qs=qs.eq('center_id',center.id);
+          const{data,error}=await qs;
+          if(error)throw error;
+          sessionsData=data;
+        }catch(e){
+          console.warn('Nested session query failed, using fallback:',e);
+          // Fallback: query without nested relations
+          let qs2=supabase.from('training_sessions').select('*').order('start_date',{ascending:false});
+          if(!isSuperAdmin&&center?.id)qs2=qs2.eq('center_id',center.id);
+          const{data:fallback}=await qs2;
+          sessionsData=fallback||[];
+          // Load relations separately
+          const sids=sessionsData.map(s=>s.id);
+          if(sids.length>0){
+            try{
+              const{data:trainers}=await supabase.from('session_trainers').select('id,trainer_id,session_id,role,profiles:trainer_id(first_name,last_name,email)').in('session_id',sids);
+              const{data:parts}=await supabase.from('session_participants').select('id,learner_id,session_id,status,enrollment_id,profiles:learner_id(first_name,last_name,email)').in('session_id',sids);
+              sessionsData=sessionsData.map(s=>({
+                ...s,
+                session_trainers:(trainers||[]).filter(t=>t.session_id===s.id),
+                session_participants:(parts||[]).filter(p=>p.session_id===s.id)
+              }));
+            }catch(e2){
+              console.warn('Session relations load failed:',e2);
+              sessionsData=sessionsData.map(s=>({...s,session_trainers:[],session_participants:[]}));
+            }
+          }
+        }
         
         // Charger session_contents séparément
         const sessionIds=(sessionsData||[]).map(s=>s.id);
@@ -10281,7 +10309,18 @@
             try{
               const licIds=(lic||[]).map(l=>l.id);
               if(licIds.length>0){
-                const{data:sessData}=await supabase.from('training_sessions').select('id,license_id,session_participants(learner_id,status)').in('license_id',licIds);
+                let sessData=[];
+                try{
+                  const{data,error}=await supabase.from('training_sessions').select('id,license_id,session_participants(learner_id,status)').in('license_id',licIds);
+                  if(error)throw error;
+                  sessData=data||[];
+                }catch(e2){
+                  // Fallback: load without nested relation
+                  try{
+                    const{data:sd}=await supabase.from('training_sessions').select('id,license_id').in('license_id',licIds);
+                    sessData=(sd||[]).map(s=>({...s,session_participants:[]}));
+                  }catch(e3){sessData=[];}
+                }
                 const usage={};
                 licIds.forEach(lid=>{usage[lid]={sessions:0,learners:0};});
                 (sessData||[]).forEach(s=>{
