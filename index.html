@@ -9166,7 +9166,8 @@
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
       const[editing,setEditing]=useState(null);
-      const[form,setForm]=useState({title:'',description:'',category_id:'',theme_id:'',sub_theme_id:''});
+      const[form,setForm]=useState({title:'',description:'',category_id:'',theme_id:'',sub_theme_id:'',thumbnail_url:'',estimated_duration:'',learning_objectives:'',tags:'',passing_score:70,certificate_enabled:false});
+      const[coursePrereqs,setCoursePrereqs]=useState([]);
       const[saving,setSaving]=useState(false);
       const[editContentModal,setEditContentModal]=useState(null);
       const[courseItems,setCourseItems]=useState([]); // unified list: {type,tableId,position,data}
@@ -9258,7 +9259,43 @@
       },[isSuperAdmin,center?.id,realRole,profile?.id,can]);
       useEffect(()=>{load();},[load]);
 
-      const handleSave=async()=>{setSaving(true);const payload={title:form.title,description:form.description,category_id:form.category_id||null,theme_id:form.theme_id||null,sub_theme_id:form.sub_theme_id||null,center_id:center?.id,created_by:profile?.id};if(editing)await supabase.from('playlists').update(payload).eq('id',editing.id);else await supabase.from('playlists').insert(payload);await load();setModal(false);setForm({title:'',description:'',category_id:'',theme_id:'',sub_theme_id:''});setEditing(null);setSaving(false);};
+      const handleSave=async()=>{
+        setSaving(true);
+        try{
+          const tagsArr=form.tags?form.tags.split(',').map(t=>t.trim()).filter(Boolean):[];
+          const payload={
+            title:form.title,description:form.description,
+            category_id:form.category_id||null,theme_id:form.theme_id||null,sub_theme_id:form.sub_theme_id||null,
+            thumbnail_url:form.thumbnail_url||null,
+            estimated_duration:form.estimated_duration?parseInt(form.estimated_duration):null,
+            learning_objectives:form.learning_objectives||null,
+            tags:tagsArr,
+            passing_score:form.passing_score?parseInt(form.passing_score):70,
+            certificate_enabled:!!form.certificate_enabled,
+            center_id:center?.id,created_by:profile?.id
+          };
+          let courseId=editing?.id;
+          if(editing){
+            await supabase.from('playlists').update(payload).eq('id',editing.id);
+          }else{
+            const{data:ins}=await supabase.from('playlists').insert(payload).select('id').single();
+            courseId=ins?.id;
+          }
+          // Sauvegarder les prérequis
+          if(courseId){
+            try{
+              await supabase.from('course_prerequisites').delete().eq('course_id',courseId);
+              if(coursePrereqs.length>0){
+                await supabase.from('course_prerequisites').insert(coursePrereqs.map(pid=>({course_id:courseId,prerequisite_id:pid})));
+              }
+            }catch(e){console.warn('Prerequisites save:',e);}
+          }
+          await load();setModal(false);
+          setForm({title:'',description:'',category_id:'',theme_id:'',sub_theme_id:'',thumbnail_url:'',estimated_duration:'',learning_objectives:'',tags:'',passing_score:70,certificate_enabled:false});
+          setCoursePrereqs([]);setEditing(null);
+        }catch(e){alert('Erreur: '+e.message);}
+        setSaving(false);
+      };
       const handleDelete=async id=>{if(!confirm('Supprimer ?'))return;await supabase.from('playlists').delete().eq('id',id);load();};
       
       // Gestion des formateurs assignés
@@ -9543,14 +9580,19 @@
           const licensed=!p.is_lms_content||isCourseLicensed(p.id);
           const isLocked=p.is_lms_content&&p.is_locked;
           const canModify=can('manage_playlists')&&(!p.is_lms_content||isSuperAdmin)&&!isLocked;
-          return<Card key={p.id} className={`p-4 ${!licensed?'opacity-75':''}`}>
-          <div className="flex items-start justify-between mb-3">
+          return<Card key={p.id} className={`overflow-hidden ${!licensed?'opacity-75':''}`}>
+          {p.thumbnail_url&&<div className="h-32 bg-gray-800"><img src={p.thumbnail_url} className="w-full h-full object-cover" onError={e=>{e.target.style.display='none'}}/></div>}
+          <div className="p-4">
+          <div className="flex items-start justify-between mb-2">
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-semibold">{p.title}</h3>
                 {isLocked&&<Icon name="Lock" size={14} className="text-red-400"/>}
               </div>
-              <p className="text-sm text-gray-400 mt-1">{p.playlist_videos?.[0]?.count||0} élément(s)</p>
+              <div className="flex items-center gap-3 text-sm text-gray-400 mt-1">
+                <span>{p.playlist_videos?.[0]?.count||0} élément(s)</span>
+                {p.estimated_duration&&<span><Icon name="Clock" size={12} className="inline mr-1"/>{p.estimated_duration>=60?Math.round(p.estimated_duration/60)+'h':p.estimated_duration+'min'}</span>}
+              </div>
               {can('manage_playlists')&&getAssignedTrainersCount(p.id)>0&&(
                 <p className="text-xs text-indigo-400 mt-1"><Icon name="Users" size={12} className="inline mr-1"/>{getAssignedTrainersCount(p.id)} formateur(s)</p>
               )}
@@ -9558,20 +9600,24 @@
             <div className="flex flex-col gap-1 items-end">
               {p.is_lms_content&&<span className={`px-2 py-0.5 rounded text-xs ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒 Non licencié'}</span>}
               <span className={`px-2 py-1 rounded text-xs ${p.is_published?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>{p.is_published?'Publié':'Brouillon'}</span>
+              {p.certificate_enabled&&<span className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-400">🎓 Certifiant</span>}
             </div>
           </div>
+          {(p.tags||[]).length>0&&<div className="flex flex-wrap gap-1 mb-2">{p.tags.slice(0,4).map((t,i)=><span key={i} className="px-2 py-0.5 bg-gray-700 rounded text-xs text-gray-300">{t}</span>)}{p.tags.length>4&&<span className="text-xs text-gray-500">+{p.tags.length-4}</span>}</div>}
+          {p.passing_score&&p.passing_score!==70&&<p className="text-xs text-gray-500 mb-2">Score requis: {p.passing_score}%</p>}
           {p.is_lms_content&&!isSuperAdmin&&<div className="mb-3"><span className={`text-xs px-2 py-1 rounded ${licensed?'bg-green-500/20 text-green-400':'bg-red-500/20 text-red-400'}`}>{licensed?'✓ Sous licence':(isLocked?'Consultation seule':'Non licencié')}</span>{isLocked&&licensed&&<span className="text-xs text-gray-500 ml-2">• Non modifiable</span>}</div>}
           <div className="flex flex-wrap gap-2">
             <Button variant="ghost" size="sm" icon="Eye" onClick={()=>openPreview(p)} title="Prévisualiser le cours">Prévisualiser</Button>
             {licensed&&(can('manage_playlists')||can('assign_content'))&&!isLocked&&<Button variant="ghost" size="sm" icon="Layers" onClick={()=>openEditContent(p)}>Contenu</Button>}
             {licensed&&isLocked&&<Button variant="ghost" size="sm" icon="Eye" onClick={()=>openEditContent(p)}>Voir contenu</Button>}
             {canModify&&<>
-              <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>{setEditing(p);setForm({title:p.title,description:p.description||'',category_id:p.category_id||'',theme_id:p.theme_id||'',sub_theme_id:p.sub_theme_id||''});setModal(true);}}>Modifier</Button>
+              <Button variant="ghost" size="sm" icon="Edit2" onClick={async()=>{setEditing(p);setForm({title:p.title,description:p.description||'',category_id:p.category_id||'',theme_id:p.theme_id||'',sub_theme_id:p.sub_theme_id||'',thumbnail_url:p.thumbnail_url||'',estimated_duration:p.estimated_duration||'',learning_objectives:p.learning_objectives||'',tags:(p.tags||[]).join(', '),passing_score:p.passing_score||70,certificate_enabled:!!p.certificate_enabled});try{const{data:pr}=await supabase.from('course_prerequisites').select('prerequisite_id').eq('course_id',p.id);setCoursePrereqs((pr||[]).map(x=>x.prerequisite_id));}catch(e){setCoursePrereqs([]);}setModal(true);}}>Modifier</Button>
               <Button variant="ghost" size="sm" icon="Users" onClick={()=>openAssignModal(p)}>Formateurs</Button>
             </>}
             {canModify&&<Button variant="ghost" size="sm" icon={p.is_published?'EyeOff':'Eye'} onClick={()=>togglePublish(p)}>{p.is_published?'Dépublier':'Publier'}</Button>}
             {canModify&&<Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(p.id)}/>}
             {!licensed&&<span className="text-xs text-gray-500 italic">Demandez une licence</span>}
+          </div>
           </div>
         </Card>})}</div>}
         
@@ -9597,7 +9643,66 @@
           </div>
         </Modal>
         
-        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);}} title={editing?'Modifier le cours':'Créer un cours'} size="lg"><div className="space-y-4"><Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/><div className="grid grid-cols-3 gap-4"><Select label="Catégorie" value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/><Select label="Thème" value={form.theme_id} onChange={e=>setForm({...form,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/><Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/></div><div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div><div className="flex justify-end gap-3"><Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button><Button onClick={handleSave} loading={saving} disabled={!form.title}>Enregistrer</Button></div></div></Modal>
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setEditing(null);setCoursePrereqs([]);}} title={editing?'Modifier le cours':'Créer un cours'} size="xl">
+          <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+            <Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
+            
+            <div className="grid grid-cols-3 gap-4">
+              <Select label="Catégorie" value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+              <Select label="Thème" value={form.theme_id} onChange={e=>setForm({...form,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/>
+              <Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/>
+            </div>
+            
+            <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
+              <textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Image de couverture (URL)" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})} placeholder="https://..."/>
+              <Input label="Durée estimée (minutes)" type="number" value={form.estimated_duration} onChange={e=>setForm({...form,estimated_duration:e.target.value})} placeholder="Auto-calculée si vide"/>
+            </div>
+            
+            <div><label className="block text-sm font-medium text-gray-300 mb-1">Objectifs pédagogiques</label>
+              <textarea value={form.learning_objectives} onChange={e=>setForm({...form,learning_objectives:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="À l'issue de ce cours, l'apprenant sera capable de..."/>
+            </div>
+            
+            <Input label="Tags (séparés par des virgules)" value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="sécurité, conduite, code de la route"/>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Score minimum de réussite (%)" type="number" min="0" max="100" value={form.passing_score} onChange={e=>setForm({...form,passing_score:e.target.value})}/>
+              <div className="flex items-end pb-1">
+                <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-gray-700">
+                  <input type="checkbox" checked={form.certificate_enabled} onChange={e=>setForm({...form,certificate_enabled:e.target.checked})} className="w-5 h-5 rounded"/>
+                  <div><span className="text-sm font-medium">Certificat activé</span><p className="text-xs text-gray-500">Délivré à la complétion</p></div>
+                </label>
+              </div>
+            </div>
+            
+            {/* Prérequis */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Prérequis (cours à compléter avant)</label>
+              <div className="space-y-1 max-h-32 overflow-y-auto bg-gray-800 rounded-lg p-2">
+                {playlists.filter(pl=>pl.id!==editing?.id&&pl.is_published).length===0?
+                  <p className="text-sm text-gray-500 text-center py-2">Aucun cours publié disponible</p>:
+                  playlists.filter(pl=>pl.id!==editing?.id&&pl.is_published).map(pl=>(
+                    <label key={pl.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer text-sm ${coursePrereqs.includes(pl.id)?'bg-indigo-600/30':'hover:bg-gray-700'}`}>
+                      <input type="checkbox" checked={coursePrereqs.includes(pl.id)} onChange={()=>setCoursePrereqs(prev=>prev.includes(pl.id)?prev.filter(x=>x!==pl.id):[...prev,pl.id])} className="w-4 h-4 rounded"/>
+                      <span>{pl.title}</span>
+                      {pl.is_lms_content&&<span className="text-xs bg-indigo-600 px-1.5 py-0.5 rounded">LMS</span>}
+                    </label>
+                  ))
+                }
+              </div>
+              {coursePrereqs.length>0&&<p className="text-xs text-indigo-400 mt-1">{coursePrereqs.length} prérequis sélectionné{coursePrereqs.length>1?'s':''}</p>}
+            </div>
+            
+            {form.thumbnail_url&&<div><label className="block text-sm font-medium text-gray-300 mb-1">Aperçu image</label><img src={form.thumbnail_url} className="h-24 rounded-lg object-cover" onError={e=>{e.target.style.display='none'}}/></div>}
+          </div>
+          <div className="flex justify-end gap-3 mt-4 pt-4 border-t border-gray-700">
+            <Button variant="secondary" onClick={()=>{setModal(false);setCoursePrereqs([]);}}>Annuler</Button>
+            <Button onClick={handleSave} loading={saving} disabled={!form.title}>Enregistrer</Button>
+          </div>
+        </Modal>
         <Modal isOpen={!!editContentModal} onClose={()=>setEditContentModal(null)} title={`Contenu: ${editContentModal?.title}${editContentModal?.is_lms_content?' 📦':''}`} size="xl">
           {/* Unified content tab bar */}
           <Tabs tabs={[
@@ -10789,7 +10894,8 @@
       const[loading,setLoading]=useState(true);
       const[modal,setModal]=useState(false);
       const[editing,setEditing]=useState(null);
-      const[form,setForm]=useState({title:'',description:'',thumbnail_url:'',estimated_duration:'',category_id:'',theme_id:'',sub_theme_id:''});
+      const[form,setForm]=useState({title:'',description:'',thumbnail_url:'',estimated_duration:'',category_id:'',theme_id:'',sub_theme_id:'',sequential_mode:false,learning_objectives:'',tags:'',difficulty_level:'intermediate',language:'fr',certificate_enabled:false});
+      const[pathPrereqs,setPathPrereqs]=useState([]);
       const[pathCourses,setPathCourses]=useState([]);
       const[saving,setSaving]=useState(false);
       const[contentModal,setContentModal]=useState(null);
@@ -10877,13 +10983,15 @@
         licensed:paths.filter(p=>p.is_lms_content&&isPathLicensed(p.id)).length
       };
       
-      const openModal=(path=null)=>{
+      const openModal=async(path=null)=>{
         if(path){
           setEditing(path);
-          setForm({title:path.title,description:path.description||'',thumbnail_url:path.thumbnail_url||'',estimated_duration:path.estimated_duration||'',category_id:path.category_id||'',theme_id:path.theme_id||'',sub_theme_id:path.sub_theme_id||''});
+          setForm({title:path.title,description:path.description||'',thumbnail_url:path.thumbnail_url||'',estimated_duration:path.estimated_duration||'',category_id:path.category_id||'',theme_id:path.theme_id||'',sub_theme_id:path.sub_theme_id||'',sequential_mode:!!path.sequential_mode,learning_objectives:path.learning_objectives||'',tags:(path.tags||[]).join(', '),difficulty_level:path.difficulty_level||'intermediate',language:path.language||'fr',certificate_enabled:!!path.certificate_enabled});
+          try{const{data:pr}=await supabase.from('path_prerequisites').select('prerequisite_id').eq('path_id',path.id);setPathPrereqs((pr||[]).map(x=>x.prerequisite_id));}catch(e){setPathPrereqs([]);}
         }else{
           setEditing(null);
-          setForm({title:'',description:'',thumbnail_url:'',estimated_duration:'',category_id:'',theme_id:'',sub_theme_id:''});
+          setForm({title:'',description:'',thumbnail_url:'',estimated_duration:'',category_id:'',theme_id:'',sub_theme_id:'',sequential_mode:false,learning_objectives:'',tags:'',difficulty_level:'intermediate',language:'fr',certificate_enabled:false});
+          setPathPrereqs([]);
         }
         setModal(true);
       };
@@ -10892,13 +11000,36 @@
         if(!form.title.trim()){alert('Titre requis');return;}
         setSaving(true);
         try{
-          const payload={...form,estimated_duration:form.estimated_duration?parseInt(form.estimated_duration):null,center_id:center?.id||null};
+          const tagsArr=form.tags?form.tags.split(',').map(t=>t.trim()).filter(Boolean):[];
+          const payload={
+            title:form.title,description:form.description||null,thumbnail_url:form.thumbnail_url||null,
+            estimated_duration:form.estimated_duration?parseInt(form.estimated_duration):null,
+            category_id:form.category_id||null,theme_id:form.theme_id||null,sub_theme_id:form.sub_theme_id||null,
+            sequential_mode:!!form.sequential_mode,
+            learning_objectives:form.learning_objectives||null,
+            tags:tagsArr,
+            difficulty_level:form.difficulty_level||'intermediate',
+            language:form.language||'fr',
+            certificate_enabled:!!form.certificate_enabled,
+            center_id:center?.id||null
+          };
+          let pathId=editing?.id;
           if(editing){
             await supabase.from('learning_paths').update(payload).eq('id',editing.id);
           }else{
-            await supabase.from('learning_paths').insert(payload);
+            const{data:ins}=await supabase.from('learning_paths').insert(payload).select('id').single();
+            pathId=ins?.id;
           }
-          await load();setModal(false);
+          // Save prerequisites
+          if(pathId){
+            try{
+              await supabase.from('path_prerequisites').delete().eq('path_id',pathId);
+              if(pathPrereqs.length>0){
+                await supabase.from('path_prerequisites').insert(pathPrereqs.map(pid=>({path_id:pathId,prerequisite_id:pid})));
+              }
+            }catch(e){console.warn('Path prerequisites save:',e);}
+          }
+          await load();setModal(false);setPathPrereqs([]);
         }catch(err){alert('Erreur: '+err.message);}
         setSaving(false);
       };
@@ -11054,7 +11185,7 @@
               const courseCount=path.learning_path_courses?.[0]?.count||0;
               
               return<Card key={path.id} className={`overflow-hidden ${!licensed&&!isOwn?'opacity-80':''}`}>
-                {path.thumbnail_url&&<div className="h-32 bg-gray-800"><img src={path.thumbnail_url} className="w-full h-full object-cover"/></div>}
+                {path.thumbnail_url&&<div className="h-32 bg-gray-800"><img src={path.thumbnail_url} className="w-full h-full object-cover" onError={e=>{e.target.style.display='none'}}/></div>}
                 <div className="p-4">
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2">
@@ -11064,13 +11195,19 @@
                     <div className="flex flex-col gap-1 items-end">
                       {path.is_lms_content?<span className={`px-2 py-0.5 rounded text-xs ${licensed?'bg-indigo-600':'bg-red-600/80'}`}>{licensed?'📦 LMS':'🔒'}</span>:<span className="px-2 py-0.5 bg-gray-600 rounded text-xs">📁</span>}
                       <span className={`px-2 py-0.5 rounded text-xs ${path.is_published?'bg-green-500/20 text-green-400':'bg-gray-500/20 text-gray-400'}`}>{path.is_published?'Publié':'Brouillon'}</span>
+                      {path.certificate_enabled&&<span className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-400">🎓 Certifiant</span>}
                     </div>
                   </div>
                   
-                  <div className="flex items-center gap-3 text-sm text-gray-400 mb-3">
+                  <div className="flex items-center gap-3 text-sm text-gray-400 mb-2">
                     <span><Icon name="BookOpen" size={14} className="inline mr-1"/>{courseCount} cours</span>
-                    {path.estimated_duration&&<span><Icon name="Clock" size={14} className="inline mr-1"/>{Math.round(path.estimated_duration/60)}h</span>}
+                    {path.estimated_duration&&<span><Icon name="Clock" size={14} className="inline mr-1"/>{path.estimated_duration>=60?Math.round(path.estimated_duration/60)+'h':path.estimated_duration+'min'}</span>}
+                    {path.difficulty_level&&<span className={`px-1.5 py-0.5 rounded text-xs ${path.difficulty_level==='beginner'?'bg-green-500/20 text-green-400':path.difficulty_level==='intermediate'?'bg-yellow-500/20 text-yellow-400':path.difficulty_level==='advanced'?'bg-orange-500/20 text-orange-400':'bg-red-500/20 text-red-400'}`}>{({beginner:'Débutant',intermediate:'Intermédiaire',advanced:'Avancé',expert:'Expert'})[path.difficulty_level]}</span>}
+                    {path.language&&path.language!=='fr'&&<span className="text-xs">🌐 {path.language.toUpperCase()}</span>}
+                    {path.sequential_mode&&<span className="text-xs text-purple-400"><Icon name="ListOrdered" size={12} className="inline mr-1"/>Séquentiel</span>}
                   </div>
+                  
+                  {(path.tags||[]).length>0&&<div className="flex flex-wrap gap-1 mb-2">{path.tags.slice(0,4).map((t,i)=><span key={i} className="px-2 py-0.5 bg-gray-700 rounded text-xs text-gray-300">{t}</span>)}{path.tags.length>4&&<span className="text-xs text-gray-500">+{path.tags.length-4}</span>}</div>}
                   
                   {path.description&&<p className="text-sm text-gray-400 line-clamp-2 mb-3">{path.description}</p>}
                   
@@ -11089,22 +11226,67 @@
         )}
         
         {/* Modal création/édition */}
-        <Modal isOpen={modal} onClose={()=>setModal(false)} title={editing?'Modifier le parcours':'Créer un parcours'} size="lg">
-          <div className="space-y-4">
+        <Modal isOpen={modal} onClose={()=>{setModal(false);setPathPrereqs([]);}} title={editing?'Modifier le parcours':'Créer un parcours'} size="xl">
+          <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
             <Input label="Titre *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
             <div className="grid grid-cols-3 gap-4">
               <Select label="Catégorie" value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value,theme_id:'',sub_theme_id:''})} options={[{value:'',label:'Aucune'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
               <Select label="Thème" value={form.theme_id} onChange={e=>setForm({...form,theme_id:e.target.value,sub_theme_id:''})} options={[{value:'',label:'Aucun'},...getThemesForCategory(form.category_id).map(t=>({value:t.id,label:t.name}))]} disabled={!form.category_id}/>
               <Select label="Sous-thème" value={form.sub_theme_id} onChange={e=>setForm({...form,sub_theme_id:e.target.value})} options={[{value:'',label:'Aucun'},...getSubThemesForTheme(form.theme_id).map(st=>({value:st.id,label:st.name}))]} disabled={!form.theme_id}/>
             </div>
-            <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div>
+            <div><label className="block text-sm font-medium text-gray-300 mb-1">Description</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none"/></div>
+            
             <div className="grid grid-cols-2 gap-4">
               <Input label="Image URL" value={form.thumbnail_url} onChange={e=>setForm({...form,thumbnail_url:e.target.value})} placeholder="https://..."/>
               <Input label="Durée estimée (minutes)" type="number" value={form.estimated_duration} onChange={e=>setForm({...form,estimated_duration:e.target.value})}/>
             </div>
+            
+            <div><label className="block text-sm font-medium text-gray-300 mb-1">Objectifs pédagogiques</label>
+              <textarea value={form.learning_objectives} onChange={e=>setForm({...form,learning_objectives:e.target.value})} rows={3} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none" placeholder="À l'issue de ce parcours, l'apprenant sera capable de..."/>
+            </div>
+            
+            <Input label="Tags (séparés par des virgules)" value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="permis B, sécurité routière, conduite"/>
+            
+            <div className="grid grid-cols-3 gap-4">
+              <Select label="Niveau de difficulté" value={form.difficulty_level} onChange={e=>setForm({...form,difficulty_level:e.target.value})} options={[{value:'beginner',label:'🟢 Débutant'},{value:'intermediate',label:'🟡 Intermédiaire'},{value:'advanced',label:'🟠 Avancé'},{value:'expert',label:'🔴 Expert'}]}/>
+              <Select label="Langue" value={form.language} onChange={e=>setForm({...form,language:e.target.value})} options={[{value:'fr',label:'🇫🇷 Français'},{value:'en',label:'🇬🇧 Anglais'},{value:'es',label:'🇪🇸 Espagnol'},{value:'de',label:'🇩🇪 Allemand'},{value:'it',label:'🇮🇹 Italien'},{value:'pt',label:'🇵🇹 Portugais'},{value:'ar',label:'🇸🇦 Arabe'},{value:'zh',label:'🇨🇳 Chinois'}]}/>
+              <div className="flex flex-col gap-2 justify-end">
+                <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-700">
+                  <input type="checkbox" checked={form.sequential_mode} onChange={e=>setForm({...form,sequential_mode:e.target.checked})} className="w-4 h-4 rounded"/>
+                  <div><span className="text-sm font-medium">Mode séquentiel</span><p className="text-xs text-gray-500">Ordre imposé</p></div>
+                </label>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-6">
+              <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-gray-700">
+                <input type="checkbox" checked={form.certificate_enabled} onChange={e=>setForm({...form,certificate_enabled:e.target.checked})} className="w-5 h-5 rounded"/>
+                <div><span className="text-sm font-medium">Certificat de parcours</span><p className="text-xs text-gray-500">Délivré à la complétion de tous les cours</p></div>
+              </label>
+            </div>
+            
+            {/* Prérequis */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Prérequis (parcours à compléter avant)</label>
+              <div className="space-y-1 max-h-32 overflow-y-auto bg-gray-800 rounded-lg p-2">
+                {paths.filter(pp=>pp.id!==editing?.id&&pp.is_published).length===0?
+                  <p className="text-sm text-gray-500 text-center py-2">Aucun parcours publié disponible</p>:
+                  paths.filter(pp=>pp.id!==editing?.id&&pp.is_published).map(pp=>(
+                    <label key={pp.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer text-sm ${pathPrereqs.includes(pp.id)?'bg-indigo-600/30':'hover:bg-gray-700'}`}>
+                      <input type="checkbox" checked={pathPrereqs.includes(pp.id)} onChange={()=>setPathPrereqs(prev=>prev.includes(pp.id)?prev.filter(x=>x!==pp.id):[...prev,pp.id])} className="w-4 h-4 rounded"/>
+                      <span>{pp.title}</span>
+                      {pp.is_lms_content&&<span className="text-xs bg-indigo-600 px-1.5 py-0.5 rounded">LMS</span>}
+                    </label>
+                  ))
+                }
+              </div>
+              {pathPrereqs.length>0&&<p className="text-xs text-indigo-400 mt-1">{pathPrereqs.length} prérequis sélectionné{pathPrereqs.length>1?'s':''}</p>}
+            </div>
+            
+            {form.thumbnail_url&&<div><label className="block text-sm font-medium text-gray-300 mb-1">Aperçu image</label><img src={form.thumbnail_url} className="h-24 rounded-lg object-cover" onError={e=>{e.target.style.display='none'}}/></div>}
           </div>
-          <div className="flex gap-2 mt-4">
-            <Button variant="secondary" onClick={()=>setModal(false)}>Annuler</Button>
+          <div className="flex gap-2 mt-4 pt-4 border-t border-gray-700">
+            <Button variant="secondary" onClick={()=>{setModal(false);setPathPrereqs([]);}}>Annuler</Button>
             <Button className="flex-1" onClick={handleSave} loading={saving} disabled={!form.title}>Enregistrer</Button>
           </div>
         </Modal>
