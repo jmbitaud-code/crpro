@@ -698,9 +698,17 @@
           const today=new Date().toISOString().split('T')[0];
           const{data:licenses}=await supabase.from('center_licenses').select('*,content_packs(pack_type)').eq('center_id',center.id).eq('status','active').lte('start_date',today).gte('end_date',today);
           const info={videos:[],scorm:[],quizzes:[],courses:[],paths:[],hasFullCatalog:false,hasAnyLicense:(licenses||[]).length>0};
-          info.hasFullCatalog=(licenses||[]).some(l=>l.license_type==='full_catalog'||l.content_packs?.pack_type==='full_catalog');
+          
+          // Check full catalog from any license type
+          info.hasFullCatalog=(licenses||[]).some(l=>
+            l.license_type==='full_catalog'
+            ||l.content_packs?.pack_type==='full_catalog'
+            ||(l.license_type==='resource_volume'&&l.full_catalog===true)
+          );
+          
           if(!info.hasFullCatalog){
-            const packIds=(licenses||[]).map(l=>l.pack_id).filter(Boolean);
+            // 1. Load content_pack_items for pack-based licenses
+            const packIds=(licenses||[]).filter(l=>l.pack_id).map(l=>l.pack_id);
             if(packIds.length>0){
               const{data:items}=await supabase.from('content_pack_items').select('content_type,content_id').in('pack_id',packIds);
               (items||[]).forEach(i=>{
@@ -710,6 +718,19 @@
                 else if(i.content_type==='course')info.courses.push(i.content_id);
                 else if(i.content_type==='path')info.paths.push(i.content_id);
               });
+            }
+            
+            // 2. Load license_resources for resource_volume licenses
+            const volumeLicIds=(licenses||[]).filter(l=>l.license_type==='resource_volume').map(l=>l.id);
+            if(volumeLicIds.length>0){
+              try{
+                const{data:resources}=await supabase.from('license_resources').select('content_type,content_id').in('license_id',volumeLicIds);
+                (resources||[]).forEach(r=>{
+                  if(r.content_type==='video'&&!info.videos.includes(r.content_id))info.videos.push(r.content_id);
+                  else if(r.content_type==='scorm'&&!info.scorm.includes(r.content_id))info.scorm.push(r.content_id);
+                  else if(r.content_type==='quiz'&&!info.quizzes.includes(r.content_id))info.quizzes.push(r.content_id);
+                });
+              }catch(e){console.warn('license_resources not available yet:',e);}
             }
           }
           setLicensedIds(info);
