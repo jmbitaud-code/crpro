@@ -3851,7 +3851,7 @@
           alert('Veuillez remplir le nom et la date de début');return;
         }
         // Vérifier qu'il y a au moins un contenu (ancien ou nouveau mode)
-        if(!form.content_id&&sessionContents.length===0){
+        if(!form.license_id&&!form.content_id&&sessionContents.length===0){
           alert('Veuillez sélectionner au moins un contenu');return;
         }
         
@@ -3870,8 +3870,8 @@
         // Extended columns (Phase 1 migration) - try to include
         const extData={
           code:form.code||null,
-          content_type:form.content_type||null,
-          content_id:form.content_id||null,
+          content_type:form.license_id?null:(form.content_type||null),
+          content_id:form.license_id?null:(form.content_id||null),
           license_id:form.license_id||null,
           start_time:form.start_time||null,
           end_time:form.end_time||null,
@@ -3884,27 +3884,40 @@
         
         let sessionId;
         if(selectedSession){
-          // Try with all columns first
+          // UPDATE existing session
           const{error:fullErr}=await supabase.from('training_sessions').update({...coreData,...extData}).eq('id',selectedSession.id);
           if(fullErr){
             console.warn('Full update failed, trying core only:',fullErr);
-            await supabase.from('training_sessions').update(coreData).eq('id',selectedSession.id);
+            const{error:coreErr}=await supabase.from('training_sessions').update(coreData).eq('id',selectedSession.id);
+            if(coreErr)throw new Error('Erreur mise à jour: '+coreErr.message);
           }
           sessionId=selectedSession.id;
         }else{
+          // INSERT new session
           const fullData={...coreData,...extData,created_by:profile?.id};
-          const{data:newSession,error:insErr}=await supabase.from('training_sessions').insert(fullData).select().single();
+          const{data:newSession,error:insErr}=await supabase.from('training_sessions').insert(fullData).select('id').single();
           if(insErr){
-            console.warn('Full insert failed, trying core only:',insErr);
-            const{data:ns2}=await supabase.from('training_sessions').insert({...coreData,created_by:profile?.id}).select().single();
-            sessionId=ns2?.id;
+            console.warn('Full insert failed ('+insErr.message+'), trying core only');
+            const{data:ns2,error:coreErr}=await supabase.from('training_sessions').insert({...coreData,created_by:profile?.id}).select('id').single();
+            if(coreErr)throw new Error('Erreur création session: '+coreErr.message);
+            if(!ns2?.id)throw new Error('Session créée mais impossible de récupérer l\'ID. Vérifiez les permissions RLS.');
+            sessionId=ns2.id;
+            // Try to add extended data via update (in case insert was blocked but update works)
+            if(form.license_id){
+              await supabase.from('training_sessions').update({license_id:form.license_id}).eq('id',sessionId).then(()=>{}).catch(()=>{});
+            }
           }else{
-            sessionId=newSession?.id;
+            if(!newSession?.id)throw new Error('Session créée mais ID non retourné. Vérifiez les policies RLS sur training_sessions (SELECT après INSERT).');
+            sessionId=newSession.id;
           }
         }
         
+        if(!sessionId){
+          throw new Error('Impossible de déterminer l\'ID de la session. La session n\'a peut-être pas été créée.');
+        }
+        
         // Sauvegarder session_contents si multi-content mode
-        if(sessionId&&sessionContents.length>0){
+        if(sessionContents.length>0){
           try{
             // Supprimer les anciens
             await supabase.from('session_contents').delete().eq('session_id',sessionId);
@@ -3917,15 +3930,20 @@
               is_required:c.is_required!==false,
               added_by:profile?.id
             }));
-            await supabase.from('session_contents').insert(items);
-          }catch(e){console.warn('session_contents save failed:',e);}
+            const{error:scErr}=await supabase.from('session_contents').insert(items);
+            if(scErr)console.warn('session_contents save warning:',scErr.message);
+          }catch(e){console.warn('session_contents save failed (table may not exist):',e);}
         }
         
+        alert('✅ Session '+(selectedSession?'modifiée':'créée')+' avec succès');
         setModal(null);
         setSelectedSession(null);
         resetForm();
         load();
-        }catch(e){console.error(e);alert('Erreur: '+e.message);}
+        }catch(e){
+          console.error('saveSession error:',e);
+          alert('❌ '+e.message);
+        }
         setSaving(false);
       };
       
@@ -4948,14 +4966,16 @@
     function ContenusPage(){
       const{isSuperAdmin,center,realRole,effectiveRole}=useAuth();
       const isCenterAdminView=!isSuperAdmin&&(realRole==='center_admin'||effectiveRole==='center_admin');
-      const[mainTab,setMainTab]=useState(isSuperAdmin?'creation':isCenterAdminView?'formations':'catalogue');
+      const[mainTab,setMainTab]=useState(isSuperAdmin?'creation':isCenterAdminView?'mes-cours':'catalogue');
       
       const tabs=isSuperAdmin?[
         {id:'creation',label:'Création',icon:'PlusCircle'},
         {id:'catalogue',label:'Catalogue',icon:'Library'}
       ]:isCenterAdminView?[
-        {id:'formations',label:'Formations clé en main',icon:'BookOpen'},
-        {id:'ressources',label:'Ressources pédagogiques',icon:'Boxes'}
+        {id:'mes-cours',label:'Mes cours',icon:'BookOpen'},
+        {id:'mes-parcours',label:'Mes parcours',icon:'Route'},
+        {id:'formations',label:'Catalogue formations',icon:'Library'},
+        {id:'ressources',label:'Catalogue ressources',icon:'Boxes'}
       ]:[
         {id:'catalogue',label:'Catalogue',icon:'Library'}
       ];
@@ -4966,7 +4986,7 @@
             <Icon name="Library" size={28}/>Contenus
           </h1>
           <p className="text-sm text-gray-400">
-            {isSuperAdmin?'Créez et gérez vos contenus de formation':isCenterAdminView?'Formations prêtes à l\'emploi et ressources pour créer les vôtres':'Parcourez le catalogue et demandez des licences'}
+            {isSuperAdmin?'Créez et gérez vos contenus de formation':isCenterAdminView?'Créez vos cours avec les ressources licenciées, ou parcourez le catalogue':'Parcourez le catalogue et demandez des licences'}
           </p>
         </div>
         
@@ -4975,6 +4995,8 @@
         <div className="mt-6">
           {mainTab==='creation'&&isSuperAdmin&&<ContentCreationPage/>}
           {mainTab==='catalogue'&&<ContentCataloguePage/>}
+          {mainTab==='mes-cours'&&<PlaylistsPage/>}
+          {mainTab==='mes-parcours'&&<LearningPathsPage/>}
           {mainTab==='formations'&&<ContentCataloguePage mode="formations"/>}
           {mainTab==='ressources'&&<ContentCataloguePage mode="ressources"/>}
         </div>
