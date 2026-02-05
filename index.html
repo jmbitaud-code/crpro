@@ -542,11 +542,24 @@
         }
         initializedRef.current=true;
         
-        // Timeout de sécurité : si le chargement prend plus de 10s, on arrête
+        // Timeout de sécurité : si le chargement prend plus de 10s, nettoyer et recharger
+        const timeoutRetryKey='crpro_auth_timeout_retry';
         const timeout=setTimeout(()=>{
           if(mounted&&loading){
-            console.warn('Auth timeout - forçage fin de chargement');
-            setLoading(false);
+            const retryCount=parseInt(sessionStorage.getItem(timeoutRetryKey)||'0');
+            if(retryCount<2){
+              // Première ou deuxième tentative : nettoyer le cache Supabase et recharger
+              console.warn(`Auth timeout - nettoyage cache session (tentative ${retryCount+1}/2)`);
+              sessionStorage.setItem(timeoutRetryKey,String(retryCount+1));
+              // Supprimer les entrées Supabase du localStorage
+              Object.keys(localStorage).filter(k=>k.startsWith('sb-')).forEach(k=>localStorage.removeItem(k));
+              window.location.reload();
+            }else{
+              // Après 2 tentatives, forcer la fin de chargement sans boucle
+              console.warn('Auth timeout - forçage fin de chargement (cache nettoyé)');
+              sessionStorage.removeItem(timeoutRetryKey);
+              setLoading(false);
+            }
           }
         },10000);
         
@@ -563,6 +576,7 @@
             }
           }finally{
             clearTimeout(timeout);
+            sessionStorage.removeItem(timeoutRetryKey);
             if(mounted)setLoading(false);
           }
         };
