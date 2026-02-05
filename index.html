@@ -6,7 +6,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <!-- VERSION 7.13.1 -->
+  <!-- VERSION 7.13.2 -->
   <title>Course Builder Pro</title>
   <meta name="description" content="Plateforme de création et diffusion de cours vidéo multi-centres">
   <meta name="theme-color" content="#1f2937">
@@ -65,7 +65,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '7.13.1';
+    const APP_VERSION = '7.13.2';
     const APP_URL = window.location.origin;
     // =======================================
 
@@ -7622,6 +7622,13 @@
       const[bTheme,setBTheme]=useState('');
       const[bDiff,setBDiff]=useState('all');
       const[bType,setBType]=useState('all');
+      const[bSubTheme,setBSubTheme]=useState('');
+      const[bTag,setBTag]=useState('');
+      // Quiz preview player
+      const[quizPreview,setQuizPreview]=useState(null);
+      const[previewQuestions,setPreviewQuestions]=useState([]);
+      const[previewAnswers,setPreviewAnswers]=useState({});
+      const[previewSubmitted,setPreviewSubmitted]=useState(false);
       
       const load=useCallback(async()=>{
         const[{data:q},{data:bank}]=await Promise.all([
@@ -7699,7 +7706,7 @@
         setQuizQuestions(data||[]);
         setSelectedBankQuestions([]);
         setPreviewBankQ(null);
-        setBSearch('');setBCat('');setBTheme('');setBDiff('all');setBType('all');
+        setBSearch('');setBCat('');setBTheme('');setBSubTheme('');setBDiff('all');setBType('all');setBTag('');
         setAddQuestionsModal(quiz);
       };
       
@@ -7780,6 +7787,11 @@
                   </div>
                 </div>
                 <div className="flex gap-2 mt-4">
+                  <Button variant="ghost" size="sm" icon="Play" className="text-cyan-400" onClick={async()=>{
+                    const{data:qs}=await supabase.from('quiz_questions').select('*,quiz_answers(*)').eq('quiz_id',q.id).order('sort_order');
+                    if(!qs||qs.length===0)return alert('Ce quiz ne contient aucune question');
+                    setPreviewQuestions(qs);setPreviewAnswers({});setPreviewSubmitted(false);setQuizPreview(q);
+                  }}>Tester</Button>
                   <Button variant="ghost" size="sm" icon="Database" onClick={()=>openAddQuestions(q)}>Questions</Button>
                   <Button variant="ghost" size="sm" icon="Edit2" onClick={()=>openEdit(q)}>Modifier</Button>
                   <Button variant="ghost" size="sm" icon="Trash2" className="text-red-400" onClick={()=>handleDelete(q.id)}/>
@@ -7844,10 +7856,15 @@
               if(bSearch){const s=bSearch.toLowerCase();if(!bq.question_text?.toLowerCase().includes(s)&&!(bq.question_bank_answers||[]).some(a=>a.answer_text?.toLowerCase().includes(s)))return false;}
               if(bCat&&bq.category_id!==bCat)return false;
               if(bTheme&&bq.theme_id!==bTheme)return false;
+              if(bSubTheme&&bq.sub_theme_id!==bSubTheme)return false;
               if(bDiff!=='all'&&bq.difficulty!==bDiff)return false;
               if(bType!=='all'&&bq.question_type!==bType)return false;
+              if(bTag&&!(bq.tags||[]).includes(bTag))return false;
               return true;
             });
+            
+            // Tags uniques de la banque
+            const allBankTags=[...new Set(bankQuestions.flatMap(bq=>bq.tags||[]))].sort();
             
             // Pioche aléatoire
             const pickRandom=(n)=>{
@@ -7882,11 +7899,13 @@
                 
                 {/* Filtres en ligne */}
                 <div className="flex flex-wrap gap-2 mb-3">
-                  <Select value={bCat} onChange={e=>{setBCat(e.target.value);setBTheme('');}} options={[{value:'',label:'Toutes catégories'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
-                  <Select value={bTheme} onChange={e=>setBTheme(e.target.value)} options={[{value:'',label:'Tous thèmes'},...(bCat?getThemesForCategory(bCat):themes).map(t=>({value:t.id,label:t.name}))]}/>
+                  <Select value={bCat} onChange={e=>{setBCat(e.target.value);setBTheme('');setBSubTheme('');}} options={[{value:'',label:'Toutes catégories'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+                  <Select value={bTheme} onChange={e=>{setBTheme(e.target.value);setBSubTheme('');}} options={[{value:'',label:'Tous thèmes'},...(bCat?getThemesForCategory(bCat):themes).map(t=>({value:t.id,label:t.name}))]}/>
+                  <Select value={bSubTheme} onChange={e=>setBSubTheme(e.target.value)} options={[{value:'',label:'Tous sous-thèmes'},...(bTheme?getSubThemesForTheme(bTheme):subThemes).map(st=>({value:st.id,label:st.name}))]}/>
                   <Select value={bDiff} onChange={e=>setBDiff(e.target.value)} options={[{value:'all',label:'Toutes difficultés'},{value:'easy',label:'Facile'},{value:'medium',label:'Moyen'},{value:'hard',label:'Difficile'}]}/>
                   <Select value={bType} onChange={e=>setBType(e.target.value)} options={[{value:'all',label:'Tous types'},...questionTypesLocal.map(t=>({value:t.value,label:t.label}))]}/>
-                  {(bCat||bTheme||bDiff!=='all'||bType!=='all'||bSearch)&&<button onClick={()=>{setBSearch('');setBCat('');setBTheme('');setBDiff('all');setBType('all');}} className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 rounded-lg flex items-center gap-1"><Icon name="X" size={14}/>Réinitialiser</button>}
+                  {allBankTags.length>0&&<Select value={bTag} onChange={e=>setBTag(e.target.value)} options={[{value:'',label:'Tous les tags'},...allBankTags.map(t=>({value:t,label:t}))]}/>}
+                  {(bCat||bTheme||bSubTheme||bDiff!=='all'||bType!=='all'||bTag||bSearch)&&<button onClick={()=>{setBSearch('');setBCat('');setBTheme('');setBSubTheme('');setBDiff('all');setBType('all');setBTag('');}} className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 rounded-lg flex items-center gap-1"><Icon name="X" size={14}/>Réinitialiser</button>}
                 </div>
                 
                 {/* Actions rapides */}
@@ -8106,6 +8125,174 @@
                 <Button onClick={addQuestionsFromBank} disabled={!selectedBankQuestions.length} icon="Plus">Ajouter {selectedBankQuestions.length||''} question(s) au quiz</Button>
               </div>
             </div></>;
+          })()}
+        </Modal>
+        
+        {/* Modal Quiz Preview Player */}
+        <Modal isOpen={!!quizPreview} onClose={()=>{setQuizPreview(null);setPreviewQuestions([]);setPreviewAnswers({});setPreviewSubmitted(false);}} title={`Prévisualisation — ${quizPreview?.title||''}`} size="xl">
+          {quizPreview&&(()=>{
+            const quiz=quizPreview;
+            
+            // Calcul du score
+            const computeScore=()=>{
+              let total=0,earned=0;
+              previewQuestions.forEach(q=>{
+                const pts=q.points||1;
+                total+=pts;
+                const correctIds=(q.quiz_answers||[]).filter(a=>a.is_correct).map(a=>a.id);
+                const userAns=previewAnswers[q.id];
+                if(q.question_type==='single'||q.question_type==='true_false'){
+                  if(correctIds.includes(userAns))earned+=pts;
+                }else if(q.question_type==='multiple'){
+                  const ua=userAns||[];
+                  if(correctIds.length===ua.length&&correctIds.every(id=>ua.includes(id)))earned+=pts;
+                }
+              });
+              return{total,earned,percent:total>0?Math.round((earned/total)*100):0};
+            };
+            
+            const score=previewSubmitted?computeScore():null;
+            const answeredCount=Object.keys(previewAnswers).length;
+            
+            return<div>
+              {/* Infos du quiz */}
+              <div className="flex items-center gap-4 mb-4 p-3 bg-gray-700/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm"><Icon name="List" size={16} className="text-indigo-400"/><span>{previewQuestions.length} questions</span></div>
+                <div className="flex items-center gap-2 text-sm"><Icon name="Target" size={16} className="text-green-400"/><span>Score requis : {quiz.passing_score}%</span></div>
+                {quiz.time_limit>0&&<div className="flex items-center gap-2 text-sm"><Icon name="Clock" size={16} className="text-orange-400"/><span>{quiz.time_limit} min</span></div>}
+                {quiz.max_attempts>0&&<div className="flex items-center gap-2 text-sm"><Icon name="RotateCcw" size={16} className="text-cyan-400"/><span>Max {quiz.max_attempts} tentative(s)</span></div>}
+                <div className="flex-1"/>
+                {!previewSubmitted&&<span className="text-sm text-gray-400">{answeredCount}/{previewQuestions.length} répondu(es)</span>}
+                <div className="flex gap-2">
+                  {quiz.shuffle_questions&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-xs">🔀 Questions mélangées</span>}
+                  {quiz.shuffle_answers&&<span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-xs">🔀 Réponses mélangées</span>}
+                  {quiz.show_feedback&&<span className="px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">💬 Feedback</span>}
+                </div>
+              </div>
+              
+              {/* Résultat si soumis */}
+              {previewSubmitted&&score&&(
+                <div className={`flex items-center gap-4 mb-4 p-4 rounded-lg ${score.percent>=quiz.passing_score?'bg-green-500/15 border border-green-500/30':'bg-red-500/15 border border-red-500/30'}`}>
+                  <div className={`w-16 h-16 rounded-full flex items-center justify-center shrink-0 ${score.percent>=quiz.passing_score?'bg-green-500':'bg-red-500'}`}>
+                    <Icon name={score.percent>=quiz.passing_score?'Check':'X'} size={32} className="text-white"/>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold">{score.percent}%</p>
+                    <p className={`font-medium ${score.percent>=quiz.passing_score?'text-green-400':'text-red-400'}`}>{score.percent>=quiz.passing_score?'Quiz réussi !':'Quiz non validé'}</p>
+                    <p className="text-sm text-gray-400">{score.earned}/{score.total} points</p>
+                  </div>
+                  <div className="flex-1"/>
+                  <Button variant="secondary" icon="RotateCcw" onClick={()=>{setPreviewAnswers({});setPreviewSubmitted(false);}}>Recommencer</Button>
+                </div>
+              )}
+              
+              {/* Questions */}
+              <div className="max-h-[55vh] overflow-y-auto space-y-4 pr-1 no-scrollbar">
+                {previewQuestions.map((q,i)=>{
+                  const answers=q.quiz_answers||[];
+                  const userAns=previewAnswers[q.id];
+                  const correctIds=answers.filter(a=>a.is_correct).map(a=>a.id);
+                  const isCorrectQ=(()=>{
+                    if(!previewSubmitted)return null;
+                    if(q.question_type==='single'||q.question_type==='true_false')return correctIds.includes(userAns);
+                    if(q.question_type==='multiple'){const ua=userAns||[];return correctIds.length===ua.length&&correctIds.every(id=>ua.includes(id));}
+                    return null;
+                  })();
+                  
+                  return<div key={q.id} className={`p-4 rounded-lg border ${previewSubmitted?(isCorrectQ?'bg-green-500/5 border-green-500/30':'bg-red-500/5 border-red-500/30'):'bg-gray-800 border-gray-700'}`}>
+                    <div className="flex items-start gap-3 mb-3">
+                      <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${previewSubmitted?(isCorrectQ?'bg-green-500 text-white':'bg-red-500 text-white'):'bg-indigo-600 text-white'}`}>{i+1}</span>
+                      <div className="flex-1">
+                        <p className="font-medium">{q.question_text}</p>
+                        <div className="flex gap-2 mt-1">
+                          <span className="text-xs text-gray-500">{q.points||1} pt{(q.points||1)>1?'s':''}</span>
+                          {q.time_limit>0&&<span className="text-xs text-orange-400">⏱ {q.time_limit}s</span>}
+                        </div>
+                      </div>
+                      {previewSubmitted&&<Icon name={isCorrectQ?'CheckCircle':'XCircle'} size={20} className={isCorrectQ?'text-green-400':'text-red-400'}/>}
+                    </div>
+                    
+                    {/* Choix unique / vrai-faux */}
+                    {(q.question_type==='single'||q.question_type==='true_false')&&(
+                      <div className="space-y-2 ml-11">
+                        {answers.map(a=>(
+                          <label key={a.id} className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all border ${
+                            previewSubmitted?(
+                              a.is_correct?'bg-green-500/15 border-green-500/40':
+                              userAns===a.id&&!a.is_correct?'bg-red-500/15 border-red-500/40':'bg-gray-700/50 border-transparent'
+                            ):(
+                              userAns===a.id?'bg-indigo-600/20 border-indigo-500':'bg-gray-700/50 border-transparent hover:border-gray-600'
+                            )
+                          }`}>
+                            <input type="radio" name={`pq-${q.id}`} checked={userAns===a.id} onChange={()=>!previewSubmitted&&setPreviewAnswers({...previewAnswers,[q.id]:a.id})} disabled={previewSubmitted} className="w-4 h-4 accent-indigo-500"/>
+                            <span className="flex-1">{a.answer_text}</span>
+                            {a.image_url&&<img src={a.image_url} className="w-10 h-10 rounded object-cover"/>}
+                            {previewSubmitted&&a.is_correct&&<Icon name="Check" size={16} className="text-green-400"/>}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    
+                    {/* Choix multiple */}
+                    {q.question_type==='multiple'&&(
+                      <div className="space-y-2 ml-11">
+                        {answers.map(a=>{
+                          const sel=(userAns||[]).includes(a.id);
+                          return(
+                            <label key={a.id} className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all border ${
+                              previewSubmitted?(
+                                a.is_correct?'bg-green-500/15 border-green-500/40':
+                                sel&&!a.is_correct?'bg-red-500/15 border-red-500/40':'bg-gray-700/50 border-transparent'
+                              ):(
+                                sel?'bg-indigo-600/20 border-indigo-500':'bg-gray-700/50 border-transparent hover:border-gray-600'
+                              )
+                            }`}>
+                              <input type="checkbox" checked={sel} onChange={()=>{
+                                if(previewSubmitted)return;
+                                const arr=userAns||[];
+                                setPreviewAnswers({...previewAnswers,[q.id]:sel?arr.filter(id=>id!==a.id):[...arr,a.id]});
+                              }} disabled={previewSubmitted} className="w-4 h-4 accent-indigo-500"/>
+                              <span className="flex-1">{a.answer_text}</span>
+                              {a.image_url&&<img src={a.image_url} className="w-10 h-10 rounded object-cover"/>}
+                              {previewSubmitted&&a.is_correct&&<Icon name="Check" size={16} className="text-green-400"/>}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                    
+                    {/* Autres types */}
+                    {['fill_blank','ordering','matching','short_answer','essay'].includes(q.question_type)&&(
+                      <div className="ml-11 p-3 bg-gray-700/50 rounded-lg">
+                        <p className="text-xs text-gray-500 italic">Ce type de question ({q.question_type}) n'est pas encore interactif en prévisualisation.</p>
+                        {answers.length>0&&<div className="mt-2 space-y-1">{answers.map((a,j)=><p key={j} className="text-sm"><span className={a.is_correct?'text-green-400':'text-gray-400'}>{a.is_correct?'✓':'•'}</span> {a.answer_text}</p>)}</div>}
+                      </div>
+                    )}
+                    
+                    {/* Feedback */}
+                    {previewSubmitted&&quiz.show_feedback&&(
+                      <div className="ml-11 mt-2 space-y-1">
+                        {isCorrectQ&&q.feedback_correct&&<div className="p-2 bg-green-500/10 rounded text-sm text-green-300"><Icon name="CheckCircle" size={14} className="inline mr-1"/>{q.feedback_correct}</div>}
+                        {!isCorrectQ&&q.feedback_incorrect&&<div className="p-2 bg-red-500/10 rounded text-sm text-red-300"><Icon name="XCircle" size={14} className="inline mr-1"/>{q.feedback_incorrect}</div>}
+                      </div>
+                    )}
+                  </div>;
+                })}
+              </div>
+              
+              {/* Actions */}
+              {!previewSubmitted?(
+                <div className="flex justify-between pt-4 mt-4 border-t border-gray-700">
+                  <Button variant="secondary" onClick={()=>setQuizPreview(null)}>Fermer</Button>
+                  <Button icon="Check" onClick={()=>setPreviewSubmitted(true)} disabled={answeredCount===0}>Soumettre ({answeredCount}/{previewQuestions.length})</Button>
+                </div>
+              ):(
+                <div className="flex justify-end pt-4 mt-4 border-t border-gray-700 gap-3">
+                  <Button variant="secondary" icon="RotateCcw" onClick={()=>{setPreviewAnswers({});setPreviewSubmitted(false);}}>Recommencer</Button>
+                  <Button onClick={()=>setQuizPreview(null)}>Fermer</Button>
+                </div>
+              )}
+            </div>;
           })()}
         </Modal>
       </div>;
