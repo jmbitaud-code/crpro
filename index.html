@@ -6,7 +6,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <!-- VERSION 7.8.0 -->
+  <!-- VERSION 7.13.0 -->
   <title>Course Builder Pro</title>
   <meta name="description" content="Plateforme de création et diffusion de cours vidéo multi-centres">
   <meta name="theme-color" content="#1f2937">
@@ -65,7 +65,7 @@
     // ============ CONFIGURATION ============
     const SUPABASE_URL='https://ludepnnsvwvpfbdxweam.supabase.co';
     const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZGVwbm5zdnd2cGZiZHh3ZWFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNjI4NjgsImV4cCI6MjA4NDYzODg2OH0.SYTPY5l4XwxOK19_p_Dlx3be29i_sxMQD3JLYgqjL2g';
-    const APP_VERSION = '7.12.2';
+    const APP_VERSION = '7.13.0';
     const APP_URL = window.location.origin;
     // =======================================
 
@@ -6575,8 +6575,11 @@
       const[search,setSearch]=useState('');
       const[predefinedTags,setPredefinedTags]=useState([]);
       const[filterCategory,setFilterCategory]=useState('');
+      const[filterTheme,setFilterTheme]=useState('');
+      const[filterSubTheme,setFilterSubTheme]=useState('');
       const[filterDifficulty,setFilterDifficulty]=useState('all');
       const[filterType,setFilterType]=useState('all');
+      const[filterTag,setFilterTag]=useState('');
       // Import
       const[importModal,setImportModal]=useState(false);
       const[importData,setImportData]=useState([]);
@@ -6800,75 +6803,104 @@
       
       const processImport=async()=>{
         setImportLoading(true);
-        let success=0,errors=0;
-        const BATCH=50;
+        let success=0,errors=0,total=importData.filter(r=>r['Question']||r['question_text']).length;
+        setImportResult({success:0,errors:0,total,phase:'import'});
         
-        // Phase 1: auto-créer taxonomie manquante
-        const newCats=new Map(),newThemes=new Map(),newSubs=new Map();
+        // Phase 1 : Pré-créer toutes les catégories/thèmes/sous-thèmes manquants
+        const catCache={};const themeCache={};const subThemeCache={};
         for(const row of importData){
           const catName=row['Catégorie']||'';const themeName=row['Thème']||'';const subThemeName=row['Sous-thème']||'';
-          if(catName&&!categories.find(c=>c.name.toLowerCase()===catName.toLowerCase())&&!newCats.has(catName.toLowerCase())){
-            const{data}=await supabase.from('content_categories').insert({name:catName,position:categories.length+newCats.size}).select().single();
-            if(data){newCats.set(catName.toLowerCase(),data);categories.push(data);}
+          if(catName&&!categories.find(c=>c.name.toLowerCase()===catName.toLowerCase())&&!catCache[catName.toLowerCase()]){
+            const{data}=await supabase.from('content_categories').insert({name:catName,position:categories.length}).select().single();
+            if(data){catCache[catName.toLowerCase()]=data;categories.push(data);}
           }
-          const cat=categories.find(c=>c.name.toLowerCase()===catName.toLowerCase());
-          if(themeName&&cat&&!themes.find(t=>t.category_id===cat.id&&t.name.toLowerCase()===themeName.toLowerCase())&&!newThemes.has(themeName.toLowerCase()+cat.id)){
-            const{data}=await supabase.from('content_themes').insert({name:themeName,category_id:cat.id,position:themes.length+newThemes.size}).select().single();
-            if(data){newThemes.set(themeName.toLowerCase()+cat.id,data);themes.push(data);}
+          if(themeName&&catName){
+            const cat=categories.find(c=>c.name.toLowerCase()===catName.toLowerCase())||catCache[catName.toLowerCase()];
+            if(cat&&!themes.find(t=>t.category_id===cat.id&&t.name.toLowerCase()===themeName.toLowerCase())&&!themeCache[`${cat.id}_${themeName.toLowerCase()}`]){
+              const{data}=await supabase.from('content_themes').insert({name:themeName,category_id:cat.id,position:themes.length}).select().single();
+              if(data){themeCache[`${cat.id}_${themeName.toLowerCase()}`]=data;themes.push(data);}
+            }
           }
-          const theme=themes.find(t=>t.category_id===cat?.id&&t.name.toLowerCase()===themeName.toLowerCase());
-          if(subThemeName&&theme&&!subThemes.find(st=>st.theme_id===theme.id&&st.name.toLowerCase()===subThemeName.toLowerCase())&&!newSubs.has(subThemeName.toLowerCase()+theme.id)){
-            const{data}=await supabase.from('content_sub_themes').insert({name:subThemeName,theme_id:theme.id,position:subThemes.length+newSubs.size}).select().single();
-            if(data){newSubs.set(subThemeName.toLowerCase()+theme.id,data);subThemes.push(data);}
+          if(subThemeName&&themeName&&catName){
+            const cat=categories.find(c=>c.name.toLowerCase()===catName.toLowerCase())||catCache[catName.toLowerCase()];
+            const theme=cat?(themes.find(t=>t.category_id===cat.id&&t.name.toLowerCase()===themeName.toLowerCase())||themeCache[`${cat.id}_${themeName.toLowerCase()}`]):null;
+            if(theme&&!subThemes.find(st=>st.theme_id===theme.id&&st.name.toLowerCase()===subThemeName.toLowerCase())&&!subThemeCache[`${theme.id}_${subThemeName.toLowerCase()}`]){
+              const{data}=await supabase.from('content_sub_themes').insert({name:subThemeName,theme_id:theme.id,position:subThemes.length}).select().single();
+              if(data){subThemeCache[`${theme.id}_${subThemeName.toLowerCase()}`]=data;subThemes.push(data);}
+            }
           }
         }
         
-        // Phase 2: insérer les questions par batch
-        for(let b=0;b<importData.length;b+=BATCH){
-          const batch=importData.slice(b,b+BATCH);
-          const questionPayloads=[];
-          const batchMeta=[]; // pour stocker les réponses associées
-          
-          for(const row of batch){
-            const questionText=row['Question']||row['question_text'];
-            if(!questionText)continue;
-            const catName=(row['Catégorie']||'').toLowerCase();const themeName=(row['Thème']||'').toLowerCase();const subThemeName=(row['Sous-thème']||'').toLowerCase();
-            const cat=categories.find(c=>c.name.toLowerCase()===catName);
-            const theme=cat?themes.find(t=>t.category_id===cat.id&&t.name.toLowerCase()===themeName):null;
-            const subTheme=theme?subThemes.find(st=>st.theme_id===theme.id&&st.name.toLowerCase()===subThemeName):null;
-            const tagsStr=row['Tags']||'';const tags=tagsStr?tagsStr.split(',').map(t=>t.trim()).filter(Boolean):[];
-            
-            questionPayloads.push({question_text:questionText,question_type:row['Type']||'single',category_id:cat?.id||null,theme_id:theme?.id||null,sub_theme_id:subTheme?.id||null,difficulty:row['Difficulté']||'medium',points:parseInt(row['Points'])||1,time_limit:parseInt(row['Temps (sec)'])||0,feedback_correct:row['Feedback correct']||null,feedback_incorrect:row['Feedback incorrect']||null,media:row['Image URL']?[{type:'image',url:row['Image URL'],name:'image'}]:[],tags});
-            
-            const rowAnswers=[];
-            for(let i=1;i<=4;i++){const text=row[`Réponse ${i}`];if(text)rowAnswers.push({answer_text:text,is_correct:String(row[`Correct ${i}`]).toUpperCase()==='TRUE',sort_order:i-1});}
-            batchMeta.push(rowAnswers);
+        // Phase 2 : Pré-créer les tags manquants dans content_tags
+        const allTagNames=new Set();
+        for(const row of importData){
+          const tagsStr=row['Tags']||'';
+          if(tagsStr)tagsStr.split(',').map(t=>t.trim()).filter(Boolean).forEach(t=>allTagNames.add(t));
+        }
+        const tagMap={};// nom lowercase → tag name
+        for(const tagName of allTagNames){
+          const existing=predefinedTags.find(t=>t.name.toLowerCase()===tagName.toLowerCase());
+          if(existing){tagMap[tagName.toLowerCase()]=existing.name;}
+          else{
+            const{data}=await supabase.from('content_tags').insert({name:tagName}).select().single();
+            if(data){tagMap[tagName.toLowerCase()]=data.name;predefinedTags.push(data);}
+            else{tagMap[tagName.toLowerCase()]=tagName;}
           }
-          
-          if(!questionPayloads.length)continue;
+        }
+        
+        // Phase 3 : Import batch des questions (par lots de 50)
+        const BATCH_SIZE=50;
+        const validRows=importData.filter(r=>r['Question']||r['question_text']);
+        
+        for(let b=0;b<validRows.length;b+=BATCH_SIZE){
+          const batch=validRows.slice(b,b+BATCH_SIZE);
+          const questionPayloads=batch.map(row=>{
+            const catName=row['Catégorie']||'';const themeName=row['Thème']||'';const subThemeName=row['Sous-thème']||'';
+            const cat=categories.find(c=>c.name.toLowerCase()===catName.toLowerCase())||catCache[catName.toLowerCase()];
+            const theme=cat?(themes.find(t=>t.category_id===cat.id&&t.name.toLowerCase()===themeName.toLowerCase())||themeCache[`${cat.id}_${themeName.toLowerCase()}`]):null;
+            const subTheme=theme?(subThemes.find(st=>st.theme_id===theme.id&&st.name.toLowerCase()===subThemeName.toLowerCase())||subThemeCache[`${theme.id}_${subThemeName.toLowerCase()}`]):null;
+            const tagsStr=row['Tags']||'';
+            const tags=tagsStr?tagsStr.split(',').map(t=>t.trim()).filter(Boolean).map(t=>tagMap[t.toLowerCase()]||t):[];
+            return{
+              question_text:row['Question']||row['question_text'],
+              question_type:row['Type']||'single',
+              category_id:cat?.id||null,theme_id:theme?.id||null,sub_theme_id:subTheme?.id||null,
+              difficulty:row['Difficulté']||'medium',
+              points:parseInt(row['Points'])||1,
+              time_limit:parseInt(row['Temps (sec)'])||0,
+              feedback_correct:row['Feedback correct']||null,
+              feedback_incorrect:row['Feedback incorrect']||null,
+              media:row['Image URL']?[{type:'image',url:row['Image URL'],name:'image'}]:[],
+              tags
+            };
+          });
           
           try{
-            const{data:inserted,error}=await supabase.from('question_bank').insert(questionPayloads).select('id');
-            if(error){console.error('Batch insert error:',error);errors+=questionPayloads.length;continue;}
+            const{data:inserted,error}=await supabase.from('question_bank').insert(questionPayloads).select();
+            if(error){console.error('Batch insert error:',error);errors+=batch.length;
+              setImportResult({success,errors,total,phase:'import'});continue;}
             
-            // Insérer toutes les réponses en un seul batch
+            // Insérer les réponses pour chaque question du batch
             const allAnswers=[];
-            (inserted||[]).forEach((q,i)=>{
-              if(batchMeta[i]){
-                batchMeta[i].forEach(a=>allAnswers.push({...a,question_id:q.id}));
+            (inserted||[]).forEach((q,idx)=>{
+              const row=batch[idx];
+              for(let i=1;i<=4;i++){
+                const text=row[`Réponse ${i}`];
+                if(text)allAnswers.push({question_id:q.id,answer_text:text,is_correct:String(row[`Correct ${i}`]).toUpperCase()==='TRUE',sort_order:i-1});
               }
             });
             if(allAnswers.length){
-              const{error:ansErr}=await supabase.from('question_bank_answers').insert(allAnswers);
-              if(ansErr)console.error('Answers batch error:',ansErr);
+              const{error:ae}=await supabase.from('question_bank_answers').insert(allAnswers);
+              if(ae)console.error('Answers batch error:',ae);
             }
             success+=inserted?.length||0;
-          }catch(err){console.error(err);errors+=questionPayloads.length;}
+          }catch(err){console.error('Batch error:',err);errors+=batch.length;}
           
-          // Update progress
-          setImportResult({success,errors,total:importData.length,inProgress:true});
+          setImportResult({success,errors,total,phase:'import'});
         }
-        setImportResult({success,errors});setImportLoading(false);load();reloadTaxonomy();
+        
+        setImportResult({success,errors,total,phase:'done'});
+        setImportLoading(false);load();reloadTaxonomy();
       };
       
       // ===== SAVE =====
@@ -6980,8 +7012,11 @@
       
       const filtered=questions.filter(q=>{
         if(filterCategory&&q.category_id!==filterCategory)return false;
+        if(filterTheme&&q.theme_id!==filterTheme)return false;
+        if(filterSubTheme&&q.sub_theme_id!==filterSubTheme)return false;
         if(filterDifficulty!=='all'&&q.difficulty!==filterDifficulty)return false;
         if(filterType!=='all'&&q.question_type!==filterType)return false;
+        if(filterTag&&!(q.tags||[]).some(t=>t.toLowerCase()===filterTag.toLowerCase()))return false;
         if(search){
           const s=search.toLowerCase();
           const inText=q.question_text?.toLowerCase().includes(s);
@@ -7012,9 +7047,13 @@
         </div>
         
         <div className="flex flex-wrap gap-2 mb-4">
-          <Select value={filterCategory} onChange={e=>setFilterCategory(e.target.value)} options={[{value:'',label:'Toutes catégories'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+          <Select value={filterCategory} onChange={e=>{setFilterCategory(e.target.value);setFilterTheme('');setFilterSubTheme('');}} options={[{value:'',label:'Toutes catégories'},...categories.map(c=>({value:c.id,label:c.name}))]}/>
+          <Select value={filterTheme} onChange={e=>{setFilterTheme(e.target.value);setFilterSubTheme('');}} options={[{value:'',label:'Tous thèmes'},...(filterCategory?getThemesForCategory(filterCategory):themes).map(t=>({value:t.id,label:t.name}))]}/>
+          <Select value={filterSubTheme} onChange={e=>setFilterSubTheme(e.target.value)} options={[{value:'',label:'Tous sous-thèmes'},...(filterTheme?getSubThemesForTheme(filterTheme):subThemes).map(st=>({value:st.id,label:st.name}))]}/>
           <Select value={filterDifficulty} onChange={e=>setFilterDifficulty(e.target.value)} options={[{value:'all',label:'Toutes difficultés'},{value:'easy',label:'Facile'},{value:'medium',label:'Moyen'},{value:'hard',label:'Difficile'}]}/>
           <Select value={filterType} onChange={e=>setFilterType(e.target.value)} options={[{value:'all',label:'Tous les types'},...questionTypes.map(t=>({value:t.value,label:t.label}))]}/>
+          <Select value={filterTag} onChange={e=>setFilterTag(e.target.value)} options={[{value:'',label:'Tous les tags'},...predefinedTags.map(t=>({value:t.name,label:t.name}))]}/>
+          {(filterCategory||filterTheme||filterSubTheme||filterDifficulty!=='all'||filterType!=='all'||filterTag)&&<button onClick={()=>{setFilterCategory('');setFilterTheme('');setFilterSubTheme('');setFilterDifficulty('all');setFilterType('all');setFilterTag('');}} className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 rounded-lg text-gray-300 flex items-center gap-1"><Icon name="X" size={14}/>Réinitialiser</button>}
         </div>
         
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
@@ -7439,10 +7478,13 @@
                 </div>
               </div>
             )}
-            {importResult&&<div className={`p-4 rounded-lg ${importResult.inProgress?'bg-blue-500/20':importResult.errors>0?'bg-yellow-500/20':'bg-green-500/20'}`}><p className="font-medium">{importResult.inProgress?`Import en cours... ${importResult.success}/${importResult.total||'?'}`:importResult.success+' question(s) importée(s)'}</p>{importResult.errors>0&&<p className="text-sm text-yellow-400">{importResult.errors} erreur(s)</p>}</div>}
+            {importResult&&<div className={`p-4 rounded-lg ${importResult.phase==='done'?(importResult.errors>0?'bg-yellow-500/20':'bg-green-500/20'):'bg-blue-500/20'}`}>
+              {importResult.phase==='import'&&(<div><p className="font-medium text-blue-300 mb-2">⏳ Import en cours... {importResult.success}/{importResult.total}</p><div className="w-full bg-gray-700 rounded-full h-2"><div className="bg-blue-500 h-2 rounded-full progress-bar" style={{width:`${Math.round((importResult.success+importResult.errors)/Math.max(importResult.total,1)*100)}%`}}/></div></div>)}
+              {importResult.phase==='done'&&(<div><p className="font-medium">✅ {importResult.success} question(s) importée(s){importResult.total>0&&` sur ${importResult.total}`}</p>{importResult.errors>0&&<p className="text-sm text-yellow-400 mt-1">⚠️ {importResult.errors} erreur(s)</p>}</div>)}
+            </div>}
             <div className="flex justify-end gap-3">
               <Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>
-              {!importResult&&<Button onClick={processImport} loading={importLoading} disabled={importData.length===0}>Importer</Button>}
+              {!importResult&&<Button onClick={processImport} loading={importLoading} disabled={importData.length===0}>Importer {importData.length} question(s)</Button>}
             </div>
           </div>
         </Modal>
