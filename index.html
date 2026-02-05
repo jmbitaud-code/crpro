@@ -42,6 +42,24 @@
   <div id="root"></div>
   
   <!-- Scripts essentiels -->
+  <!-- DEBUG: Intercepteur requêtes 400 (à retirer) -->
+  <script>
+    (function(){
+      var _f=window.fetch;
+      window.fetch=function(){
+        var args=arguments;
+        return _f.apply(this,args).then(function(r){
+          if(String(args[0]).includes('quizzes')&&r.status===400){
+            r.clone().text().then(function(b){
+              console.error('🔴 QUIZ 400 URL:',String(args[0]).substring(0,500));
+              console.error('🔴 QUIZ 400 BODY:',b);
+            });
+          }
+          return r;
+        });
+      };
+    })();
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
