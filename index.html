@@ -6580,6 +6580,10 @@
       const[filterDifficulty,setFilterDifficulty]=useState('all');
       const[filterType,setFilterType]=useState('all');
       const[filterTag,setFilterTag]=useState('');
+      // Sélection en lot
+      const[selectedIds,setSelectedIds]=useState(new Set());
+      const[page,setPage]=useState(0);
+      const PAGE_SIZE=30;
       // Import
       const[importModal,setImportModal]=useState(false);
       const[importData,setImportData]=useState([]);
@@ -6620,6 +6624,35 @@
       
       const getTypeName=(type)=>questionTypes.find(t=>t.value===type)?.label||type;
       const getTypeColor=(type)=>questionTypes.find(t=>t.value===type)?.color||'text-gray-400';
+      
+      // Tags combinés : content_tags + tags trouvés dans les questions
+      const allTags=useMemo(()=>{
+        const tagSet=new Set(predefinedTags.map(t=>t.name));
+        questions.forEach(q=>(q.tags||[]).forEach(t=>{if(t)tagSet.add(t);}));
+        return[...tagSet].sort((a,b)=>a.localeCompare(b,'fr'));
+      },[predefinedTags,questions]);
+      
+      // Suppression en lot
+      const handleBatchDelete=async()=>{
+        if(selectedIds.size===0)return;
+        if(!confirm(`Supprimer ${selectedIds.size} question(s) sélectionnée(s) ?`))return;
+        const ids=[...selectedIds];
+        for(let i=0;i<ids.length;i+=50){
+          const batch=ids.slice(i,i+50);
+          await supabase.from('question_bank').delete().in('id',batch);
+        }
+        setSelectedIds(new Set());
+        load();
+      };
+      
+      const toggleSelect=(id)=>{
+        setSelectedIds(prev=>{const s=new Set(prev);if(s.has(id))s.delete(id);else s.add(id);return s;});
+      };
+      
+      const toggleSelectAll=(filteredList)=>{
+        if(selectedIds.size===filteredList.length){setSelectedIds(new Set());}
+        else{setSelectedIds(new Set(filteredList.map(q=>q.id)));}
+      };
       
       // ===== MEDIA UPLOAD =====
       const detectMediaType=(file)=>{
@@ -6884,9 +6917,19 @@
             const allAnswers=[];
             (inserted||[]).forEach((q,idx)=>{
               const row=batch[idx];
+              const qType=row['Type']||'single';
               for(let i=1;i<=4;i++){
-                const text=row[`Réponse ${i}`];
-                if(text)allAnswers.push({question_id:q.id,answer_text:text,is_correct:String(row[`Correct ${i}`]).toUpperCase()==='TRUE',sort_order:i-1});
+                let text=row[`Réponse ${i}`];
+                // Gérer les booléens (true_false depuis Excel)
+                if(text===true||text===false){text=text?'Vrai':'Faux';}
+                else if(typeof text==='string'&&text.trim()==='')text=null;
+                if(text!==null&&text!==undefined&&text!=='')allAnswers.push({question_id:q.id,answer_text:String(text),is_correct:String(row[`Correct ${i}`]).toUpperCase()==='TRUE',sort_order:i-1});
+              }
+              // Si true_false et aucune réponse trouvée, créer Vrai/Faux par défaut
+              if(qType==='true_false'&&!allAnswers.some(a=>a.question_id===q.id)){
+                const correct1=String(row['Correct 1']).toUpperCase()==='TRUE';
+                allAnswers.push({question_id:q.id,answer_text:'Vrai',is_correct:correct1,sort_order:0});
+                allAnswers.push({question_id:q.id,answer_text:'Faux',is_correct:!correct1,sort_order:1});
               }
             });
             if(allAnswers.length){
@@ -7031,6 +7074,9 @@
         return true;
       });
       
+      // Reset page quand les filtres changent
+      useEffect(()=>{setPage(0);},[filterCategory,filterTheme,filterSubTheme,filterDifficulty,filterType,filterTag,search]);
+      
       if(loading)return<div className="flex items-center justify-center py-20"><Icon name="Loader2" size={32} className="animate-spin text-indigo-400"/></div>;
       
       return<div>
@@ -7052,27 +7098,51 @@
           <Select value={filterSubTheme} onChange={e=>setFilterSubTheme(e.target.value)} options={[{value:'',label:'Tous sous-thèmes'},...(filterTheme?getSubThemesForTheme(filterTheme):subThemes).map(st=>({value:st.id,label:st.name}))]}/>
           <Select value={filterDifficulty} onChange={e=>setFilterDifficulty(e.target.value)} options={[{value:'all',label:'Toutes difficultés'},{value:'easy',label:'Facile'},{value:'medium',label:'Moyen'},{value:'hard',label:'Difficile'}]}/>
           <Select value={filterType} onChange={e=>setFilterType(e.target.value)} options={[{value:'all',label:'Tous les types'},...questionTypes.map(t=>({value:t.value,label:t.label}))]}/>
-          <Select value={filterTag} onChange={e=>setFilterTag(e.target.value)} options={[{value:'',label:'Tous les tags'},...predefinedTags.map(t=>({value:t.name,label:t.name}))]}/>
+          <Select value={filterTag} onChange={e=>setFilterTag(e.target.value)} options={[{value:'',label:'Tous les tags'},...allTags.map(t=>({value:t,label:t}))]}/>
           {(filterCategory||filterTheme||filterSubTheme||filterDifficulty!=='all'||filterType!=='all'||filterTag)&&<button onClick={()=>{setFilterCategory('');setFilterTheme('');setFilterSubTheme('');setFilterDifficulty('all');setFilterType('all');setFilterTag('');}} className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 rounded-lg text-gray-300 flex items-center gap-1"><Icon name="X" size={14}/>Réinitialiser</button>}
         </div>
         
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-          <Card className="p-4 text-center"><p className="text-2xl font-bold text-cyan-400">{questions.length}</p><p className="text-xs text-gray-400">Questions</p></Card>
-          <Card className="p-4 text-center"><p className="text-2xl font-bold text-green-400">{questions.filter(q=>q.difficulty==='easy').length}</p><p className="text-xs text-gray-400">Faciles</p></Card>
-          <Card className="p-4 text-center"><p className="text-2xl font-bold text-yellow-400">{questions.filter(q=>q.difficulty==='medium').length}</p><p className="text-xs text-gray-400">Moyennes</p></Card>
-          <Card className="p-4 text-center"><p className="text-2xl font-bold text-red-400">{questions.filter(q=>q.difficulty==='hard').length}</p><p className="text-xs text-gray-400">Difficiles</p></Card>
-          <Card className="p-4 text-center"><p className="text-2xl font-bold text-purple-400">{questions.filter(q=>(q.media||[]).length>0).length}</p><p className="text-xs text-gray-400">Avec média</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-cyan-400">{filtered.length}<span className="text-sm text-gray-500">/{questions.length}</span></p><p className="text-xs text-gray-400">Questions</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-green-400">{filtered.filter(q=>q.difficulty==='easy').length}</p><p className="text-xs text-gray-400">Faciles</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-yellow-400">{filtered.filter(q=>q.difficulty==='medium').length}</p><p className="text-xs text-gray-400">Moyennes</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-red-400">{filtered.filter(q=>q.difficulty==='hard').length}</p><p className="text-xs text-gray-400">Difficiles</p></Card>
+          <Card className="p-4 text-center"><p className="text-2xl font-bold text-purple-400">{filtered.filter(q=>(q.media||[]).length>0).length}</p><p className="text-xs text-gray-400">Avec média</p></Card>
         </div>
+        
+        {/* Barre d'actions en lot */}
+        {selectedIds.size>0&&(
+          <div className="flex items-center gap-3 mb-4 p-3 bg-indigo-500/10 border border-indigo-500/30 rounded-lg">
+            <span className="text-sm font-medium text-indigo-300">{selectedIds.size} question(s) sélectionnée(s)</span>
+            <div className="flex-1"/>
+            <Button variant="secondary" size="sm" icon="FileSpreadsheet" onClick={()=>{
+              const sel=questions.filter(q=>selectedIds.has(q.id));
+              const data=sel.map(q=>{const answers=q.question_bank_answers||[];return{'Question':q.question_text||'','Type':q.question_type||'single','Catégorie':getCategoryName(q.category_id),'Thème':getThemeName(q.theme_id),'Sous-thème':getSubThemeName(q.sub_theme_id),'Difficulté':q.difficulty||'medium','Points':q.points||1,'Temps (sec)':q.time_limit||0,'Réponse 1':answers[0]?.answer_text||'','Correct 1':answers[0]?.is_correct?'TRUE':'FALSE','Réponse 2':answers[1]?.answer_text||'','Correct 2':answers[1]?.is_correct?'TRUE':'FALSE','Réponse 3':answers[2]?.answer_text||'','Correct 3':answers[2]?.is_correct?'TRUE':'FALSE','Réponse 4':answers[3]?.answer_text||'','Correct 4':answers[3]?.is_correct?'TRUE':'FALSE','Tags':(q.tags||[]).join(', ')};});
+              const ws=XLSX.utils.json_to_sheet(data);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Questions');XLSX.writeFile(wb,`questions_selection_${new Date().toISOString().split('T')[0]}.xlsx`);
+            }}>Exporter la sélection</Button>
+            <Button variant="danger" size="sm" icon="Trash2" onClick={handleBatchDelete}>Supprimer la sélection</Button>
+            <Button variant="ghost" size="sm" icon="X" onClick={()=>setSelectedIds(new Set())}/>
+          </div>
+        )}
         
         {/* Liste des questions */}
         {filtered.length===0?<Empty icon="Database" title="Aucune question" desc="Ajoutez votre première question à la banque"/>:(
-          <div className="space-y-3">
-            {filtered.slice(0,50).map(q=>{
+          <div>
+            {/* En-tête avec sélection globale */}
+            <div className="flex items-center gap-3 mb-3 px-1">
+              <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-400 hover:text-white">
+                <input type="checkbox" checked={selectedIds.size>0&&selectedIds.size===filtered.length} onChange={()=>toggleSelectAll(filtered)} className="rounded bg-gray-700 border-gray-600"/>
+                Tout sélectionner
+              </label>
+              <span className="text-xs text-gray-500">Page {page+1}/{Math.ceil(filtered.length/PAGE_SIZE)} — {filtered.length} question(s)</span>
+            </div>
+            <div className="space-y-3 max-h-[calc(100vh-420px)] overflow-y-auto pr-1 no-scrollbar">
+            {filtered.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE).map(q=>{
               const hasMedia=(q.media||[]).length>0;
               return(
-              <Card key={q.id} className="p-4">
-                <div className="flex items-start gap-4">
-                  {/* Média preview dans la liste */}
+              <Card key={q.id} className={`p-4 ${selectedIds.has(q.id)?'ring-1 ring-indigo-500 bg-indigo-500/5':''}`}>
+                <div className="flex items-start gap-3">
+                  <input type="checkbox" checked={selectedIds.has(q.id)} onChange={()=>toggleSelect(q.id)} className="mt-1 rounded bg-gray-700 border-gray-600 shrink-0"/>
                   {hasMedia?(
                     <div className="flex gap-1 shrink-0">
                       {(q.media||[]).slice(0,2).map((m,i)=>(
@@ -7112,7 +7182,17 @@
                 </div>
               </Card>);
             })}
-            {filtered.length>50&&<p className="text-center text-gray-400 py-4">Affichage limité à 50 questions. Utilisez les filtres.</p>}
+            </div>
+            {/* Pagination */}
+            {filtered.length>PAGE_SIZE&&(
+              <div className="flex items-center justify-center gap-2 mt-4 pt-4 border-t border-gray-700">
+                <Button variant="secondary" size="sm" icon="ChevronsLeft" disabled={page===0} onClick={()=>setPage(0)}/>
+                <Button variant="secondary" size="sm" icon="ChevronLeft" disabled={page===0} onClick={()=>setPage(p=>p-1)}/>
+                <span className="px-4 text-sm text-gray-300">Page {page+1} / {Math.ceil(filtered.length/PAGE_SIZE)}</span>
+                <Button variant="secondary" size="sm" icon="ChevronRight" disabled={(page+1)*PAGE_SIZE>=filtered.length} onClick={()=>setPage(p=>p+1)}/>
+                <Button variant="secondary" size="sm" icon="ChevronsRight" disabled={(page+1)*PAGE_SIZE>=filtered.length} onClick={()=>setPage(Math.ceil(filtered.length/PAGE_SIZE)-1)}/>
+              </div>
+            )}
           </div>
         )}
         
