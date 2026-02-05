@@ -6801,26 +6801,72 @@
       const processImport=async()=>{
         setImportLoading(true);
         let success=0,errors=0;
+        const BATCH=50;
+        
+        // Phase 1: auto-créer taxonomie manquante
+        const newCats=new Map(),newThemes=new Map(),newSubs=new Map();
         for(const row of importData){
-          try{
+          const catName=row['Catégorie']||'';const themeName=row['Thème']||'';const subThemeName=row['Sous-thème']||'';
+          if(catName&&!categories.find(c=>c.name.toLowerCase()===catName.toLowerCase())&&!newCats.has(catName.toLowerCase())){
+            const{data}=await supabase.from('content_categories').insert({name:catName,position:categories.length+newCats.size}).select().single();
+            if(data){newCats.set(catName.toLowerCase(),data);categories.push(data);}
+          }
+          const cat=categories.find(c=>c.name.toLowerCase()===catName.toLowerCase());
+          if(themeName&&cat&&!themes.find(t=>t.category_id===cat.id&&t.name.toLowerCase()===themeName.toLowerCase())&&!newThemes.has(themeName.toLowerCase()+cat.id)){
+            const{data}=await supabase.from('content_themes').insert({name:themeName,category_id:cat.id,position:themes.length+newThemes.size}).select().single();
+            if(data){newThemes.set(themeName.toLowerCase()+cat.id,data);themes.push(data);}
+          }
+          const theme=themes.find(t=>t.category_id===cat?.id&&t.name.toLowerCase()===themeName.toLowerCase());
+          if(subThemeName&&theme&&!subThemes.find(st=>st.theme_id===theme.id&&st.name.toLowerCase()===subThemeName.toLowerCase())&&!newSubs.has(subThemeName.toLowerCase()+theme.id)){
+            const{data}=await supabase.from('content_sub_themes').insert({name:subThemeName,theme_id:theme.id,position:subThemes.length+newSubs.size}).select().single();
+            if(data){newSubs.set(subThemeName.toLowerCase()+theme.id,data);subThemes.push(data);}
+          }
+        }
+        
+        // Phase 2: insérer les questions par batch
+        for(let b=0;b<importData.length;b+=BATCH){
+          const batch=importData.slice(b,b+BATCH);
+          const questionPayloads=[];
+          const batchMeta=[]; // pour stocker les réponses associées
+          
+          for(const row of batch){
             const questionText=row['Question']||row['question_text'];
             if(!questionText)continue;
-            const catName=row['Catégorie']||'';const themeName=row['Thème']||'';const subThemeName=row['Sous-thème']||'';
-            let cat=categories.find(c=>c.name.toLowerCase()===catName.toLowerCase());
-            let theme=cat?themes.find(t=>t.category_id===cat.id&&t.name.toLowerCase()===themeName.toLowerCase()):null;
-            let subTheme=theme?subThemes.find(st=>st.theme_id===theme.id&&st.name.toLowerCase()===subThemeName.toLowerCase()):null;
-            if(catName&&!cat){const{data}=await supabase.from('content_categories').insert({name:catName,position:categories.length}).select().single();if(data){cat=data;categories.push(data);}}
-            if(themeName&&cat&&!theme){const{data}=await supabase.from('content_themes').insert({name:themeName,category_id:cat.id,position:themes.length}).select().single();if(data){theme=data;themes.push(data);}}
-            if(subThemeName&&theme&&!subTheme){const{data}=await supabase.from('content_sub_themes').insert({name:subThemeName,theme_id:theme.id,position:subThemes.length}).select().single();if(data){subTheme=data;subThemes.push(data);}}
+            const catName=(row['Catégorie']||'').toLowerCase();const themeName=(row['Thème']||'').toLowerCase();const subThemeName=(row['Sous-thème']||'').toLowerCase();
+            const cat=categories.find(c=>c.name.toLowerCase()===catName);
+            const theme=cat?themes.find(t=>t.category_id===cat.id&&t.name.toLowerCase()===themeName):null;
+            const subTheme=theme?subThemes.find(st=>st.theme_id===theme.id&&st.name.toLowerCase()===subThemeName):null;
             const tagsStr=row['Tags']||'';const tags=tagsStr?tagsStr.split(',').map(t=>t.trim()).filter(Boolean):[];
-            const{data:q}=await supabase.from('question_bank').insert({question_text:questionText,question_type:row['Type']||'single',category_id:cat?.id||null,theme_id:theme?.id||null,sub_theme_id:subTheme?.id||null,difficulty:row['Difficulté']||'medium',points:parseInt(row['Points'])||1,time_limit:parseInt(row['Temps (sec)'])||0,feedback_correct:row['Feedback correct']||null,feedback_incorrect:row['Feedback incorrect']||null,media:row['Image URL']?[{type:'image',url:row['Image URL'],name:'image'}]:[],tags}).select().single();
-            if(q){
-              const answers=[];
-              for(let i=1;i<=4;i++){const text=row[`Réponse ${i}`];if(text)answers.push({question_id:q.id,answer_text:text,is_correct:String(row[`Correct ${i}`]).toUpperCase()==='TRUE',sort_order:i-1});}
-              if(answers.length)await supabase.from('question_bank_answers').insert(answers);
-              success++;
+            
+            questionPayloads.push({question_text:questionText,question_type:row['Type']||'single',category_id:cat?.id||null,theme_id:theme?.id||null,sub_theme_id:subTheme?.id||null,difficulty:row['Difficulté']||'medium',points:parseInt(row['Points'])||1,time_limit:parseInt(row['Temps (sec)'])||0,feedback_correct:row['Feedback correct']||null,feedback_incorrect:row['Feedback incorrect']||null,media:row['Image URL']?[{type:'image',url:row['Image URL'],name:'image'}]:[],tags});
+            
+            const rowAnswers=[];
+            for(let i=1;i<=4;i++){const text=row[`Réponse ${i}`];if(text)rowAnswers.push({answer_text:text,is_correct:String(row[`Correct ${i}`]).toUpperCase()==='TRUE',sort_order:i-1});}
+            batchMeta.push(rowAnswers);
+          }
+          
+          if(!questionPayloads.length)continue;
+          
+          try{
+            const{data:inserted,error}=await supabase.from('question_bank').insert(questionPayloads).select('id');
+            if(error){console.error('Batch insert error:',error);errors+=questionPayloads.length;continue;}
+            
+            // Insérer toutes les réponses en un seul batch
+            const allAnswers=[];
+            (inserted||[]).forEach((q,i)=>{
+              if(batchMeta[i]){
+                batchMeta[i].forEach(a=>allAnswers.push({...a,question_id:q.id}));
+              }
+            });
+            if(allAnswers.length){
+              const{error:ansErr}=await supabase.from('question_bank_answers').insert(allAnswers);
+              if(ansErr)console.error('Answers batch error:',ansErr);
             }
-          }catch(err){console.error(err);errors++;}
+            success+=inserted?.length||0;
+          }catch(err){console.error(err);errors+=questionPayloads.length;}
+          
+          // Update progress
+          setImportResult({success,errors,total:importData.length,inProgress:true});
         }
         setImportResult({success,errors});setImportLoading(false);load();reloadTaxonomy();
       };
@@ -7393,7 +7439,7 @@
                 </div>
               </div>
             )}
-            {importResult&&<div className={`p-4 rounded-lg ${importResult.errors>0?'bg-yellow-500/20':'bg-green-500/20'}`}><p className="font-medium">{importResult.success} importée(s)</p>{importResult.errors>0&&<p className="text-sm text-yellow-400">{importResult.errors} erreur(s)</p>}</div>}
+            {importResult&&<div className={`p-4 rounded-lg ${importResult.inProgress?'bg-blue-500/20':importResult.errors>0?'bg-yellow-500/20':'bg-green-500/20'}`}><p className="font-medium">{importResult.inProgress?`Import en cours... ${importResult.success}/${importResult.total||'?'}`:importResult.success+' question(s) importée(s)'}</p>{importResult.errors>0&&<p className="text-sm text-yellow-400">{importResult.errors} erreur(s)</p>}</div>}
             <div className="flex justify-end gap-3">
               <Button variant="secondary" onClick={()=>{setImportModal(false);setImportData([]);setImportResult(null);}}>Fermer</Button>
               {!importResult&&<Button onClick={processImport} loading={importLoading} disabled={importData.length===0}>Importer</Button>}
